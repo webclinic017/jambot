@@ -53,8 +53,8 @@ class User():
             # print('retrying in: {}'.format(sleeptime))
             return self.checkrequest(request=request, retries=retries)
 
-    def getPosition(self, symbol=None):
-        if self.positions is None:
+    def getPosition(self, symbol=None, refresh=False):
+        if self.positions is None or refresh:
             self.setPositions()
         
         if not symbol is None:
@@ -109,7 +109,7 @@ class User():
 
         fltr = json.dumps(fltr)
 
-        self.orders = self.client.Order.Order_getOrders(symbol=symbol, filter=fltr).response().result
+        self.orders = self.client.Order.Order_getOrders(symbol=symbol, filter=fltr, reverse=True, count=12).response().result
         for i, order in enumerate(self.orders):
             
             order['side'] = 1 if order['side'] == 'Buy' else -1
@@ -208,6 +208,8 @@ def compareorders(theo=[], actual=[]):
     for order in actual:
         if not order['key'] in m1:
             notmatched.append(order)
+
+    # notmatched = [order for order in actual if not order['key'] in m1]
     
     return matched, missing, notmatched
 
@@ -227,63 +229,115 @@ def checkmatched(matched):
         
     return amend
 
-def checkfilledorders():
+def refresh_gsheet_balance():
+    sht = f.getGoogleSheet()
+    ws = sht.worksheet_by_title('Bitmex')
+    df = ws.get_as_df(start='A1', end='N14')
+    lst = list(df['Sym'].dropna())
+    syms = []
+
+    df2 = pd.read_csv(os.path.join(f.currentdir(), 'symbols.csv'))
+    for row in df2.itertuples():
+        if row.symbolshort in lst:
+            syms.append(c.Backtest(symbol=row.symbol))
 
     u = User()
-    starttime = date.utcnow() + delta(minutes=-5)
+    writeUserBalanceGoogle(syms, u, sht=sht, ws=ws, df=df)
+    
+def checkfilledorders(minutes=5):
+    
+    u = User()
+    starttime = date.utcnow() + delta(minutes=minutes * -1)
     orders = u.getFilledOrders(starttime=starttime)
 
-    df = pd.read_csv(os.path.join(f.currentdir(), 'symbols.csv'))
+    if len(orders) > 0:
+        df = pd.read_csv(os.path.join(f.currentdir(), 'symbols.csv'))
+        
+        lst, syms, templist = [], [], []
+        nonmarket = False
+
+        for o in orders:
+            symbol = o['symbol']
+
+            # check for market buys
+            if not o['ordType'] == 'Market':
+                nonmarket = True
+
+                if not symbol in templist:
+                    templist.append(symbol)
+                    syms.append(c.Backtest(symbol=symbol))                
+
+            modi = 1 if o['side'] == 'Buy' else -1
+            vals = df[df['symbolbitmex']==symbol]['symbolshort'].values
+            
+            if len(vals) > 0: symshort = vals[0]
+            lst.append('{} | {} {:,} at ${:,} | {}'.format(
+                    symshort,
+                    o['side'],
+                    modi * int(o['orderQty']),
+                    o['price'],
+                    '-'.join(o['clOrdID'].split('-')[1:3])))
+            
+        # write balance to google sheet, EXCEPT on market buys
+        if nonmarket:
+            writeUserBalanceGoogle(syms, u, preservedf=True)
+
+        msg = '\n'.join(lst)
+        # print(msg)
+        f.discord(msg=msg, channel='orders')
+
+def writeUserBalanceGoogle(syms, u, sht=None, ws=None, preservedf=False, df=None):
     
-    lst = []
-    for o in orders:
-        modi = 1 if o['side'] == 'Buy' else -1
-        symshort = df[df['symbolbitmex']==o['symbol']]['symbolshort'].values[0]
-        lst.append('{} {}: {:,}'.format(symshort, o['side'], modi * int(o['orderQty'])))
+    if sht is None:
+        sht = f.getGoogleSheet()
+    if ws is None:
+        ws = sht.worksheet_by_title('Bitmex')
 
-    msg = '\n'.join(lst)
-    # print(msg)
-    f.discord(msg=msg, channel='orders')
+    if df is None:
+        if not preservedf:
+            df = pd.DataFrame(columns=['Sym','Size','Entry','Last',	'Pnl', '%',	'ROE','Value', 'Enter', 'Exit', 'Stop', 'Enter_Next', 'Stop_Next', 'Dur'], index=range(13))
+        else:
+            df = ws.get_as_df(start='A1', end='N14')
 
+    i = 0 # should pull gRow from google sheet first
+    u.setOrders()
+    u.setPositions()
 
-def writeUserBalanceGoogle(syms, u, sht):
-    
-    ws = sht.worksheet_by_title('Bitmex')
-
-    df = pd.DataFrame(columns=['Sym','Size','Entry','Last',	'Pnl', '%',	'ROE','Value', 'Enter', 'Exit', 'Stop', 'Enter_Next', 'Stop_Next', 'Dur'], index=range(13))
-
-    i = 0
     for sym in syms:
         symbol = sym.symbolbitmex
         figs = sym.decimalfigs
         pos = u.getPosition(symbol)
-        strat = sym.strats[0]
-        t = strat.trades[-1]
-        side = t.side
-        side_next = side * -1
-
-        u.setOrders()
-        u.setPositions()        
         
-        df['Sym'][i] = sym.symbolshort
+        df.at[i, 'Sym'] = sym.symbolshort
         if sym.tradingenabled:
-            df['Size'][i] = pos['currentQty']
-            df['Entry'][i] = round(pos['avgEntryPrice'], figs)
-            df['Last'][i] = round(pos['prevClosePrice'], figs)
-            df['Pnl'][i] = round(pos['unrealisedPnl'] / u.div, 3)
-            df['%'][i] = f.percent(pos['unrealisedPnlPcnt'])
-            df['ROE'][i] = f.percent(pos['unrealisedRoePcnt'])
-            df['Value'][i] = pos['maintMargin'] / u.div
-            df['Dur'][i] = t.duration()
+            df.at[i, 'Size'] = pos['currentQty']
+            df.at[i, 'Entry'] = round(pos['avgEntryPrice'], figs)
+            df.at[i, 'Last'] = round(pos['lastPrice'], figs)
+            df.at[i, 'Pnl'] = round(pos['unrealisedPnl'] / u.div, 3)
+            df.at[i, '%'] = f.percent(pos['unrealisedPnlPcnt'])
+            df.at[i, 'ROE'] = f.percent(pos['unrealisedRoePcnt'])
+            df.at[i, 'Value'] = pos['maintMargin'] / u.div
 
+        if not sym.startdate is None:
+            # append trade columns
+            # newcols = ['Enter', 'Exit', 'Stop', 'Enter_Next', 'Stop_Next', 'Dur']
+            # df = df.reindex(columns=[*df.columns.tolist(), *newcols]).copy()
+            # for col in ['Enter', 'Exit', 'Stop', 'Enter_Next', 'Stop_Next', 'Dur']:
+            #     df[col] = np.nan
+
+            strat = sym.strats[0]
+            t = strat.trades[-1]
+            side = t.side
+            side_next = side * -1
+            df.at[i, 'Dur'] = t.duration()
             # df['Stop Buy'][i] = u.getOrderByKey(sym.symbolbitmex, 'stopbuy')['stopPx']
             # df['Stop Close'][i] = u.getOrderByKey(sym.symbolbitmex, 'stopclose')['stopPx']
             if strat.name == 'trendrev':
-                df['Enter'][i] = u.getOrderByKey(f.key(symbol, 'limitopen', side, 1))['price']
-                df['Exit'][i] = u.getOrderByKey(f.key(symbol, 'limitclose', side * -1, 3))['price']
-                df['Stop'][i] = u.getOrderByKey(f.key(symbol, 'stop', side * -1, 2))['stopPx']
-                df['Enter_Next'][i] = u.getOrderByKey(f.key(symbol, 'limitopen', side_next, 1))['price']
-                df['Stop_Next'][i] = u.getOrderByKey(f.key(symbol, 'stop', side_next * -1, 2))['stopPx']               
+                df.at[i, 'Enter'] = u.getOrderByKey(f.key(symbol, 'limitopen', side, 1))['price']
+                df.at[i, 'Exit'] = u.getOrderByKey(f.key(symbol, 'limitclose', side * -1, 3))['price']
+                df.at[i, 'Stop'] = u.getOrderByKey(f.key(symbol, 'stop', side * -1, 2))['stopPx']
+                df.at[i, 'Enter_Next'] = u.getOrderByKey(f.key(symbol, 'limitopen', side_next, 1))['price']
+                df.at[i, 'Stop_Next'] = u.getOrderByKey(f.key(symbol, 'stop', side_next * -1, 2))['stopPx']               
             elif strat.name == 'chop':
                 orders = u.getOrders(symbol, refresh=True)
                 ordcount, stopcount, tpcount = 0, 0, 0
@@ -299,20 +353,20 @@ def writeUserBalanceGoogle(syms, u, sht):
                         tpcount += 1
 
                 strat = sym.strats[0]
-                df['Filled'][i] = strat.getTrade(strat.tradecount()).allfilled() if strat.getSide() != 0 else ''
+                df.at[i, 'Filled'] = strat.getTrade(strat.tradecount()).allfilled() if strat.getSide() != 0 else ''
 
-                df['Ord'][i] = ordcount
-                df['Stop'][i] = stopcount
-                df['Tp'][i] = tpcount
+                df.at[i, 'Ord'] = ordcount
+                df.at[i, 'Stop'] = stopcount
+                df.at[i, 'Tp'] = tpcount
 
         i += 1
     
     # set profit/balance
-    df['Size'][9] = u.unrealizedpnl
-    df['Entry'][9] = u.totalbalancemargin
+    df.at[9, 'Size'] = u.unrealizedpnl
+    df.at[9, 'Entry'] = u.totalbalancemargin
 
     # set current time
-    df['Size'][12] = date.strftime(date.utcnow(), f.TimeFormat(mins=True))
+    df.at[12, 'Size'] = date.strftime(date.utcnow(), f.TimeFormat(mins=True))
 
     ws.set_dataframe(df, (1,1), nan='')
     return df
@@ -362,7 +416,8 @@ def TopLoop():
             strats.append(trend)
 
             sym = c.Backtest(symbol=symbol, startdate=startdate, strats=strats, row=row, df=df)
-            if weight <= 0: sym.tradingenabled = False #this should come from strat somehow
+            if weight <= 0:
+                sym.tradingenabled = False #this should come from strat somehow
             sym.decidefull()
             syms.append(sym)
             strat = sym.strats[0]

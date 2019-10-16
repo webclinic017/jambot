@@ -475,7 +475,7 @@ def discord(msg, channel='jambot'):
     elif channel == 'jambot':
         WEBHOOK_ID = '506472880620568576'
         WEBHOOK_TOKEN = 'o1EkqIpGizc5ewUyjivFeEAkvgbU_91qr6Pi-FDLP0qCzu-j7yNFc9vskULJ53JZ6aC1'
-    elif channel == 'vol':
+    elif channel == 'err':
         WEBHOOK_ID = '512030769775116319'
         WEBHOOK_TOKEN = 's746HqzlZGedOfnSmgDeC8HJJT_5-bYcgUbgs8KWwvb6gw38gGR_WhQylFKdcWtGyTHi'
 
