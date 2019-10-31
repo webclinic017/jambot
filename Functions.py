@@ -30,12 +30,12 @@ def hurst(ts):
     # Return the Hurst exponent from the polyfit output
     return poly[0]*2.0
 
-def runtrend(symbol, startdate, mr, df, against, wth, row, titles, opposite):
+def runtrend(symbol, startdate, mr, df, against, wth, row, titles):
     import JambotClasses as c
     dfTemp = pd.DataFrame(columns=[titles[0], titles[1], 'min', 'max', 'final', 'numtrades'])
 
     # Strat_Trend
-    trend = c.Strat_Trend(speed=(against, wth), mr=mr, opposite=opposite)
+    trend = c.Strat_Trend(speed=(against, wth), mr=mr)
     strats = []
     strats.append(trend)
 
@@ -47,14 +47,13 @@ def runtrend(symbol, startdate, mr, df, against, wth, row, titles, opposite):
 
     return dfTemp
 
-def runtrendrev(symbol, startdate, df, against, wth, row, titles):
+def runtrendrev(symbol, startdate, df, against, wth, row, titles, norm):
     import JambotClasses as c
     dfTemp = pd.DataFrame(columns=[titles[0], titles[1], 'min', 'max', 'final', 'numtrades'])
 
-    # Strat_Trend
-    trend = c.Strat_TrendRev(speed=(against, wth))
-    strats = []
-    strats.append(trend)
+    # Strat_TrendRev
+    strat = c.Strat_TrendRev(speed=(against, wth), norm=norm)
+    strats = [strat]
 
     sym = c.Backtest(symbol=symbol, startdate=startdate, strats=strats, df=df, row=row)
     sym.decidefull()
@@ -251,7 +250,10 @@ def addorder(order, ts):
         ft = ts + delta(hours=1)
     
     if not order.cancelled:
-        color = 'lime' if order.side == 1 else 'orange'
+        if order.ordtype == 2:
+            color = 'red'
+        else:
+            color = 'lime' if order.side == 1 else 'orange'
     else:
         color = 'grey'
 
@@ -291,7 +293,7 @@ def chartorders(df, t, n=36):
     # fig.add_trace(go.Scatter(x=df['CloseTime'], y=df['norm'],line=dict(color='yellow', width=1), yaxis='y2'))
     # fig.add_trace(go.Scatter(x=df['CloseTime'], y=df['trendrev_high'],line=dict(color='red', width=1)))
     # fig.add_trace(go.Scatter(x=df['CloseTime'], y=df['trendrev_low'],line=dict(color='red', width=1)))
-    fig.add_trace(go.Scatter(x=df['CloseTime'], y=df['ema10'],line=dict(color='#ffb066', width=1)))
+    # fig.add_trace(go.Scatter(x=df['CloseTime'], y=df['ema10'],line=dict(color='#ffb066', width=1)))
     fig.add_trace(go.Scatter(x=df['CloseTime'], y=df['ema50'],line=dict(color='#18f27d', width=1)))
     fig.add_trace(go.Scatter(x=df['CloseTime'], y=df['ema200'],line=dict(color='#9d19fc', width=1)))
     fig.add_trace(candlestick(df))
@@ -308,6 +310,7 @@ def chartorders(df, t, n=36):
         showlegend=False,
         title='Trade {}: {}, {:.2%}, {}'.format(t.tradenum, t.conf, t.pnlfinal, t.duration()),
         shapes=shapes,
+        xaxis_rangeslider_visible=False,
         yaxis=dict(side='right',
 			showgrid=False,
 			autorange=True,
@@ -322,7 +325,7 @@ def chartorders(df, t, n=36):
         autorange=True,
         tickformat=TimeFormat(hrs=True),
         gridcolor='#e6e6e6',
-        showgrid=True,
+        showgrid=False,
         gridwidth=1,
         tickangle=315)
     
@@ -448,7 +451,7 @@ def getContracts(xbt, leverage, entryprice, side, isaltcoin=False):
         return int(xbt * leverage * (1 / entryprice) * side)
 
 def side(x):
-    x = int(x)
+    # x = int(x)
     side = lambda x: -1 if x < 0 else (1 if x > 0 else 0)
     return side(x)
 
@@ -498,75 +501,15 @@ def senderror(msg='',prnt=False):
     if prnt or not 'linux' in platform:
         print(err)
     else:
-        discord(err)
+        discord(err, channel='err')
 
 # Column math functions
 
-def getC(maxspread):
-    m = -2.9
-    b = 0.135
-    return round(m * maxspread + b, 2)
-
-def emaExp(x, c):
-    side = np.where(x >= 0, 1, -1)
-    x = abs(x)
-    
-    aLim = 2
-    a = -1000
-    b = 3
-    d = -3
-    g = 1.7
-
-    y = side * (a * x ** b + d * x ** g) / (aLim * a * x ** b + aLim * d * x ** g + c)
-
-    return round(y, 6)
-
-def setConf(df):
-    
-    return df
-
 def addEma(df, p, c='Close'):
-    df['ema{}'.format(p)] = df[c].ewm(span=p, min_periods=p).mean()
-
-def setTradePrices(name, df, speed):
-
-    addEma(df=df, p=10)
-    addEma(df=df, p=50)
-    addEma(df=df, p=200)
-
-    df['emaspread'] = round((df['ema50'] - df['ema200']) / ((df['ema50'] + df['ema200']) / 2) ,6)
-    df['trend'] = np.where(df['ema50'] > df['ema200'], 1, -1)
-
-    c = getC(maxspread=0.1)
-    df['conf'] = emaExp(x=df['emaspread'], c=c)
-    
-    against, wth = speed[0], speed[1]
-    df['mhw'] = df['High'].rolling(wth).max().shift(1)
-    df['mha'] = df['High'].rolling(against).max().shift(1)
-    df['mla'] = df['Low'].rolling(wth).min().shift(1)
-    df['mlw'] = df['Low'].rolling(against).min().shift(1)
-
-    df[name + '_high'] = np.where(df['trend'] == 1, df['mha'], df['mhw'])
-    df[name + '_low'] = np.where(df['trend'] == -1, df['mlw'], df['mla'])
-    
-    df = df.drop(columns=['mha', 'mhw', 'mla', 'mlw'])
-
-    return df
-
-def setVolatility(df, norm=(1,4)):
-    df['maxhigh'] = df['High'].rolling(48).max()
-    df['minlow'] = df['Low'].rolling(48).min()
-    df['spread'] = abs(df['maxhigh'] - df['minlow']) / df[['maxhigh', 'minlow']].mean(axis=1)
-
-    df['emavty'] = df['spread'].ewm(span=180, min_periods=180).mean()
-    df['smavty'] = df['spread'].rolling(300).mean()
-    df['norm'] = np.interp(df['smavty'], (0, 0.25), (norm[0], norm[1]))
-    df['normtp'] = np.interp(df['smavty'], (0, 0.4), (0.3, 3))
-
-    df = df.drop(columns=['maxhigh', 'minlow'])
-
-    return df
-
+    # check if column already exists
+    col = 'ema{}'.format(p)
+    if not col in df:
+        df[col] = df[c].ewm(span=p, min_periods=p).mean()
 
 class Switch:
     def __init__(self, value):
