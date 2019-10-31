@@ -28,8 +28,8 @@ class User():
         self.div = 100000000
         
         if not test:
-            api_key = '8TrStc6owdNQEoRRByKtuHSp'
-            api_secret = 'CVOYdHBRVt1b3xl0y6xEVNoziOq0S16tncd1ZzszE8T7hkyx'
+            api_key = ''
+            api_secret = ''
         else:
             api_key = 'ug95yWa1yCZzt7P-pXubAyEc'
             api_secret = 'Ry3Terz_5M9ldNKP8tNamv84dUhxkp-P5Re9_ljKw8raIwgX'
