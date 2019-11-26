@@ -145,7 +145,6 @@ class Backtest():
         self.symbolbitmex = row.symbolbitmex
         self.altstatus = bool(row.altstatus)
         self.decimalfigs = row.decimalfigs
-        self.tradingenabled = True
 
         self.symbol = symbol
         self.startdate = f.checkDate(startdate)
