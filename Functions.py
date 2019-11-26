@@ -6,30 +6,19 @@ from datetime import datetime as date
 from datetime import timedelta as delta
 from sys import platform
 from time import time
+from urllib import parse as prse
 
-import numpy as np
 import pandas as pd
+import pypika as pk
+import sqlalchemy as sa
 from dateutil.parser import parse
+from pypika import functions as fn
 
+import LiveTrading as live
 import pyodbc
 
 
-def hurst(ts):
-    from numpy import cumsum, log, polyfit, sqrt, std, subtract
-    from numpy.random import randn
-
-    # Create the range of lag values
-    lags = range(2, 100)
-
-	# Calculate the array of the variances of the lagged differences
-    tau = [sqrt(std(subtract(ts[lag:], ts[:-lag]))) for lag in lags]
-
-    # Use a linear fit to estimate the Hurst Exponent
-    poly = polyfit(log(lags), log(tau), 1)
-
-    # Return the Hurst exponent from the polyfit output
-    return poly[0]*2.0
-
+# PARALLEL
 def runtrend(symbol, startdate, mr, df, against, wth, row, titles):
     import JambotClasses as c
     dfTemp = pd.DataFrame(columns=[titles[0], titles[1], 'min', 'max', 'final', 'numtrades'])
@@ -47,18 +36,30 @@ def runtrend(symbol, startdate, mr, df, against, wth, row, titles):
 
     return dfTemp
 
+def runtrendrev_single(startdate, dfall, speed, norm, row):
+    import JambotClasses as c
+
+    symbol = row.symbol
+    df = dfall[dfall.Symbol==symbol].reset_index(drop=True)
+
+    strat = c.Strat_TrendRev(speed=speed, norm=norm)
+    sym = c.Backtest(symbol=symbol, startdate=startdate, strats=[strat], df=df, row=row)
+    sym.decidefull()
+
+    return sym
+
 def runtrendrev(symbol, startdate, df, against, wth, row, titles, norm):
     import JambotClasses as c
-    dfTemp = pd.DataFrame(columns=[titles[0], titles[1], 'min', 'max', 'final', 'numtrades'])
+    
 
     # Strat_TrendRev
     strat = c.Strat_TrendRev(speed=(against, wth), norm=norm)
-    strats = [strat]
-
-    sym = c.Backtest(symbol=symbol, startdate=startdate, strats=strats, df=df, row=row)
+    sym = c.Backtest(symbol=symbol, startdate=startdate, strats=[strat], df=df, row=row)
     sym.decidefull()
 
     a = sym.account
+
+    dfTemp = pd.DataFrame(columns=[titles[0], titles[1], 'min', 'max', 'final', 'numtrades'])
     dfTemp.loc[0] = [against, wth, round(a.min,3), round(a.max,3), round(a.balance,3), sym.strats[0].tradecount()]
 
     return dfTemp
@@ -85,12 +86,8 @@ def runchop(symbol, startdate, df, against, wth, tpagainst, tpwith, lowernorm, u
 
     return dfTemp
 
-def line():
-    return '\n'
 
-def dline():
-    return line() + line()
-
+# DATETIME
 def checkDate(d):
     if type(d) is str:
         return parse(d)
@@ -128,8 +125,17 @@ def printTime(start):
             mins = mins % 60
             return "used: " + str(hours) + "h " + str(mins) + "m " + str(secs) + "s."
 
+def hournow():
+    return date.utcnow().replace(microsecond=0, second=0, minute=0)
+
+
+def line():
+    return '\n'
+
+def dline():
+    return line() + line()
+
 def matrix(df, cols):
-    # print(df)
     return df.pivot(cols[0], cols[1], cols[2])
 
 def heatmap(df, cols, title='', dims=(15,15)):
@@ -148,93 +154,6 @@ def readcsv(startdate, daterange):
 
 def currentdir():
     return os.path.join(os.path.dirname(os.path.realpath(__file__)), '')
-
-def getGoogleSheet():
-    import pygsheets
-    fpath = os.path.join(currentdir(), 'client_secret.json')
-    c = pygsheets.authorize(service_account_file=fpath)
-    sheet = c.open("Jambot Settings")
-    return sheet
-
-def getConn():
-    server = 'tcp:jgazure2.database.windows.net,1433'
-    database = 'Jambot'
-    username = 'jgordon@jgazure2'
-    password = 'Z%^7wdpf%Nai=^ZFy-U.'
-    conn = pyodbc.connect('DRIVER={ODBC Driver 17 for SQL Server};SERVER=' +
-                          server + ';DATABASE=' + database + ';UID=' + username + ';PWD=' + password)
-    return conn
-
-def getDataFrame(symbol=None, period=300, startdate=None, enddate=None):
-    conn = getConn()
-    sql=getQuery(symbol=symbol, period=period, startdate=startdate, enddate=enddate)
-    Query = pd.read_sql_query(sql=sql, con=conn, parse_dates=['CloseTime'])
-    conn.close
-
-    return pd.DataFrame(Query)
-
-def updateAllSymbols():
-    import LiveTrading as live
-    sql = 'Select Symbol, DateAdd(hour, 1, max(CloseTime)) as CloseTime From Bitmex_OHLC Group By Symbol Order By CloseTime'
-    conn = getConn()
-    df = pd.read_sql_query(sql=sql, con=conn, parse_dates=['CloseTime'])
-    result = None
-
-    # loop query result, add all to dict with maxtime as key, symbols as list
-    m = defaultdict(list)
-    for i, row in df.iterrows():
-        m[row.CloseTime].append(row.Symbol)
-    # print(m)
-    u = live.User() # could maybe get this from a global variable, or pass in?
-    sql = 'Insert Into Bitmex_OHLC (Symbol, Interval, CloseTime, [Open], High, Low, [Close]) Values '
-
-    # loop dict and call bitmex for each group of syms in max time
-    for starttime in m.keys():
-
-        numsyms = len(m[starttime])
-        hrsremaining = 1 + (date.utcnow() - starttime).total_seconds() // 3600
-        # print(date.utcnow(), starttime, hrsremaining)
-        
-        while hrsremaining > 0:
-            f = json.dumps(dict(symbol=m[starttime]))
-            result = u.getCandles(startTime=starttime, f=f, reverse=False)
-            # print(json.dumps(result, default=str, indent=4))
-
-            for c in result:
-                sql += '({}, 1, {}, {}, {}, {}, {}),'.format(qIt(c['symbol']), qIt(date.strftime(c['timestamp'], TimeFormat(secs=True))), c['open'], c['high'], c['low'], c['close'])
-
-            starttime += delta(hours=750 // numsyms)
-            hrsremaining = (date.now() - starttime).total_seconds() // 3600
-    
-    if not result is None and len(result) > 0:
-        # print(sql[:-1])
-        conn.cursor().execute(sql[:-1])
-        conn.commit()
-    
-    conn.close
-    # return result
-
-def getQuery(symbol=None, period=300, startdate=None, enddate=None):
-
-    if startdate is None:
-        startdate = date.utcnow() + delta(hours=abs(period) * -1)
-        # startdate = t.strftime(TimeFormat())
-
-    sFilter = 'Where CloseTime>=' + qIt(startdate.strftime(TimeFormat(mins=True)))
-
-    if not enddate is None:
-        sFilter = sFilter + ' and CloseTime<=' + qIt(enddate.strftime(TimeFormat(mins=True)))
-
-    if not symbol is None:
-        sFilter = sFilter + ' and Symbol=' + qIt(symbol)
-
-    Query = 'Select Symbol, CloseTime, [Open], High, Low, [Close] From Bitmex_OHLC ' + \
-        sFilter + ' Order By Symbol, CloseTime '
-    # print(Query)
-    return Query
-
-def qIt(s):
-    return "'" + s + "'"
 
 def plotChart(df, symbol, df2=None):
     import plotly.offline as py
@@ -424,6 +343,10 @@ def chart(df, symbol, df2=None):
 def percent(val):
     return '{:.2%}'.format(val)
 
+def priceformat(altstatus=False):
+    ans = '{:,.0f}' if not altstatus else '{:,.0f}'
+    return ans
+
 def getPrice(pnl, entryprice, side):
     if side == 1:
         return pnl * entryprice + entryprice
@@ -482,6 +405,8 @@ def discord(msg, channel='jambot'):
         WEBHOOK_ID = '512030769775116319'
         WEBHOOK_TOKEN = 's746HqzlZGedOfnSmgDeC8HJJT_5-bYcgUbgs8KWwvb6gw38gGR_WhQylFKdcWtGyTHi'
 
+        msg += '@here'
+
     # Create webhook
     webhook = Webhook.partial(WEBHOOK_ID, WEBHOOK_TOKEN,\
     adapter=RequestsWebhookAdapter())
@@ -489,22 +414,160 @@ def discord(msg, channel='jambot'):
     if len(msg) > 0:
         webhook.send(msg)
 
-def senderror(msg='',prnt=False):
+def senderror(msg='', prnt=False):
     import traceback
     err = traceback.format_exc().replace('Traceback (most recent call last):\n', '')
-    
+
     if not msg == '':
-        err = '{}:\n{}'.format(msg, err)
+        err = '{}:\n{}'.format(msg, err).replace(':\nNoneType: None', '')
     
     err = '*------------------*\n{}'.format(err)
 
     if prnt or not 'linux' in platform:
         print(err)
+        discord(err, channel='err')
     else:
         discord(err, channel='err')
 
-# Column math functions
 
+# DATABASE
+def getGoogleSheet():
+    import pygsheets
+    fpath = os.path.join(currentdir(), 'client_secret.json')
+    c = pygsheets.authorize(service_account_file=fpath)
+    sheet = c.open("Jambot Settings")
+    return sheet
+
+def getDataFrame(symbol=None, period=300, startdate=None, enddate=None):
+    e = engine()
+
+    sql=getQuery(symbol=symbol, period=period, startdate=startdate, enddate=enddate)
+    Query = pd.read_sql_query(sql=sql, con=e, parse_dates=['CloseTime'])
+    e.raw_connection().close()
+
+    return pd.DataFrame(Query)
+
+def getmaxdates(db=None):
+    # Make sure to close conn
+    if db is None: db = DB()
+
+    tbl = pk.Table('Bitmex_OHLC')
+    q = (pk.Query.from_(tbl)
+        .select('Symbol', fn.Max(tbl.CloseTime)
+            .as_('CloseTime'))
+        .groupby(tbl.Symbol)
+        .orderby('CloseTime'))
+
+    df = pd.read_sql_query(sql=q.get_sql(), con=db.conn, parse_dates=['CloseTime'])
+
+    return df
+
+def updateAllSymbols(u=None):
+    db = DB()
+    lst = []
+    if u is None: u = live.User()
+    datenow = hournow()
+
+    # loop query result, add all to dict with maxtime as KEY, symbols as LIST
+    m = defaultdict(list)
+    for i, row in getmaxdates(db).iterrows():
+        m[row.CloseTime].append(row.Symbol)
+
+    # loop dict and call bitmex for each list of syms in maxdate
+    for maxdate in m.keys():
+        fltr = json.dumps(dict(symbol=m[maxdate])) # filter symbols needed
+        numsyms = len(m[maxdate])
+
+        while maxdate < datenow:
+            dfcandles = u.getCandles(starttime=maxdate + delta(hours=1), f=fltr, includepartial=False)
+            lst.append(dfcandles)
+
+            maxdate += delta(hours=1000 // numsyms)
+
+    if lst:
+        df = pd.concat(lst)
+        df.to_sql(name='Bitmex_OHLC', con=db.conn, if_exists='append', index=False)
+    
+    # TODO: keep db conn open and pass to TopLoop
+    db.close()
+
+def getQuery(symbol=None, period=300, startdate=None, enddate=None):
+
+    # TODO: Rebuild this with pypika
+    if startdate is None:
+        startdate = date.utcnow() + delta(hours=abs(period) * -1)
+        # startdate = t.strftime(TimeFormat())
+
+    sFilter = 'Where CloseTime>=' + qIt(startdate.strftime(TimeFormat(mins=True)))
+
+    if not enddate is None:
+        sFilter = sFilter + ' and CloseTime<=' + qIt(enddate.strftime(TimeFormat(mins=True)))
+
+    if not symbol is None:
+        sFilter = sFilter + ' and Symbol=' + qIt(symbol)
+
+    Query = 'Select Symbol, CloseTime, [Open], High, Low, [Close] From Bitmex_OHLC ' + \
+        sFilter + ' Order By Symbol, CloseTime '
+    # print(Query)
+    return Query
+
+def qIt(s):
+    return "'" + s + "'"
+
+def strConn():
+    driver = '{ODBC Driver 17 for SQL Server}'
+    server = 'tcp:jgazure2.database.windows.net,1433'
+    database = 'Jambot'
+    username = 'jgordon@jgazure2'
+    password = 'Z%^7wdpf%Nai=^ZFy-U.'
+    return 'DRIVER={};SERVER={};DATABASE={};UID={};PWD={}'.format(driver, server, database, username, password)
+
+def engine():
+    params = prse.quote_plus(strConn())
+    return sa.create_engine('mssql+pyodbc:///?odbc_connect={}'.format(params), fast_executemany=True)
+
+class DB(object):
+    def __init__(self):
+        self.df_unit = None
+        self.conn = engine()
+        self.conn.raw_connection().autocommit = True  # doesn't seem to work rn
+        self.cursor = self.conn.raw_connection().cursor()
+
+    def close(self):
+        try:
+            self.cursor.close()
+        except:
+            try:
+                self.conn.raw_connection().close()
+            except:
+                pass
+
+    def __del__(self):
+        self.close()
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *args):
+        self.close()
+
+
+# Pandas DataFrame Styles
+def background_contracts(s):
+    # color = 'red' if val < 0 else 'black'
+    # return 'color: {}'.format(color)
+    is_neg = s < 0
+    return ['background-color: red' if v else 'background-color: blue' for v in is_neg]
+
+def neg_red(s):
+    return ['color: #ff8080' if v < 0 else '' for v in s]
+
+# Pandas plot on 2 axis
+# ax = sym.df.plot(kind='line', x='CloseTime', y=['ema50', 'ema200'])
+# sym.df.plot(kind='line', x='CloseTime', y='conf', secondary_y=True, ax=ax)
+
+
+# Column math functions
 def addEma(df, p, c='Close'):
     # check if column already exists
     col = 'ema{}'.format(p)
@@ -524,6 +587,4 @@ class Switch:
     def __call__(self, *values):
         return self.value in values
 
-# Pandas plot on 2 axis
-# ax = sym.df.plot(kind='line', x='CloseTime', y=['ema50', 'ema200'])
-# sym.df.plot(kind='line', x='CloseTime', y='conf', secondary_y=True, ax=ax)
+

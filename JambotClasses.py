@@ -9,7 +9,7 @@ import pandas as pd
 from columnar import columnar
 
 import Functions as f
-# comment
+import LiveTrading as live
 
 # BACKTEST
 class Account():
@@ -104,12 +104,12 @@ class Account():
         table = columnar(data, headers, no_borders=True, justify='r')
         print(table)
 
-    def plotbalance(self, logy=False):
+    def plotbalance(self, logy=False, title=None):
         m = {}
         m['timestamp'] = [t.timestamp for t in self.txns]
         m['balance'] = [t.acctbalance for t in self.txns]
         df = pd.DataFrame.from_dict(m)
-        df.plot(kind='line', x='timestamp', y='balance', logy=logy, linewidth=0.75, color='cyan')
+        df.plot(kind='line', x='timestamp', y='balance', logy=logy, linewidth=0.75, color='cyan', title=title)
 
     def printtxns(self):
         data = []
@@ -132,7 +132,7 @@ class Account():
 
 class Backtest():
     def __init__(self, symbol, startdate=None, strats=[],
-    stratactive=False, daterange=365, df=None, row=None, write=False, account=None):
+    stratactive=False, daterange=365, df=None, row=None, write=False, account=None, partial=False, u=None):
 
         if row is None:
             dfsym = pd.read_csv(os.path.join(f.currentdir(), 'symbols.csv'))
@@ -145,6 +145,8 @@ class Backtest():
         self.symbolbitmex = row.symbolbitmex
         self.altstatus = bool(row.altstatus)
         self.decimalfigs = row.decimalfigs
+        self.tradingenabled = True
+        self.partial = partial
 
         self.symbol = symbol
         self.startdate = f.checkDate(startdate)
@@ -165,6 +167,10 @@ class Backtest():
                 self.df = f.getDataFrame(symbol=symbol, startdate=f.startvalue(startdate), enddate=f.enddate(startdate, daterange))
             else:
                 self.df = df
+
+            if partial:
+                if u is None: u = live.User()
+                self.df = u.appendpartial(df)
            
             self.startrow = self.df.loc[self.df['CloseTime'] == pd.Timestamp(self.startdate)].index[0]
 
@@ -216,25 +222,30 @@ class Backtest():
             for strat in self.strats:
                 strat.writerow(i)
 
-    def printfinal(self, strat=0):
+    def printfinal(self):
+        style = self.result().style.hide_index()
+        style.format({'Min': '{:.3f}',
+                    'Max': '{:.3f}',
+                    'Final': '{:.3f}',
+                    'Drawdown': '{:.2%}'})
+        display(style)
+
+    def result(self):
         a = self.account
         strat = self.strats[0]
-        data = []
-        headers = ['Symbol', 'Min', 'Max', 'Final', 'Goodtrades', 'Drawdown', 'Period']
 
         drawdown, drawdates = a.drawdown()
 
-        data.append([
-            self.symbol,
-            round(a.min, 3),
-            round(a.max, 3),
-            round(a.balance, 3),
-            '{}/{}/{}'.format(strat.goodtrades(), strat.tradecount(), strat.unfilledtrades),
-            '{:.2%}'.format(drawdown),
-            drawdates])
+        data = {
+            'symbol': [self.symbol],
+            'Min': [a.min],
+            'Max': [a.max],
+            'Final': [a.balance],
+            'Drawdown': [drawdown],
+            'Period': [drawdates],
+            'Goodtrades': ['{}/{}/{}'.format(strat.goodtrades(), strat.tradecount(), strat.unfilledtrades)]}
 
-        table = columnar(data, headers, no_borders=True, justify='r')
-        print(table)
+        return pd.DataFrame(data=data)
 
     def writecsv(self):
         self.df.to_csv('dfout.csv')
@@ -293,7 +304,7 @@ class Signal_MACD(Signal):
         df['macd_trend'] = np.where(df.macd_diff > 0, 1, -1)
 
     def final(self, side, i):
-        if side * self.df.macd_trend[i]  == 1:
+        if side * self.df.macd_trend[i] == 1:
             conf = 1.25
         else:
             conf = 0.5
@@ -341,6 +352,21 @@ class Signal_EMA(Signal):
 
         return round(y, 6)
 
+class Signal_EMA_Slope(Signal):
+    def __init__(self, df, weight=1, p=50, slope=5):
+        super().__init__(df=df, weight=weight)
+        f.addEma(df=df, p=p)
+        df['ema_slope'] = np.where(np.roll(df['ema{}'.format(p)], slope, axis=0) < df['ema{}'.format(p)], 1, -1)
+        df.loc[:p + slope, 'ema_slope'] = np.nan
+
+    def final(self, side, i):
+        if side * self.df.ema_slope[i] == 1:
+            conf = 1.5
+        else:
+            conf = 0.5
+
+        return conf * self.weight     
+
 class Signal_Volatility(Signal):
     def __init__(self, df, weight=1, norm=(0.004,0.016)):
         super().__init__(df=df, weight=weight)
@@ -365,10 +391,10 @@ class Signal_Trend(Signal):
         super().__init__(df=df)
         # accept 1 to n series of trend signals, eg 1 or -1
         # sum signals > positive = 1, negative = -1, neutral = 0
-        df['temp'] = np.sum(signals, axis=0)
-        df['trend'] = np.where(df.temp == 0, 0, np.where(df.temp > 0, 1, -1))
-        # df['temp'] = np.nan
-        # df['trend'] = df.macd_trend
+        # df['temp'] = np.sum(signals, axis=0)
+        # df['trend'] = np.where(df.temp == 0, 0, np.where(df.temp > 0, 1, -1))
+        df['temp'] = np.nan
+        df['trend'] = df.ema_trend
 
         # set trade high/low in period prices
         against, wth, neutral = speed[0], speed[1], int(np.average(speed))
@@ -390,6 +416,7 @@ class Signal_Trend(Signal):
 
     def final(self, i):
         return self.df.trend[i]
+
 
 # STRAT
 class Strategy():
@@ -460,10 +487,12 @@ class Strategy():
     def badtrades(self):
         return list(filter(lambda x: x.pnlfinal <= 0, self.trades))
 
-    def printtrades(self, maxmin=0, maxlines=-1):
+    def printtrades(self, maxmin=0, maxlines=-1, last=0):
         data = []
-        headers = ['N', 'Timestamp', 'Sts', 'Dur', 'Entry', 'Exit', 'Contracts', 'conf', 'Pnl', 'Bal']
-        for i, t in enumerate(self.trades):
+        cols = ['N', 'Timestamp', 'Sts', 'Dur', 'Entry', 'Exit', 'Contracts', 'conf', 'Pnl', 'Bal']
+        figs = self.sym.decimalfigs
+
+        for i, t in enumerate(self.trades[last * -1:]):
             if not maxmin == 0 and maxmin * t.pnlfinal <= 0: continue
             
             data.append([
@@ -471,24 +500,25 @@ class Strategy():
                 '{:%Y-%m-%d %H}'.format(t.candles[0].CloseTime),
                 t.status,
                 t.duration(),
-                '{:,.0f}'.format(t.entryprice),
-                '{:,.0f}'.format(t.exitprice),
-                '{:,}'.format(t.filledcontracts),
+                '{:,.{}f}'.format(t.entryprice, figs),
+                '{:,.{}f}'.format(t.exitprice, figs),
+                t.filledcontracts,
                 round(t.conf, 3),
-                '{:.2%}'.format(t.pnlfinal),
+                t.pnlfinal,
                 round(t.exitbalance, 2)
             ])
         
             if i == maxlines: break
 
-        table = columnar(data, headers, no_borders=True, justify='r', min_column_width=2)
-        print(table)
+        style = pd.DataFrame.from_records(data=data, columns=cols).style.hide_index()
+        # style.apply(f.background_contracts, subset=['Contracts'])
+        style.apply(f.neg_red, subset=['Pnl'])
+        style.format({'Pnl': '{:.2%}',
+                    'Contracts': '{:,}'})
+        display(style)
 
 class Strat_TrendRev(Strategy):
-    # variable slippage % based on emavty or smavty
-    # try variable stopout % too?
-    # if orders haven't filled after n candles (3 ish?), close only, or close and enter?
-    # count unfilled trades
+    # try variable stopout %?
 
     def __init__(self, speed=(8,8), weight=1, norm=(0.004, 0.024), lev=5):
         self.name = 'trendrev'
@@ -508,7 +538,8 @@ class Strat_TrendRev(Strategy):
 
         macd = Signal_MACD(df=df, weight=1)
         ema = Signal_EMA(df=df, weight=1)
-        self.conf.addsignal([macd, ema])
+        emaslope = Signal_EMA_Slope(df=df, weight=1, p=50, slope=5)
+        self.conf.addsignal([macd, ema, emaslope])
 
         self.trend = Signal_Trend(df=df, signals=[df.ema_trend, df.macd_trend], speed=self.speed)
 
@@ -576,7 +607,7 @@ class Strat_TrendRev(Strategy):
 
     def finalOrders(self, u, weight):
         lstorders = []
-        balance = u.totalbalancewallet * weight
+        balance = u.balance() * weight
         curr_cont = u.getPosition(self.sym.symbolbitmex)['currentQty']
         c = self.candle
         symbol = self.sym.symbolbitmex
@@ -600,8 +631,7 @@ class Strat_TrendRev(Strategy):
                 
                 # subtract from curr_cont when market closing
                 curr_cont += prevclose.contracts
-            
-        # May need to check this every 5 mins or something
+
         # limit close should always be 'Close' Only??
         if not curr_cont == 0:
             t_current.limitclose.contracts = curr_cont * -1
@@ -610,10 +640,17 @@ class Strat_TrendRev(Strategy):
         # BUY
         currentbuy = t_current.limitopen
         currentbuy_actual = u.getOrderByKey(key=f.key(symbol, 'limitopen', currentbuy.side, 1))
-        print(currentbuy.filled, currentbuy.marketfilled, curr_cont, t_current.duration())
+        # print(currentbuy.filled, currentbuy.marketfilled, curr_cont, t_current.duration())
+        
+        # exclude last candle if sym partial
+        offset = 0 if not self.sym.partial else -1
+
         if currentbuy.filled:
-            if currentbuy.marketfilled and curr_cont == 0 and t_current.duration() == 4:
-                currentbuy.setname('marketbuy') # need a diff name cause 2 limitbuys possible
+            if (
+            currentbuy.marketfilled 
+            and curr_cont == 0
+            and t_current.duration() + offset == 4):
+                currentbuy.setname('marketbuy') # need diff name cause 2 limitbuys possible
                 currentbuy.ordtype2 = 'Market'
                 lstorders.append(currentbuy)
                 curr_cont += currentbuy.contracts
@@ -644,6 +681,10 @@ class Strat_TrendRev(Strategy):
             # should check to make sure position is closed?
             # raise Exception 'Theoretical stop filled but position open'
             pass
+
+        if not curr_cont == 0:
+            if t_current.stop.contracts == 0 or not t_current.stop in lstorders:
+                f.discord(msg='Error: no stop for current position', channel='err')
 
         return self.checkfinalorders(lstorders)
 
@@ -956,6 +997,30 @@ class Strat_Chop(Strategy):
         table = columnar(data, headers, no_borders=True, justify='r', min_column_width=2)
         print(table)
 
+class Strat_SFP(Strategy):
+    def __init__(self, weight=1, lev=5):
+        self.name = 'SFP'
+        super().__init__(self.name, weight, lev)
+
+        # min lookback period = 12?
+        # max lookback period = 7 * 24?
+        min_lookback = 12
+        max_lookback = 3 * 24
+
+        df['sfp_high'] = df.High.rolling(max_lookback).max().shift(min_lookback)
+        df['sfp_low'] = df.High.rolling(max_lookback).min().shift(min_lookback)        
+
+    def decide(self, c):
+
+        # check for swing high
+        if c.High > c.sfp_high and c.Close < c.sfp_high:
+            pass
+
+        # check for swing low
+        if c.Low < c.sfp_low and c.Close > c.sfp_low:
+            pass
+
+        
 
 # TRADE
 class Trade():
@@ -1140,15 +1205,13 @@ class Trade_TrendRev(Trade):
     def closeprice(self):
         c = self.candle
         price = c.pxhigh if self.side == 1 else c.pxlow
+        self.slippage = self.strat.vty.final(i=self.strat.candle.Index)
 
-        return round(price * (1 + self.slippage * self.side),0)
+        return round(price * (1 + self.slippage * self.side), self.sym.decimalfigs)
     
     def enter(self):
         # c = self.strat.candle
-        # self.stoppercent = c.norm * -1
-        # self.slippage = c.norm / 60
         self.stoppercent = self.strat.stoppercent
-        # self.slippage = self.strat.slippage
         self.slippage = self.strat.vty.final(i=self.strat.candle.Index)
 
         limitbuyprice = self.entrytarget * (1 + self.slippage * self.side * -1)
@@ -1476,12 +1539,12 @@ class Order():
             self.ordarray.openorders -= 1
 
     def rescalecontracts(self, balance, conf=1):
-        self.contracts = int(conf) * f.getContracts(
+        self.contracts = int(conf * f.getContracts(
                         xbt=balance,
                         leverage=self.trade.strat.lev,
                         entryprice=self.price,
                         side=self.side,
-                        isaltcoin=self.sym.altstatus)
+                        isaltcoin=self.sym.altstatus))
 
     def intakelivedata(self, livedata):
         self.livedata = livedata
@@ -1529,7 +1592,6 @@ class Order():
     def finalprice(self, price=None):
         if price is None:
             price = self.price
-
         return round(round(price, self.decimalfigs) + self.decimaldouble * self.side * -1, self.decimalfigs) #slightly excessive rounding
      
 class OrdArray():

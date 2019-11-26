@@ -1,16 +1,19 @@
-from datetime import datetime as date
-import azure.functions as func
 import sys
+from os import path
 sys.path.append('/home/site/wwwroot')
+sys.path.append(path.dirname(path.dirname(__file__)))
+
+from datetime import datetime as date
+
+import azure.functions as func
 
 import Functions as f
 import LiveTrading as live
-# test comment
 
 def main(mytimer: func.TimerRequest) -> None:
     try:
-        f.updateAllSymbols()
-        live.TopLoop()
-        f.discord('Updated: {}'.format(date.strftime(date.now(), f.TimeFormat(mins=True))))
+        u = live.User()
+        f.updateAllSymbols(u=u)
+        live.TopLoop(u=u)
     except:
         f.senderror()

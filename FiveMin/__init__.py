@@ -1,14 +1,18 @@
-from datetime import datetime as date
-import azure.functions as func
 import sys
+from os import path
 sys.path.append('/home/site/wwwroot')
+sys.path.append(path.dirname(path.dirname(__file__)))
+
+from datetime import datetime as date
+
+import azure.functions as func
 
 import Functions as f
 import LiveTrading as live
 
+
 def main(mytimer: func.TimerRequest) -> None:
     try:
-        live.checkfilledorders()
-        # f.discord('test from local host: {}'.format(date.strftime(date.now(), f.TimeFormat())))
+        live.checkfilledorders(refresh=True)
     except:
         f.senderror()
