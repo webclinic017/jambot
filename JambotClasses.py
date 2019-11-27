@@ -212,6 +212,9 @@ class Backtest():
                     strat.decide(row)
 
                 if self.write: self.writerow(i)
+        
+        if self.partial:
+            self.strats[0].trades[-1].partial = True
 
     def writerow(self, i):
         df = self.df
@@ -618,7 +621,7 @@ class Strat_TrendRev(Strategy):
         t_current.rescaleorders(balance=balance)
         t_current.stop.contracts = 0
 
-        # CLOSE
+        # CLOSE - Prev
         # Check if current limitclose is still open with same side
         prevclose = self.trades[-2].limitclose
         if prevclose.marketfilled:
@@ -632,24 +635,15 @@ class Strat_TrendRev(Strategy):
                 # subtract from curr_cont when market closing
                 curr_cont += prevclose.contracts
 
-        # limit close should always be 'Close' Only??
-        if not curr_cont == 0:
-            t_current.limitclose.contracts = curr_cont * -1
-            lstorders.append(t_current.limitclose)
-
         # BUY
         currentbuy = t_current.limitopen
         currentbuy_actual = u.getOrderByKey(key=f.key(symbol, 'limitopen', currentbuy.side, 1))
         # print(currentbuy.filled, currentbuy.marketfilled, curr_cont, t_current.duration())
         
-        # exclude last candle if sym partial
-        offset = 0 if not self.sym.partial else -1
-
         if currentbuy.filled:
-            if (
-            currentbuy.marketfilled 
+            if (currentbuy.marketfilled 
             and curr_cont == 0
-            and t_current.duration() + offset == 4):
+            and t_current.duration() == 4):
                 currentbuy.setname('marketbuy') # need diff name cause 2 limitbuys possible
                 currentbuy.ordtype2 = 'Market'
                 lstorders.append(currentbuy)
@@ -663,7 +657,7 @@ class Strat_TrendRev(Strategy):
             lstorders.append(t_next.stop)
         else:
             # Only till max 4 candles into trade
-            lstorders.append(currentbuy)
+            lstorders.append(currentbuy) 
 
         # STOP
         # stop depends on either a position OR a limitopen
@@ -682,7 +676,11 @@ class Strat_TrendRev(Strategy):
             # raise Exception 'Theoretical stop filled but position open'
             pass
 
+        # CLOSE - current
         if not curr_cont == 0:
+            t_current.limitclose.contracts = curr_cont * -1
+            lstorders.append(t_current.limitclose)    
+
             if t_current.stop.contracts == 0 or not t_current.stop in lstorders:
                 f.discord(msg='Error: no stop for current position', channel='err')
 
@@ -1020,7 +1018,6 @@ class Strat_SFP(Strategy):
         if c.Low < c.sfp_low and c.Close > c.sfp_low:
             pass
 
-        
 
 # TRADE
 class Trade():
@@ -1039,6 +1036,7 @@ class Trade():
         self.strat = None
         self.exitbalance = 0
         self.exitcontracts = 0
+        self.partial = False
 
     def init(self, price, targetcontracts, strat, conf=1, entryrow=0, side=None, temp=False):
         self.entrytarget = price
@@ -1095,7 +1093,8 @@ class Trade():
         self.candle = candle
     
     def duration(self):
-        return len(self.candles)
+        offset = -1 if self.partial else 0
+        return len(self.candles) + offset
 
     def pnlcurrent(self, candle=None):
         if candle is None: candle = self.getCandle(self.duration())

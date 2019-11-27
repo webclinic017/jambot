@@ -59,26 +59,16 @@ class User():
             # if data is blank, may need to .prepare() request first?
             f.senderror('{}\n{}'.format(response, request.future.request.data))
 
-    def getPosition(self, symbol=None, refresh=False):
+    def getPosition(self, symbol, refresh=False):
         if self.positions is None or refresh:
             self.setPositions()
         
-        if not symbol is None:
-            if symbol in self.posdict:
-                return self.positions[self.posdict[symbol]]
-            else:
-                return {}
-        else:
-            return self.positions
+        return list(filter(lambda x: x['symbol']==symbol, self.positions))[0]
 
     def setPositions(self, fltr=''):
-        self.posdict = defaultdict()
         self.positions = self.client.Position.Position_get(filter=fltr).result()[0]
-        
-        for i, pos in enumerate(self.positions):
-            self.posdict[pos['symbol']] = i
 
-    def dfOrders(self, symbol='', newonly=True, refresh=False):
+    def dfOrders(self, symbol=None, newonly=True, refresh=False):
         orders = self.getOrders(symbol=symbol, newonly=newonly, refresh=refresh)
         cols = ['ordType', 'name', 'size', 'price', 'execInst', 'symbol']
         
@@ -116,18 +106,22 @@ class User():
                                                 count=100,
                                                 startTime=starttime).response().result
         
-    def getOrders(self, symbol='', newonly=True, refresh=False):
+    def getOrders(self, symbol=None, newonly=True, botonly=False, refresh=False):
         if self.orders is None or refresh:
             self.orders = []
             self.setOrders(newonly=newonly)
         
-        if symbol == '':
-            return self.orders
-        else:
-            return [self.orders[i] for i in self.orderdict[symbol]]
+        orders = self.orders
+
+        if not symbol is None:
+            orders = list(filter(lambda x: x['symbol']==symbol, orders))
+
+        if botonly:
+            orders = list(filter(lambda x: not x['clOrdID']=='', orders))
+
+        return orders
             
     def setOrders(self, symbol='', fltr={}, newonly=True):
-        self.orderdict = defaultdict(list)
         self.orderkeysdict = {}
         
         if newonly:
@@ -135,7 +129,7 @@ class User():
 
         fltr = json.dumps(fltr)
 
-        self.orders = self.client.Order.Order_getOrders(symbol=symbol, filter=fltr, reverse=True, count=12).response().result
+        self.orders = self.client.Order.Order_getOrders(symbol=symbol, filter=fltr, reverse=True, count=20).response().result
         for i, order in enumerate(self.orders):
             
             order['side'] = 1 if order['side'] == 'Buy' else -1
@@ -145,8 +139,6 @@ class User():
                 order['key'] = '-'.join(order['clOrdID'].split('-')[:-1])
                 order['name'] = '-'.join(order['clOrdID'].split('-')[1:-1])
                 self.orderkeysdict[order['key']] = i
-
-            self.orderdict[order['symbol']].append(i)
 
     def setTotalBalance(self):
         res = self.client.User.User_getMargin(currency='XBt').response().result
@@ -382,11 +374,9 @@ def writeUserBalanceGoogle(syms, u, sht=None, ws=None, preservedf=False, df=None
         else:
             df = ws.get_as_df(start='A1', end='J14')
 
-    i = 0 # should pull gRow from google sheet first
-    u.setOrders()
     u.setPositions()
 
-    for sym in syms:
+    for i, sym in enumerate(syms):
         symbol = sym.symbolbitmex
         figs = sym.decimalfigs
         pos = u.getPosition(symbol)
@@ -406,8 +396,6 @@ def writeUserBalanceGoogle(syms, u, sht=None, ws=None, preservedf=False, df=None
             t = strat.trades[-1]
             df.at[i, 'Dur'] = t.duration()
             df.Conf[i] = t.conf
-
-        i += 1
     
     # set profit/balance
     df.Size[9] = u.unrealizedpnl
@@ -469,7 +457,7 @@ def TopLoop(u=None, partial=False):
             syms.append(sym)
 
             if sym.tradingenabled:
-                actual = u.getOrders(sym.symbolbitmex)
+                actual = u.getOrders(sym.symbolbitmex, botonly=True)
                 theo = strat.finalOrders(u, weight)
                 
                 matched, missing, notmatched = compareorders(theo, actual)
