@@ -42,22 +42,27 @@ class User():
         return self.totalbalancewallet - self.reservedbalance
 
     def checkrequest(self, request, retries=0):
-        # request = bravado.http_future.HttpFuture
-        # response = bravado.response.BravadoResponse
-        response = request.response()
-        status = response.metadata.status_code
-        backoff = 0.5
+        # type(request) = bravado.http_future.HttpFuture
+        # type(response) = bravado.response.BravadoResponse
+        # response = request.response(fallback_result=[400], exceptions_to_catch=bravado.exception.HTTPBadRequest)
 
-        if status < 300:
-            return response.result
-        elif status == 503 and retries < 9:
-            retries += 1
-            sleeptime = backoff * (2 ** retries - 1)
-            time.sleep(sleeptime)
-            return self.checkrequest(request=request, retries=retries)
-        else:
-            # if data is blank, may need to .prepare() request first?
-            f.senderror('{}\n{}'.format(response, request.future.request.data))
+        try:
+            response = request.response(fallback_result='')
+            status = response.metadata.status_code
+            backoff = 0.5
+
+            if status < 300:
+                return response.result
+            elif status == 503 and retries < 7:
+                retries += 1
+                sleeptime = backoff * (2 ** retries - 1)
+                time.sleep(sleeptime)
+                return self.checkrequest(request=request, retries=retries)
+            else:
+                f.senderror('{}: {}\n{}'.format(status, response.result, request.future.request.data))
+        except:
+            request.prepare()
+            f.senderror('HTTP Error: {}'.format(request.future.request.data))
 
     def getPosition(self, symbol, refresh=False):
         if self.positions is None or refresh:
@@ -98,13 +103,10 @@ class User():
         if starttime is None:
             starttime = date.utcnow() + delta(days=-7)
 
-        fltr = json.dumps(dict(ordStatus='Filled'))
+        fltr = dict(ordStatus='Filled')
 
-        # TODO: return this as df
-        return self.client.Order.Order_getOrders(symbol=symbol,
-                                                filter=fltr,
-                                                count=100,
-                                                startTime=starttime).response().result
+        self.setOrders(symbol=symbol, fltr=fltr, newonly=False, starttime=starttime, reverse=False)
+        return self.orders
         
     def getOrders(self, symbol=None, newonly=True, botonly=False, refresh=False):
         if self.orders is None or refresh:
@@ -117,11 +119,11 @@ class User():
             orders = list(filter(lambda x: x['symbol']==symbol, orders))
 
         if botonly:
-            orders = list(filter(lambda x: not x['clOrdID']=='', orders))
+            orders = list(filter(lambda x: x['bot']==True, orders))
 
         return orders
             
-    def setOrders(self, symbol='', fltr={}, newonly=True):
+    def setOrders(self, symbol='', fltr={}, newonly=True, count=100, starttime=None, reverse=True):
         self.orderkeysdict = {}
         
         if newonly:
@@ -129,23 +131,36 @@ class User():
 
         fltr = json.dumps(fltr)
 
-        self.orders = self.client.Order.Order_getOrders(symbol=symbol, filter=fltr, reverse=True, count=20).response().result
-        for i, order in enumerate(self.orders):
+        ep = self.client.Order
+        self.orders = ep.Order_getOrders(symbol=symbol,
+                                        filter=fltr,
+                                        reverse=reverse,
+                                        count=count,
+                                        startTime=starttime).response().result
+
+        for i, o in enumerate(self.orders):
             
-            order['side'] = 1 if order['side'] == 'Buy' else -1
+            o['sideStr'] = o['side']
+            o['side'] = 1 if o['side'] == 'Buy' else -1
+            o['orderQty_fixed'] = int(o['side'] * o['orderQty'])
 
             # add key to the order
-            if not order['clOrdID'] == '':
-                order['key'] = '-'.join(order['clOrdID'].split('-')[:-1])
-                order['name'] = '-'.join(order['clOrdID'].split('-')[1:-1])
-                self.orderkeysdict[order['key']] = i
+            if not o['clOrdID'] == '':
+                o['key'] = '-'.join(o['clOrdID'].split('-')[:-1])
+                o['name'] = '-'.join(o['clOrdID'].split('-')[1:-1])
+                o['bot'] = True
+                self.orderkeysdict[o['key']] = i
+            else:
+                o['name'] = '(manual)'
+                o['bot'] = False
 
     def setTotalBalance(self):
+        div = self.div
         res = self.client.User.User_getMargin(currency='XBt').response().result
-        self.availablemargin = res['excessMargin'] / self.div # total available/unused > only used in postOrder
-        self.totalbalancemargin = res['marginBalance'] / self.div # unrealized + realized > don't actually use 
-        self.totalbalancewallet = res['walletBalance'] / self.div # realized
-        self.unrealizedpnl = res['unrealisedPnl'] / self.div
+        self.availablemargin = res['excessMargin'] / div # total available/unused > only used in postOrder
+        self.totalbalancemargin = res['marginBalance'] / div # unrealized + realized > don't actually use 
+        self.totalbalancewallet = res['walletBalance'] / div # realized
+        self.unrealizedpnl = res['unrealisedPnl'] / div
         # return res
 
     def amendbulk(self, amendorders):
@@ -299,7 +314,7 @@ def checkmatched(matched):
         
     return amend
 
-def refresh_gsheet_balance():
+def refresh_gsheet_balance(u=None):
     sht = f.getGoogleSheet()
     ws = sht.worksheet_by_title('Bitmex')
     df = ws.get_as_df(start='A1', end='J14')
@@ -309,9 +324,9 @@ def refresh_gsheet_balance():
     df2 = pd.read_csv(os.path.join(f.currentdir(), 'symbols.csv'))
     for row in df2.itertuples():
         if row.symbolshort in lst:
-            syms.append(c.Backtest(symbol=row.symbol))
+            syms.append(c.Backtest(symbol=row.symbol, row=row))
 
-    u = User()
+    if u is None: u = User()
     writeUserBalanceGoogle(syms, u, sht=sht, ws=ws, df=df)
     
 def checkfilledorders(minutes=5, refresh=True, u=None):
@@ -324,13 +339,18 @@ def checkfilledorders(minutes=5, refresh=True, u=None):
         df = pd.read_csv(os.path.join(f.currentdir(), 'symbols.csv'))
         
         lst, syms, templist = [], [], []
-        nonmarket, nonpersonal = False, False
+        nonmarket = False
 
         for o in orders:
             symbol = o['symbol']
+            row = df[df['symbolbitmex']==symbol]
+            figs = 0
+            if len(row) > 0:
+                symshort = row['symbolshort'].values[0]
+                figs = row['decimalfigs'].values[0]
 
-            # check for bot orders
-            if len(o['clOrdID']) > 0: nonpersonal = True
+            price = o['price']
+            avgpx = round(o['avgPx'], figs)
 
             # check for non-market buys
             if not o['ordType'] == 'Market':
@@ -339,27 +359,26 @@ def checkfilledorders(minutes=5, refresh=True, u=None):
                 # need to have all correct symbols in symbols.csv
                 if not symbol in templist:
                     templist.append(symbol)
-                    syms.append(c.Backtest(symbol=symbol))             
+                    syms.append(c.Backtest(symbol=symbol))       
 
-            modi = 1 if o['side'] == 'Buy' else -1
-            vals = df[df['symbolbitmex']==symbol]['symbolshort'].values
-            
-            # TODO: Make this a property of order
-            if len(vals) > 0: symshort = vals[0]
-            lst.append('{} | {} {:,} at ${:,} | {}'.format(
+            ordprice = f' ({price})' if not price == avgpx else ''
+
+            lst.append('{} | {} {:,} at ${:,}{} | {}'.format(
                     symshort,
-                    o['side'],
-                    modi * int(o['orderQty']),
-                    o['price'],
-                    '-'.join(o['clOrdID'].split('-')[1:3])))
+                    o['sideStr'],
+                    o['orderQty_fixed'],
+                    avgpx,
+                    ordprice,
+                    o['name']))
             
         # write balance to google sheet, EXCEPT on market buys
-        if nonmarket and nonpersonal and refresh:
+        if nonmarket and refresh:
             TopLoop(u=u, partial=True)
             # writeUserBalanceGoogle(syms, u, preservedf=True)
 
         msg = '\n'.join(lst)
         f.discord(msg=msg+'\n@here', channel='orders')
+        # return msg
 
 def writeUserBalanceGoogle(syms, u, sht=None, ws=None, preservedf=False, df=None):
     
@@ -391,24 +410,34 @@ def writeUserBalanceGoogle(syms, u, sht=None, ws=None, preservedf=False, df=None
             df.at[i, 'ROE'] = f.percent(pos['unrealisedRoePcnt'])
             df.at[i, 'Value'] = pos['maintMargin'] / u.div
 
-        if not sym.startdate is None:
+        if sym.strats:
             strat = sym.strats[0]
             t = strat.trades[-1]
             df.at[i, 'Dur'] = t.duration()
             df.Conf[i] = t.conf
     
     # set profit/balance
-    df.Size[9] = u.unrealizedpnl
-    df.Entry[9] = u.totalbalancemargin
+    u.setTotalBalance()
+    df.at[9, 'Size'] = u.unrealizedpnl
+    df.at[9, 'Entry'] = u.totalbalancemargin
 
     # set current time
-    df.Sym[12] = 'Last:'
-    df.Size[12] = date.strftime(date.utcnow(), f.TimeFormat(mins=True))
+    df.at[12, 'Sym'] = 'Last:'
+    df.at[12, 'Size'] = date.strftime(date.utcnow(), f.TimeFormat(mins=True))
 
-    df = pd.concat([df, u.dfOrders(refresh=True)], axis=1)
+    # concat last 10 trades for google sheet
+    sym = list(filter(lambda x: x.symbol=='XBTUSD', syms))[0]
+    if sym.strats:
+        dfTrades = sym.strats[0].result(last=10).drop(columns=['N', 'Contracts', 'Bal'])
+        dfTrades.Timestamp = dfTrades.Timestamp.dt.strftime('%Y-%m-%d %H')
+        dfTrades.Pnl = dfTrades.Pnl.apply(lambda x: f.percent(x))
+        dfTrades.PnlAcct = dfTrades.PnlAcct.apply(lambda x: f.percent(x))
+    else:
+        dfTrades = ws.get_as_df(start='Q1', end='Y14') # df.loc[:, 'Timestamp':'PnlAcct']
 
+    df = pd.concat([df, u.dfOrders(refresh=True), dfTrades], axis=1)
     ws.set_dataframe(df, (1,1), nan='')
-    return df
+    # return df
     
 def TopLoop(u=None, partial=False):
     # run every 1 hour, or when called by checkfilledorders()

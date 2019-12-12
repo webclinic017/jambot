@@ -131,8 +131,7 @@ class Account():
         return df
 
 class Backtest():
-    def __init__(self, symbol, startdate=None, strats=[],
-    stratactive=False, daterange=365, df=None, row=None, write=False, account=None, partial=False, u=None):
+    def __init__(self, symbol, startdate=None, strats=[], daterange=365, df=None, row=None, account=None, partial=False, u=None):
 
         if row is None:
             dfsym = pd.read_csv(os.path.join(f.currentdir(), 'symbols.csv'))
@@ -150,6 +149,8 @@ class Backtest():
 
         self.symbol = symbol
         self.startdate = f.checkDate(startdate)
+        # self.stratactive = stratactive
+        self.strats = strats
 
         # actual backtest, not just admin info
         if not startdate is None:
@@ -158,10 +159,7 @@ class Backtest():
 
             self.i = 1
             self.candles = []
-            self.write = write
             
-            self.stratactive = stratactive # is this still used?
-            self.strats = strats
             
             if df is None:
                 self.df = f.getDataFrame(symbol=symbol, startdate=f.startvalue(startdate), enddate=f.enddate(startdate, daterange))
@@ -173,8 +171,6 @@ class Backtest():
                 self.df = u.appendpartial(df)
            
             self.startrow = self.df.loc[self.df['CloseTime'] == pd.Timestamp(self.startdate)].index[0]
-
-            self.loadcols()
 
             for strat in self.strats:
                 strat.init(sym=self)
@@ -193,11 +189,6 @@ class Backtest():
         # c.i = row.name
         self.candles.append(self.curcandle)
 
-    def loadcols(self):
-        self.colHigh = self.df.columns.get_loc('High')
-        self.colLow = self.df.columns.get_loc('Low')
-        # self.colBalanceBTC = self.df.columns.get_loc('BalanceBTC')
-
     def decidefull(self):
         length = len(self.df)
         for row in self.df.itertuples():
@@ -210,20 +201,9 @@ class Backtest():
 
                 for strat in self.strats:
                     strat.decide(row)
-
-                if self.write: self.writerow(i)
         
         if self.partial:
             self.strats[0].trades[-1].partial = True
-
-    def writerow(self, i):
-        df = self.df
-        
-        if not self.stratactive:
-            df.iat[i, self.colBalanceBTC] = self.account.getBalance()
-
-            for strat in self.strats:
-                strat.writerow(i)
 
     def printfinal(self):
         style = self.result().style.hide_index()
@@ -271,13 +251,14 @@ class Confidence():
 
     def __init__(self):
         self.signals = []
+        self.trendsignals = []
         self.maxconf = 1.5
         self.minconf = 0.25
         
-    def final(self, side, i):
+    def final(self, side, c):
         conf = 1
         for signal in self.signals:
-            conf *= signal.final(side=side, i=i)
+            conf *= signal.final(side=side, c=c)
 
         if conf > self.maxconf:
             conf = self.maxconf
@@ -286,14 +267,28 @@ class Confidence():
 
         return conf
 
-    def addsignal(self, signals):
+    def addsignal(self, signals, trendsignals=None):
         self.signals.extend(signals)
-
+        self.trendsignals.extend(trendsignals)
+    
+    def trendchanged(self, i, side):
+        # check each trend signal
+        # ema_trend, macd_trend, ema_slope
+        # dont check on first candle of trade?
+        return True in [s.trendchanged(i=i, side=side) for s in self.trendsignals]
+            
 class Signal():
     def __init__(self, df, weight=1):
         self.df = df
         self.weight = weight
+        self.trendseries = None
     
+    def trendchanged(self, i, side):
+        tseries = self.trendseries
+        tnow = tseries.iloc[i]
+        tprev = tseries.iloc[i - 1]
+        return not tnow == side and not tnow == tprev
+
 class Signal_MACD(Signal):
     def __init__(self, df, weight=1, fast=50, slow=200, smooth=50):
         super().__init__(df=df, weight=weight)
@@ -306,8 +301,10 @@ class Signal_MACD(Signal):
         df['macd_diff'] =  df.macd - df.macd_signal
         df['macd_trend'] = np.where(df.macd_diff > 0, 1, -1)
 
-    def final(self, side, i):
-        if side * self.df.macd_trend[i] == 1:
+        self.trendseries = df.macd_trend
+
+    def final(self, side, c):
+        if side * c.macd_trend == 1:
             conf = 1.25
         else:
             conf = 0.5
@@ -326,10 +323,12 @@ class Signal_EMA(Signal):
         c = self.getC(maxspread=0.1)
         df['ema_conf'] = self.emaExp(x=df.emaspread, c=c)
 
-    def final(self, side, i):
-        temp_conf = abs(self.df.ema_conf[i])
+        self.trendseries = df.ema_trend
 
-        if side * self.df.ema_trend[i] == 1:
+    def final(self, side, c):
+        temp_conf = abs(c.ema_conf)
+
+        if side * c.ema_trend == 1:
             conf = 1.5 - temp_conf * 2
         else:
             conf = 0.5 + temp_conf * 2
@@ -362,8 +361,10 @@ class Signal_EMA_Slope(Signal):
         df['ema_slope'] = np.where(np.roll(df['ema{}'.format(p)], slope, axis=0) < df['ema{}'.format(p)], 1, -1)
         df.loc[:p + slope, 'ema_slope'] = np.nan
 
-    def final(self, side, i):
-        if side * self.df.ema_slope[i] == 1:
+        self.trendseries = df.ema_slope
+
+    def final(self, side, c):
+        if side * c.ema_slope == 1:
             conf = 1.5
         else:
             conf = 0.5
@@ -371,7 +372,7 @@ class Signal_EMA_Slope(Signal):
         return conf * self.weight     
 
 class Signal_Volatility(Signal):
-    def __init__(self, df, weight=1, norm=(0.004,0.016)):
+    def __init__(self, df, weight=1, norm=(0.004,0.024)):
         super().__init__(df=df, weight=weight)
 
         df['maxhigh'] = df.High.rolling(48).max()
@@ -382,12 +383,13 @@ class Signal_Volatility(Signal):
         df['smavty'] = df.spread.rolling(300).mean()
         df['norm_ema'] = np.interp(df.emavty, (0, 0.25), (norm[0], norm[1]))
         df['norm_sma'] = np.interp(df.smavty, (0, 0.25), (norm[0], norm[1]))
-        df['normtp'] = np.interp(df.smavty, (0, 0.4), (0.3, 3)) # only Strat_Chop
+        # df['normtp'] = np.interp(df.smavty, (0, 0.4), (0.3, 3)) # only Strat_Chop
 
         df.drop(columns=['maxhigh', 'minlow'], inplace=True)
 
-    def final(self, i):
-        return self.df.norm_ema[i]
+    def final(self, c):
+        # return self.df.norm_ema[i]
+        return c.norm_ema
 
 class Signal_Trend(Signal):
     def __init__(self, df, signals, speed):
@@ -396,6 +398,7 @@ class Signal_Trend(Signal):
         # sum signals > positive = 1, negative = -1, neutral = 0
         # df['temp'] = np.sum(signals, axis=0)
         # df['trend'] = np.where(df.temp == 0, 0, np.where(df.temp > 0, 1, -1))
+        # ^didn't work, just use ema_trend for now
         df['temp'] = np.nan
         df['trend'] = df.ema_trend
 
@@ -417,8 +420,8 @@ class Signal_Trend(Signal):
         
         df.drop(columns=['mha', 'mhw', 'mla', 'mlw', 'mhn', 'mln', 'temp'], inplace=True)
 
-    def final(self, i):
-        return self.df.trend[i]
+    def final(self, c):
+        return c.trend
 
 
 # STRAT
@@ -431,9 +434,10 @@ class Strategy():
         self.entryprice = 0
         self.exitprice = 0
         self.maxspread = 0.1
-        self.slippage = 0.0044
+        self.slippage = 0.002
         self.lev = lev
         self.unfilledtrades = 0
+        self.timeout = float('inf')
         
         self.trades = []
         self.trade = None
@@ -474,13 +478,6 @@ class Strategy():
         elif status > 0:
             return 1
 
-    def writerow(self, i):
-        df = self.sym.df
-        if not self.trade is None:
-            df.iat[i, self.colStatus] = self.status
-            df.iat[i, self.colContracts] = self.trade.contracts
-            df.iat[i, self.colPnl] = self.trade.pnlcurrent()
-
     def checkfinalorders(self, finalorders):
         for i, order in enumerate(finalorders):
             if order.contracts == 0:
@@ -490,35 +487,51 @@ class Strategy():
     def badtrades(self):
         return list(filter(lambda x: x.pnlfinal <= 0, self.trades))
 
-    def printtrades(self, maxmin=0, maxlines=-1, last=0):
-        data = []
-        cols = ['N', 'Timestamp', 'Sts', 'Dur', 'Entry', 'Exit', 'Contracts', 'conf', 'Pnl', 'Bal']
-        figs = self.sym.decimalfigs
+    def printtrades(self, maxmin=0, first=float('inf'), last=0, df=None):
+        import seaborn as sns
+        
+        if df is None:
+            df = self.result(first=first, last=last)
+        style = df.style.hide_index()
 
-        for i, t in enumerate(self.trades[last * -1:]):
-            if not maxmin == 0 and maxmin * t.pnlfinal <= 0: continue
-            
+        figs = self.sym.decimalfigs
+        priceformat = '{:,.' + str(figs) + 'f}'
+
+        # style.apply(f.neg_red, subset=['Pnl', 'PnlAcct'])
+        cmap = sns.diverging_palette(10, 240, sep=80, n=7, center='dark', as_cmap=True)
+        style.background_gradient(cmap=cmap, subset=['Pnl', 'PnlAcct'])
+
+        style.format({'Timestamp': '{:%Y-%m-%d %H}',
+                    'Contracts': '{:,}',
+                    'Entry': priceformat,
+                    'Exit': priceformat,
+                    'Conf': '{:.3f}',
+                    'Pnl': '{:.2%}',
+                    'PnlAcct': '{:.2%}',
+                    'Bal': '{:.2f}'})
+        display(style)
+
+    def result(self, first=float('inf'), last=0):
+        data = []
+        trades = self.trades
+        cols = ['N', 'Timestamp', 'Sts', 'Dur', 'Entry', 'Exit', 'Market', 'Contracts', 'conf', 'Pnl', 'PnlAcct', 'Bal']
+
+        for t in trades[last * -1: min(first, len(trades))]:
             data.append([
                 t.tradenum,
-                '{:%Y-%m-%d %H}'.format(t.candles[0].CloseTime),
+                t.candles[0].CloseTime,
                 t.status,
                 t.duration(),
-                '{:,.{}f}'.format(t.entryprice, figs),
-                '{:,.{}f}'.format(t.exitprice, figs),
+                t.entryprice,
+                t.exitprice,
+                t.limitclose.ordtype_str(),
                 t.filledcontracts,
-                round(t.conf, 3),
+                t.conf,
                 t.pnlfinal,
-                round(t.exitbalance, 2)
-            ])
+                t.pnlacct(),
+                t.exitbalance])
         
-            if i == maxlines: break
-
-        style = pd.DataFrame.from_records(data=data, columns=cols).style.hide_index()
-        # style.apply(f.background_contracts, subset=['Contracts'])
-        style.apply(f.neg_red, subset=['Pnl'])
-        style.format({'Pnl': '{:.2%}',
-                    'Contracts': '{:,}'})
-        display(style)
+        return pd.DataFrame.from_records(data=data, columns=cols)
 
 class Strat_TrendRev(Strategy):
     # try variable stopout %?
@@ -527,10 +540,10 @@ class Strat_TrendRev(Strategy):
         self.name = 'trendrev'
         super().__init__(self.name, weight, lev)
         self.stoppercent = -0.03
-        self.slippage = 0.005
         self.speed = speed
         self.norm = norm
         self.lasthigh, self.lastlow = 0, 0
+        self.timeout = 40
 
     def init(self, sym):
         self.sym = sym
@@ -542,16 +555,14 @@ class Strat_TrendRev(Strategy):
         macd = Signal_MACD(df=df, weight=1)
         ema = Signal_EMA(df=df, weight=1)
         emaslope = Signal_EMA_Slope(df=df, weight=1, p=50, slope=5)
-        self.conf.addsignal([macd, ema, emaslope])
+        self.conf.addsignal(signals=[macd, ema, emaslope],
+                            trendsignals=[ema])
 
-        self.trend = Signal_Trend(df=df, signals=[df.ema_trend, df.macd_trend], speed=self.speed)
+        self.trend = Signal_Trend(df=df, signals=[df.ema_trend, df.ema_slope], speed=self.speed)
 
     def exittrade(self):
-        # need to check limitclose and stop orders before closing trade.
-        # May need to manually fill at current candle close price.
         trade = self.trade
         c = self.candle
-        # CANT fill a close if buy isn't filled!!!!
 
         if not trade.stopped and trade.limitopen.filled and not trade.limitclose.filled:
             trade.stop.cancel()
@@ -559,15 +570,14 @@ class Strat_TrendRev(Strategy):
             self.unfilledtrades += 1
             
         self.trade.exittrade()
+        self.trade = None
 
     def inittrade(self, side, entryprice, balance=None, temp=False):
         if balance is None:
             balance = self.sym.account.getBalance()
 
         contracts = f.getContracts(balance, self.lev, entryprice, side, self.sym.altstatus) * self.weight
-
-        c = self.candle
-        conf = self.conf.final(side=side, i=c.Index)
+        conf = self.conf.final(side=side, c=self.candle)
         
         trade = Trade_TrendRev()
         trade.init(price=entryprice, targetcontracts=contracts, strat=self, conf=conf, side=side, temp=temp)
@@ -576,7 +586,9 @@ class Strat_TrendRev(Strategy):
     
     def entertrade(self, side, entryprice):
         self.trade = self.inittrade(side=side, entryprice=entryprice)
-        self.trade.checkorders(self.sym.curcandle)
+        t = self.trade
+        t.checkorders(self.sym.curcandle)
+        if not t.active: self.exittrade()
         
     def decide(self, c):
         self.candle = c
@@ -587,18 +599,22 @@ class Strat_TrendRev(Strategy):
 
         # Exit Trade
         if not self.trade is None:
-            self.trade.checkorders(c)
+            t = self.trade
 
-            if self.trade.side == 1:
-                if c.High > pxhigh and c.High > self.lasthigh:
-                    self.exittrade()
+            if t.side == 1:
+                if c.High > max(pxhigh, self.lasthigh):
+                    t.active = False
             else:
-                if c.Low < pxlow and c.Low < self.lastlow:
-                    self.exittrade()
+                if c.Low < min(pxlow, self.lastlow):
+                    t.active = False
 
-            if not self.trade.active:
-                self.trade = None
-        
+            t.checkorders(c)
+            if not t.active: self.exittrade()
+
+            # need to make trade active=False if limitclose is filled?
+            # order that candle moves is important
+            # need enter > exit > enter all in same candle
+
         # Enter Trade
         if self.trade is None:
             if c.High > pxhigh:
@@ -609,82 +625,83 @@ class Strat_TrendRev(Strategy):
         self.lasthigh, self.lastlow = pxhigh, pxlow
 
     def finalOrders(self, u, weight):
-        lstorders = []
+        lst = []
         balance = u.balance() * weight
         curr_cont = u.getPosition(self.sym.symbolbitmex)['currentQty']
         c = self.candle
         symbol = self.sym.symbolbitmex
         
-        # Get Close and Stop from current trade
-        t_current = self.trade
-
-        t_current.rescaleorders(balance=balance)
-        t_current.stop.contracts = 0
-
-        # CLOSE - Prev
-        # Check if current limitclose is still open with same side
+        # PREV
+        # CLOSE - Check if current limitclose is still open with same side
         prevclose = self.trades[-2].limitclose
         if prevclose.marketfilled:
             prevclose_actual = u.getOrderByKey(key=f.key(symbol, 'limitclose', prevclose.side, 3))
-            if not prevclose_actual is None and prevclose_actual['side'] == prevclose.side:
-                prevclose.setname('marketclose')
-                prevclose.ordtype2 = 'Market'
-                prevclose.execInst = 'Close'
-                lstorders.append(prevclose)
-                
-                # subtract from curr_cont when market closing
-                curr_cont += prevclose.contracts
-
-        # BUY
-        currentbuy = t_current.limitopen
-        currentbuy_actual = u.getOrderByKey(key=f.key(symbol, 'limitopen', currentbuy.side, 1))
-        # print(currentbuy.filled, currentbuy.marketfilled, curr_cont, t_current.duration())
+            if (not prevclose_actual is None
+                and prevclose_actual['side'] == prevclose.side):
+                    prevclose.setname('marketclose')
+                    prevclose.ordtype2 = 'Market'
+                    prevclose.execInst = 'Close'
+                    lst.append(prevclose)
+                    
+                    # subtract from curr_cont when market closing
+                    curr_cont -= prevclose.contracts
         
-        if currentbuy.filled:
-            if (currentbuy.marketfilled 
+        # CURRENT
+        t_current = self.trades[-1]
+        t_current.rescaleorders(balance=balance)
+
+        # OPEN
+        limitopen = t_current.limitopen
+        limitopen_actual = u.getOrderByKey(key=f.key(symbol, 'limitopen', limitopen.side, 1))
+        
+        if limitopen.filled:
+            if (limitopen.marketfilled 
             and curr_cont == 0
             and t_current.duration() == 4):
-                currentbuy.setname('marketbuy') # need diff name cause 2 limitbuys possible
-                currentbuy.ordtype2 = 'Market'
-                lstorders.append(currentbuy)
-                curr_cont += currentbuy.contracts
-                currentbuy_actual['orderQty'] = None # will be cancelled
+                limitopen.setname('marketbuy') # need diff name, 2 limitbuys possible
+                limitopen.ordtype2 = 'Market'
+                lst.append(limitopen)
+                curr_cont += limitopen.contracts
+                limitopen_actual['orderQty'] = None # will be cancelled
 
-            # Init next trade to get limitopen
-            px = c.pxhigh if t_current.side == 1 else c.pxlow
-            t_next = self.inittrade(side=t_current.side * -1, entryprice=px, balance=balance, temp=True)
-            lstorders.append(t_next.limitopen)
-            lstorders.append(t_next.stop)
         else:
             # Only till max 4 candles into trade
-            lstorders.append(currentbuy) 
+            lst.append(limitopen) 
 
-        # STOP
-        # stop depends on either a position OR a limitopen
-        if not t_current.stop.filled:
-            t_current.stop.contracts += curr_cont * -1
-            # print('t_current.stop.contracts: {}'.format(t_current.stop.contracts))
+        # STOP - depends on either a position OR a limitopen
+        stopclose = t_current.stop
+        stopclose.contracts = 0
+        if not stopclose.filled:
+            stopclose.contracts += curr_cont * -1
 
-            if not currentbuy_actual['orderQty'] is None:
-                # print('currentbuy_actual orderQty: {}'.format(currentbuy_actual['orderQty']))
-                cba = currentbuy_actual
-                t_current.stop.contracts += cba['orderQty'] * cba['side'] * -1
+            if not limitopen_actual['orderQty'] is None:
+                stopclose.contracts += limitopen_actual['orderQty'] * limitopen_actual['side'] * -1
 
-            lstorders.append(t_current.stop)
-        else:
-            # should check to make sure position is closed?
-            # raise Exception 'Theoretical stop filled but position open'
-            pass
+            lst.append(stopclose)
 
         # CLOSE - current
         if not curr_cont == 0:
-            t_current.limitclose.contracts = curr_cont * -1
-            lstorders.append(t_current.limitclose)    
+            limitclose = t_current.limitclose
+            limitclose.contracts = curr_cont * -1
+            
+            if t_current.timedout:
+                limitclose.setname('marketclose')
+                limitclose.ordtype2 = 'Market'
+                limitclose.execInst = 'Close'
+                curr_cont += limitclose.contracts
 
-            if t_current.stop.contracts == 0 or not t_current.stop in lstorders:
+            lst.append(limitclose)
+
+            if stopclose.contracts == 0 or not stopclose in lst:
                 f.discord(msg='Error: no stop for current position', channel='err')
 
-        return self.checkfinalorders(lstorders)
+        # NEXT - Init next trade to get next limitopen and stop
+        px = c.pxhigh if t_current.side == 1 else c.pxlow
+        t_next = self.inittrade(side=t_current.side * -1, entryprice=px, balance=balance, temp=True)
+        lst.append(t_next.limitopen)
+        lst.append(t_next.stop)    
+
+        return self.checkfinalorders(lst)
 
 class Strat_Trend(Strategy):
     def __init__(self, speed=(18,18), mr=False, weight=1, lev=5):
@@ -701,12 +718,14 @@ class Strat_Trend(Strategy):
 
     def init(self, sym):
         self.sym = sym
-        if self.sym.altstatus:
-            self.lev = 2.5
+        df = sym.df
             
         macd = Signal_MACD(df=sym.df, weight=1)
-        ema = Signal_EMA(df=sym.df, weight=1, speed=self.speed)
+        ema = Signal_EMA(df=sym.df, weight=1)
+        # emaslope = Signal_EMA_Slope(df=df, weight=1, p=50, slope=5)
         self.conf.addsignal([macd, ema])
+        
+        self.trend = Signal_Trend(df=df, signals=[df.ema_trend], speed=self.speed)
 
     def getRecentWinConf(self):
         recentwin = False
@@ -724,7 +743,7 @@ class Strat_Trend(Strategy):
         if (self.meanrev or self.meanrevnext) and not bypassmeanrev:
             return 1.5
 
-        conf = self.conf.final(side=side, i=self.candle.Index)
+        conf = self.conf.final(side=side, c=self.candle)
 
         recentwinconf = self.getRecentWinConf()
         confidence = recentwinconf if recentwinconf <= 0.5 else conf
@@ -755,31 +774,17 @@ class Strat_Trend(Strategy):
         self.trade = self.inittrade(side=side, entryprice=entryprice)
         self.trade.checkorders(self.sym.curcandle)
 
-    def exittrade(self):
-        
-        # modi = 1 if not self.meanrev else -1
-
-        # self.trade.exitprice = exitprice # can't get this till trade.exitprice is set
-        # minpnl = self.trade.pnlmaxmin(-1)
-        # if minpnl < self.stoppercent and self.meanrev: # stopped out!
-        #     exitprice = f.getPrice(self.stoppercent, self.entryprice, self.getSide())
-        #     modiopp = 1
-
-        # set meanrev back on or off
-        # if self.meanrev:
-        #     self.meanrev = False
-        # elif self.meanrevenabled and self.trade.pnlcurrent(self.sym.curcandle) > self.meanrevmin:
-        #     self.meanrev = True
-
-        # exitprice = exitprice * (1 + self.getSide() * self.slippage * -1 * modi)
+    def exittrade(self):        
         self.trade.exittrade()
 
-    def decide(self, c):
-        if not self.trade is None: self.trade.addCandle(c)
-        
+    def decide(self, c):       
         self.candle = c
         self.i = c.Index
         pxhigh, pxlow = c.pxhigh, c.pxlow
+
+        # trade is being allowed to exit 
+        # duration is wrong
+        # stopclose being checked if closed at slippage price, not trigger price
 
         # Exit Trade
         if not self.trade is None:
@@ -795,7 +800,6 @@ class Strat_Trend(Strategy):
             if not self.trade.active:
                 self.trade = None
         
-        # TODO: add variable for pushing entry to -2%
         # Enter Trade
         if self.trade is None:
             pxhigh *= (1 + self.enteroffset)
@@ -1037,20 +1041,25 @@ class Trade():
         self.exitbalance = 0
         self.exitcontracts = 0
         self.partial = False
+        self.timedout = False
+        self.trendchanged = False
 
     def init(self, price, targetcontracts, strat, conf=1, entryrow=0, side=None, temp=False):
         self.entrytarget = price
         self.entryprice = 0
         self.targetcontracts = int(targetcontracts)
         self.strat = strat
-        self.sym = self.strat.sym
+        self.sym = strat.sym
         self.conf = round(conf, 3)
-        self.tradenum = self.strat.tradecount()
+        self.tradenum = strat.tradecount()
+        self.timeout = strat.timeout
         self.candle = self.sym.curcandle
-        
+        self.entrybalance = self.sym.account.getBalance()
+        self.i_enter = self.strat.i
+
         if side is None:
-            self.status = self.strat.status
-            self.side = self.strat.getSide() # TODO: sketch
+            self.status = strat.status
+            self.side = strat.getSide() # TODO: sketch
         else:
             self.status = side
             self.side = side
@@ -1064,7 +1073,8 @@ class Trade():
         self.strat.status = 0
         self.pnlfinal = f.getPnl(self.side, self.entryprice, self.exitprice)
         self.exitbalance = self.sym.account.getBalance()
-        self.active = False
+        self.i_exit = self.strat.i
+        self.active = False # is this redundant?
 
     def closeorder(self, price, contracts):
         
@@ -1095,6 +1105,19 @@ class Trade():
     def duration(self):
         offset = -1 if self.partial else 0
         return len(self.candles) + offset
+
+    def pnlacct(self):
+        if self.exitbalance == 0:
+            return 0
+        else:
+            return ((self.exitbalance - self.entrybalance) / self.entrybalance)
+
+    def pnlxbt(self):
+        # not used
+        return f.getPnlXBT(contracts=self.filledcontracts,
+                            entryprice=self.entryprice,
+                            exitprice=self.exitprice,
+                            isaltcoin=self.sym.altstatus)
 
     def pnlcurrent(self, candle=None):
         if candle is None: candle = self.getCandle(self.duration())
@@ -1160,8 +1183,13 @@ class Trade():
     def allorders(self):
         return self.orders
 
-    def chart(self):
-        f.chartorders(self.sym.df, self)
+    def df(self):
+        return self.sym.df.iloc[self.i_enter:self.i_exit]
+
+    def chart(self, pre=36, post=None):
+        dur = self.duration()
+        post = dur if post is None and dur > 36 else 36
+        f.chartorders(self.sym.df, self, pre=pre, post=post)
 
     def printcandles(self):
         for c in self.candles:
@@ -1200,26 +1228,26 @@ class Trade_TrendRev(Trade):
     def __init__(self):
         super().__init__()
         self.stopped = False
+        self.enteroffset = 0
     
     def closeprice(self):
-        c = self.candle
+        c = self.strat.candle
         price = c.pxhigh if self.side == 1 else c.pxlow
-        self.slippage = self.strat.vty.final(i=self.strat.candle.Index)
+        # self.enteroffset = self.strat.vty.final(i=c.Index)
+        self.enteroffset = c.norm_ema
 
-        return round(price * (1 + self.slippage * self.side), self.sym.decimalfigs)
+        # TODO: move this to a 'slippage price' function
+        return round(price * (1 + self.enteroffset * self.side), self.sym.decimalfigs)
     
     def enter(self):
-        # c = self.strat.candle
+        c = self.strat.candle
         self.stoppercent = self.strat.stoppercent
-        self.slippage = self.strat.vty.final(i=self.strat.candle.Index)
+        # self.enteroffset = self.strat.vty.final(i=c.Index)
+        self.enteroffset = c.norm_ema
 
-        limitbuyprice = self.entrytarget * (1 + self.slippage * self.side * -1)
+        limitbuyprice = self.entrytarget * (1 + self.enteroffset * self.side * -1)
         limitcloseprice = self.closeprice()
         self.stoppx = f.getPrice(self.stoppercent, limitbuyprice, self.side)
-        # self.maxpnl = f.getPnl(
-        #             side=self.side, 
-        #             entryprice=limitbuyprice,
-        #             exitprice=limitcloseprice)
 
         contracts = int(self.targetcontracts * self.conf)
 
@@ -1256,22 +1284,41 @@ class Trade_TrendRev(Trade):
 
         self.orders.extend([self.limitopen, self.stop, self.limitclose])
     
+    def checkpositionclosed(self):
+        if self.limitclose.filled:
+            self.active = False
+    
+    def checktimeout(self):
+        if self.duration() >= self.timeout:
+            self.timedout = True
+            self.active = False
+    
     def checkorders(self, c):
+        # trade stays active until pxlow is hit, strat controlls
+        # filling order sets the trade's actual entryprice
+        # filling close or stop order sets trade's exit price        
+        
         self.addCandle(c)
 
         for o in self.orders:
-            if o.active and not o.filled:
+            if o.isactive(c=c) and not o.filled:
                 o.check(c)
 
+                # MARKET OPEN
+                # Don't market fill if trade would have closed on this candle
                 # if order not filled after 4 candles, fill at close price
-                if o.ordtype == 1 and self.duration() == 4 and not o.filled:
-                    o.fill(c=c, price=c.Close)
+                if (o.ordtype == 1
+                    and self.active
+                    and self.duration() == 4
+                    and not o.filled):
+                        o.fill(c=c, price=c.Close)
 
                 if o.filled:
                     if o.ordtype == 1:
                         self.filledcontracts = o.contracts
-                        self.limitclose.active = True
-                        self.stop.active = True
+                        delay = 1 if o.marketfilled else 0
+                        self.limitclose.activate(c=c, delay=delay)
+                        self.stop.activate(c=c, delay=0)
                     elif o.ordtype == 2:
                         self.limitclose.cancel() #make limitclose filledtime be end of trade
                         self.stopped = True
@@ -1279,14 +1326,11 @@ class Trade_TrendRev(Trade):
                         self.exitbalance = self.sym.account.getBalance()
                     elif o.ordtype == 3:
                         self.stop.cancel()
-
-        # trade stays active until pxlow is hit, strat controlls
             
-        # adjust limitclose for next candle, this is probs out of sync with strat
-        self.limitclose.price = self.closeprice()       
-
-        # filling order sets the trade's actual entryprice
-        # filling close or stop order sets trade's exit price
+        # adjust limitclose for next candle
+        self.limitclose.setprice(price=self.closeprice())
+        self.checktimeout()
+        self.checkpositionclosed()
 
     def allorders(self):
         return [self.limitopen, self.stop, self.limitclose]
@@ -1299,7 +1343,7 @@ class Trade_Trend(Trade):
         c = self.candle
         price = c.pxlow if self.side == 1 else c.pxhigh
 
-        return round(price * (1 - self.slippage * self.side),0)
+        return price
 
     def enter(self, temp=False):           
         # MeanRev only
@@ -1453,10 +1497,12 @@ class Order():
         self.side = side
         self.price = self.finalprice(price)
         self.pxoriginal = self.price
+        self.slippage = self.trade.strat.slippage
         self.contracts = contracts
         self.ordtype = ordtype
         self.active = activate
-        self.activenext = False
+        self.delaytime = None
+        self.activenext = False # only used in ordarray, superceeded with delaytime
         self.filled = False
         self.marketfilled = False
         self.cancelled = False
@@ -1470,6 +1516,7 @@ class Order():
         # 4 - StopOpen
         self.enterexit = -1 if ordtype in (1, 2) else 1
         self.addsubtract = -1 if ordtype in (2, 3) else 1
+        self.isstop = True if ordtype in (2, 4) else False
         if not self.trade is None:
             self.direction = self.trade.side * self.enterexit
         
@@ -1484,6 +1531,11 @@ class Order():
         self.livedata = []
         self.setkey()
 
+    def ordtype_str(self):
+        # v sketch
+        ans = 'L' if self.filled and not self.marketfilled else 'M'
+        return ans
+
     def setname(self, name):
         self.name = name
         self.setkey()
@@ -1492,6 +1544,22 @@ class Order():
         self.key = f.key(self.symbolbitmex, self.name, self.side, self.ordtype)
         self.clOrdID = '{}-{}'.format(self.key, int(time()))        
 
+    def stoppx(self):
+        return self.price * (1 + self.slippage * self.side)
+
+    def outofrange(self, c):
+        # not used
+        pnl = f.getPnl(entryprice=self.price,
+                        exitprice=c.Close,
+                        side=self.side)
+
+        ans = True if pnl > 0.903 else False
+        return ans
+
+    def setprice(self, price):
+        if not self.filled:
+            self.price = price
+                                
     def check(self, c):
         checkprice = c.High if self.direction == 1 else c.Low
         
@@ -1508,17 +1576,34 @@ class Order():
         trade.contracts += contracts            
             
     def close(self):
-        self.trade.closeorder(price=self.price, contracts=self.contracts) 
+        # use price if Limit, else use slippage price
+        # TODO: Use stoppx() for open too (trend)
+        price = self.price if not self.isstop else self.stoppx()
+
+        self.trade.closeorder(price=price, contracts=self.contracts) 
             
     def fill(self, c, price=None):
         self.filled = True
         self.filledtime = c.CloseTime
 
+        # market filling
         if not price is None:
             self.price = price
             self.marketfilled = True
 
         self.open() if self.addsubtract == 1 else self.close()
+            
+    def isactive(self, c):
+        if not self.delaytime is None:
+            active = True if self.active and c.CloseTime >= self.delaytime else False
+        else:
+            active = self.active
+
+        return active        
+            
+    def activate(self, c, delay=0):
+        self.delaytime = c.CloseTime + delta(hours=delay)
+        self.active = True
             
     def printself(self):
         print(

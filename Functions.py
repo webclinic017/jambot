@@ -7,6 +7,7 @@ from datetime import timedelta as delta
 from sys import platform
 from time import time
 from urllib import parse as prse
+from pathlib import Path
 
 import pandas as pd
 import pypika as pk
@@ -19,6 +20,9 @@ import pyodbc
 
 
 # PARALLEL
+def filterdf(dfall, symbol):
+    return dfall[dfall.Symbol==symbol].reset_index(drop=True)
+
 def runtrend(symbol, startdate, mr, df, against, wth, row, titles):
     import JambotClasses as c
     dfTemp = pd.DataFrame(columns=[titles[0], titles[1], 'min', 'max', 'final', 'numtrades'])
@@ -36,14 +40,41 @@ def runtrend(symbol, startdate, mr, df, against, wth, row, titles):
 
     return dfTemp
 
-def runtrendrev_single(startdate, dfall, speed, norm, row):
+def run_parallel():
+    from joblib import Parallel, delayed
+    symbol = 'XBTUSD'
+    dfsym = pd.read_csv(os.path.join(currentdir(), 'symbols.csv'))
+    dfsym = dfsym[dfsym.symbol==symbol]
+    startdate, daterange = date(2019, 1, 1), 365 * 3
+    dfall = readcsv(startdate, daterange, symbol=symbol)
+    titles = ('against', 'wth')
+
+    for row in dfsym.itertuples():
+        strattype = 'trendrev'
+        norm = (0.004, 0.024)
+        syms = Parallel(n_jobs=-1)(delayed(run_single)(strattype, startdate, dfall, speed0, speed1, row, norm) for speed0 in range(6, 27, 1) for speed1 in range(6, 18, 1))
+
+    return syms
+
+def run_single(strattype, startdate, dfall, speed0, speed1, row=None, norm=None, symbol=None):
     import JambotClasses as c
 
-    symbol = row.symbol
-    df = dfall[dfall.Symbol==symbol].reset_index(drop=True)
+    if not row is None:
+        symbol = row.symbol
+    df = filterdf(dfall, symbol)
 
-    strat = c.Strat_TrendRev(speed=speed, norm=norm)
-    sym = c.Backtest(symbol=symbol, startdate=startdate, strats=[strat], df=df, row=row)
+    speed = (speed0, speed1)
+
+    if strattype == 'trendrev':
+        strat = c.Strat_TrendRev(speed=speed, norm=norm)
+        strat.slippage = 0
+        strat.stoppercent = -0.03
+    elif strattype == 'trend':
+        speed = (row.against, row.withspeed)
+        strat = c.Strat_Trend(speed=speed)
+        strat.slippage = 0.002
+
+    sym = c.Backtest(symbol=symbol, startdate=startdate, strats=[strat], df=df, row=row, partial=False)
     sym.decidefull()
 
     return sym
@@ -51,7 +82,6 @@ def runtrendrev_single(startdate, dfall, speed, norm, row):
 def runtrendrev(symbol, startdate, df, against, wth, row, titles, norm):
     import JambotClasses as c
     
-
     # Strat_TrendRev
     strat = c.Strat_TrendRev(speed=(against, wth), norm=norm)
     sym = c.Backtest(symbol=symbol, startdate=startdate, strats=[strat], df=df, row=row)
@@ -60,7 +90,7 @@ def runtrendrev(symbol, startdate, df, against, wth, row, titles, norm):
     a = sym.account
 
     dfTemp = pd.DataFrame(columns=[titles[0], titles[1], 'min', 'max', 'final', 'numtrades'])
-    dfTemp.loc[0] = [against, wth, round(a.min,3), round(a.max,3), round(a.balance,3), sym.strats[0].tradecount()]
+    dfTemp.loc[0] = [against, wth, round(a.min,3), round(a.max,3), round(a.balance,3), strat.tradecount()]
 
     return dfTemp
 
@@ -114,16 +144,13 @@ def printTime(start):
     end = time()
     duration = end - start
     if duration < 60:
-        return "used: " + str(round(duration, 2)) + "s."
+        ans = '{:.3f}s'.format(duration)
     else:
-        mins = int(duration / 60)
-        secs = round(duration % 60, 2)
-        if mins < 60:
-            return "used: " + str(mins) + "m " + str(secs) + "s."
-        else:
-            hours = int(duration / 3600)
-            mins = mins % 60
-            return "used: " + str(hours) + "h " + str(mins) + "m " + str(secs) + "s."
+        mins = duration / 60
+        secs = duration % 60
+        ans = '{:.0f}m {:.3f}s'.format(mins, secs)
+        
+    print(ans)
 
 def hournow():
     return date.utcnow().replace(microsecond=0, second=0, minute=0)
@@ -146,11 +173,16 @@ def heatmap(df, cols, title='', dims=(15,15)):
     ax.set_title(title)
     return sns.heatmap(ax=ax, data=matrix(df, cols), annot=True, annot_kws={"size":8}, fmt='.1f')
 
-def readcsv(startdate, daterange):
-	df = pd.read_csv('df.csv', parse_dates=['CloseTime'], index_col=0)
-	mask = (df['CloseTime'] >= startvalue(startdate)) & (df['CloseTime'] <= enddate(startdate, daterange))
-	df = df.loc[mask].reset_index(drop=True)
-	return df
+def readcsv(startdate, daterange, symbol=None):
+    p = Path.cwd().parent / 'Testing/df.csv'
+    df = pd.read_csv(p, parse_dates=['CloseTime'], index_col=0)
+
+    if not symbol is None:
+        df = filterdf(dfall=df, symbol=symbol)
+
+    mask = ((df['CloseTime'] >= startvalue(startdate)) & (df['CloseTime'] <= enddate(startdate, daterange)))
+    df = df.loc[mask].reset_index(drop=True)
+    return df
 
 def currentdir():
     return os.path.join(os.path.dirname(os.path.realpath(__file__)), '')
@@ -159,12 +191,22 @@ def plotChart(df, symbol, df2=None):
     import plotly.offline as py
     py.iplot(chart(df=df, symbol=symbol, df2=df2))
 
-def addorder(order, ts):    
+def addorder(order, ts, price=None):    
     import plotly.graph_objs as go
+
+    if price is None:
+        price = order.price
+        if order.marketfilled:
+            linedash = 'dash'
+        else:
+            linedash = None
+    else:
+        linedash = 'dot'
     
     ft = order.filledtime
     if ft is None:
         ft = ts + delta(hours=24)
+        linedash = 'dashdot'
     elif ft == ts:
         ft = ts + delta(hours=1)
     
@@ -179,21 +221,21 @@ def addorder(order, ts):
     return go.layout.Shape(
         type='line',
         x0=ts,
-        y0=order.price,
+        y0=price,
         x1=ft,
-        y1=order.price,
+        y1=price,
         line=dict(
             color=color,
-            width=2))
+            width=2,
+            dash=linedash))
 
-def chartorders(df, t, n=36):
+def chartorders(df, t, pre=36, post=36):
     import plotly.graph_objs as go
     import plotly.offline as py
 
-    # ts = date(2019, 8, 26)
     ts = t.candles[0].CloseTime
-    timelower = ts - delta(hours=n)
-    timeupper = ts + delta(hours=n)
+    timelower = ts - delta(hours=pre)
+    timeupper = ts + delta(hours=post)
 
     mask = (df['CloseTime'] >= timelower) & (df['CloseTime'] <= timeupper)
     df = df.loc[mask].reset_index(drop=True)
@@ -201,9 +243,12 @@ def chartorders(df, t, n=36):
     shapes, x, y, text = [], [], [], []
     for order in t.allorders():
         shapes.append(addorder(order, ts=ts))
+        if order.marketfilled or order.cancelled:
+            shapes.append(addorder(order, ts=ts, price=order.pxoriginal))
+        
         x.append(ts + delta(hours=-1))
         y.append(order.price),
-        text.append('({}) {}'.format(order.contracts, order.name[:2]))
+        text.append('({:,}) {}'.format(order.contracts, order.name[:2]))
 
     labels = go.Scatter(x=x, y=y, text=text, mode='text', textposition='middle left')
 
@@ -353,17 +398,19 @@ def getPrice(pnl, entryprice, side):
     elif side == -1:
         return entryprice / (1 + pnl)
 
-def getPnlXBT(contracts, entryprice, exitprice, isaltcoin=False):
-    if not isaltcoin:
+def getPnlXBT(contracts=0, entryprice=0, exitprice=0, isaltcoin=False):
+    if 0 in (entryprice, exitprice):
+        return 0
+    elif not isaltcoin:
         return round(contracts * (1 / entryprice - 1 / exitprice), 8)
     elif isaltcoin:
         return round(contracts * (exitprice - entryprice), 8)
 
 def getPnl(side, entryprice, exitprice):
-    if entryprice == 0 or exitprice == 0:
+    if 0 in (entryprice, exitprice):
         return 0
     elif side == 1:
-        return round((exitprice - entryprice) / entryprice,4)
+        return round((exitprice - entryprice) / entryprice, 4)
     else:
         return round((entryprice - exitprice) / exitprice, 4)
 
@@ -438,10 +485,13 @@ def getGoogleSheet():
     sheet = c.open("Jambot Settings")
     return sheet
 
-def getDataFrame(symbol=None, period=300, startdate=None, enddate=None):
+def getDataFrame(symbol=None, period=300, startdate=None, enddate=None, daterange=None):
     e = engine()
 
-    sql=getQuery(symbol=symbol, period=period, startdate=startdate, enddate=enddate)
+    if enddate is None and not daterange is None:
+        enddate = startdate + delta(days=daterange)
+
+    sql=getQuery(symbol=symbol, period=period, startdate=startvalue(startdate), enddate=enddate)
     Query = pd.read_sql_query(sql=sql, con=e, parse_dates=['CloseTime'])
     e.raw_connection().close()
 
