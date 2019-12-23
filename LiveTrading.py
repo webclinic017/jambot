@@ -62,7 +62,7 @@ class User():
             else:
                 f.senderror('{}: {}\n{}'.format(status, response.result, request.future.request.data))
         except:
-            request.prepare()
+            # request.prepare() #TODO: this doesn't work
             f.senderror('HTTP Error: {}'.format(request.future.request.data))
 
     def getPosition(self, symbol, refresh=False):
