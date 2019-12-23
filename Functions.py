@@ -458,7 +458,11 @@ def discord(msg, channel='jambot'):
     webhook = Webhook.partial(WEBHOOK_ID, WEBHOOK_TOKEN,\
     adapter=RequestsWebhookAdapter())
     
-    if len(msg) > 0:
+    # split into strings of max 2000 char for discord
+    n = 2000
+    out = [(msg[i:i+n]) for i in range(0, len(msg), n)]
+    
+    for msg in out:
         webhook.send(msg)
 
 def senderror(msg='', prnt=False):
@@ -565,12 +569,12 @@ def qIt(s):
     return "'" + s + "'"
 
 def strConn():
+    p = Path.cwd().parent / 'JambotFunctionApp/db_conn.json'
+    with open(p) as f:
+        m = json.load(f)
+
     driver = '{ODBC Driver 17 for SQL Server}'
-    server = 'tcp:jgazure2.database.windows.net,1433'
-    database = 'Jambot'
-    username = 'jgordon@jgazure2'
-    password = 'Z%^7wdpf%Nai=^ZFy-U.'
-    return 'DRIVER={};SERVER={};DATABASE={};UID={};PWD={}'.format(driver, server, database, username, password)
+    return 'DRIVER={};SERVER={};DATABASE={};UID={};PWD={}'.format(driver, m['server'], m['database'], m['username'], m['password'])
 
 def engine():
     params = prse.quote_plus(strConn())

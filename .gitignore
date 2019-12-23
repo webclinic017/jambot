@@ -23,6 +23,11 @@ project.lock.json
 appsettings.json
 local.settings.json
 api.csv
+client_secret.json
+host.json
+db_conn.json
+.gitignore
+.funcignore
 
 node_modules
 dist
