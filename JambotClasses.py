@@ -177,16 +177,6 @@ class Backtest():
 
     def initCandle(self, row):
         self.curcandle = row
-        # self.curcandle = Candle()
-        # c = self.curcandle
-        # c.timestamp = row.CloseTime
-        # c.open = row.Open
-        # c.high = row.High
-        # c.low = row.Low
-        # c.close = row.Close
-        # c.ema200 = row.ema200
-        # c.ema50 = row.ema50
-        # c.i = row.name
         self.candles.append(self.curcandle)
 
     def decidefull(self):

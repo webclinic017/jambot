@@ -43,11 +43,10 @@ def runtrend(symbol, startdate, mr, df, against, wth, row, titles):
 def run_parallel():
     from joblib import Parallel, delayed
     symbol = 'XBTUSD'
-    dfsym = pd.read_csv(os.path.join(currentdir(), 'symbols.csv'))
+    dfsym = pd.read_csv(os.path.join(curdir(), 'symbols.csv'))
     dfsym = dfsym[dfsym.symbol==symbol]
     startdate, daterange = date(2019, 1, 1), 365 * 3
     dfall = readcsv(startdate, daterange, symbol=symbol)
-    titles = ('against', 'wth')
 
     for row in dfsym.itertuples():
         strattype = 'trendrev'
@@ -184,7 +183,7 @@ def readcsv(startdate, daterange, symbol=None):
     df = df.loc[mask].reset_index(drop=True)
     return df
 
-def currentdir():
+def curdir():
     return os.path.join(os.path.dirname(os.path.realpath(__file__)), '')
 
 def plotChart(df, symbol, df2=None):
@@ -484,8 +483,8 @@ def senderror(msg='', prnt=False):
 # DATABASE
 def getGoogleSheet():
     import pygsheets
-    fpath = os.path.join(currentdir(), 'client_secret.json')
-    c = pygsheets.authorize(service_account_file=fpath)
+    p = Path(curdir()) / 'ApiKeys/gsheets.json'
+    c = pygsheets.authorize(service_account_file=p)
     sheet = c.open("Jambot Settings")
     return sheet
 
@@ -569,8 +568,7 @@ def qIt(s):
     return "'" + s + "'"
 
 def strConn():
-    p = Path.cwd().parent / 'JambotFunctionApp/db_conn.json'
-    with open(p) as f:
+    with open(Path(curdir()) / 'ApiKeys/db_conn.json') as f:
         m = json.load(f)
 
     driver = '{ODBC Driver 17 for SQL Server}'

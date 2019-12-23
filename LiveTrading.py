@@ -4,9 +4,10 @@ import time
 from collections import defaultdict
 from datetime import datetime as date
 from datetime import timedelta as delta
+from pathlib import Path
 
-import pandas as pd
 import numpy as np
+import pandas as pd
 from bitmex import bitmex
 
 import Functions as f
@@ -30,7 +31,7 @@ class User():
         self.partialcandle = None
         self.div = 100000000
 
-        df = pd.read_csv(os.path.join(f.currentdir(), 'api.csv'))
+        df = pd.read_csv(Path(f.curdir()) / 'ApiKeys/bitmex.csv')
         user = 'jayme' if not test else 'testnet'
         api_key = df.apikey.loc[df.user == user].values[0]
         api_secret = df.apisecret.loc[df.user == user].values[0]
@@ -321,7 +322,7 @@ def refresh_gsheet_balance(u=None):
     lst = list(df['Sym'].dropna())
     syms = []
 
-    df2 = pd.read_csv(os.path.join(f.currentdir(), 'symbols.csv'))
+    df2 = pd.read_csv(os.path.join(f.curdir(), 'symbols.csv'))
     for row in df2.itertuples():
         if row.symbolshort in lst:
             syms.append(c.Backtest(symbol=row.symbol, row=row))
@@ -336,7 +337,7 @@ def checkfilledorders(minutes=5, refresh=True, u=None):
     orders = u.getFilledOrders(starttime=starttime)
 
     if orders:
-        df = pd.read_csv(os.path.join(f.currentdir(), 'symbols.csv'))
+        df = pd.read_csv(os.path.join(f.curdir(), 'symbols.csv'))
         
         lst, syms, templist = [], [], []
         nonmarket = False
@@ -445,7 +446,7 @@ def TopLoop(u=None, partial=False):
     # Google - get user/position info
     sht = f.getGoogleSheet()
     g_usersettings = sht.worksheet_by_title('UserSettings').get_all_records()
-    dfsym = pd.read_csv(os.path.join(f.currentdir(), 'symbols.csv'))
+    dfsym = pd.read_csv(Path(f.curdir()) / 'symbols.csv')
     g_user = g_usersettings[0] #0 is jayme
     syms = []
 
