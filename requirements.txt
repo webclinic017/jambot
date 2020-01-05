@@ -7,7 +7,6 @@ bravado-core==5.13.1
 cachetools==3.1.1
 certifi==2019.6.16
 chardet==3.0.4
-Columnar==1.0.0
 discord==1.0.1
 discord.py==1.2.3
 google-api-python-client==1.7.11

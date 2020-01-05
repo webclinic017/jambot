@@ -330,6 +330,35 @@ def refresh_gsheet_balance(u=None):
     if u is None: u = User()
     writeUserBalanceGoogle(syms, u, sht=sht, ws=ws, df=df)
     
+def checksfp(df):
+    # run every hour
+    # get last 196 candles, price info only
+    # create sfp object
+    # check if current candle returns any sfp objects
+    # send discord alert with the swing fails, and supporting info
+    # 'Swing High to xxxx', 'swung highs at xxxx', 'tail = xx%'
+    # if one candle swings highs and lows, go with... direction of candle? bigger tail?
+        
+    sfp = c.Strat_SFP(df=df)
+    sfps = sfp.isSwingFail()
+    msg = ''
+    cdl = sfp.cdl
+    stypes = dict(high=1, low=-1)
+
+    for k in stypes.keys():
+        lst = list(filter(lambda x: k in x['name'], sfps))
+        side = stypes[k]
+        
+        if lst:
+            msg += 'Swing {} to {} | tail = {:.0%}\n'.format(k.upper(),
+                                                    cdl.getmax(side=side),
+                                                    cdl.tailpct(side=side))
+            for sfp in lst:
+                msg += '    {} at: {}\n'.format(sfp['name'], sfp['price'])
+    
+    if msg: f.discord(msg=msg, channel='sfp')
+
+    
 def checkfilledorders(minutes=5, refresh=True, u=None):
     
     if u is None: u = User()
@@ -440,7 +469,7 @@ def writeUserBalanceGoogle(syms, u, sht=None, ws=None, preservedf=False, df=None
     ws.set_dataframe(df, (1,1), nan='')
     # return df
     
-def TopLoop(u=None, partial=False):
+def TopLoop(u=None, partial=False, dfall=None):
     # run every 1 hour, or when called by checkfilledorders()
 
     # Google - get user/position info
@@ -460,8 +489,9 @@ def TopLoop(u=None, partial=False):
     # use 'WHERE symbol in []', try pypika
     # Only using XBTUSD currently
     startdate, daterange = date.now().date() + delta(days=-15), 30
-    dfall = f.getDataFrame(symbol='XBTUSD', startdate=f.startvalue(startdate), enddate=f.enddate(startdate, daterange))
-
+    if dfall is None:
+        dfall = f.getDataFrame(symbol='XBTUSD', startdate=startdate, daterange=daterange)
+        
     for row in dfsym.itertuples():
         if not row.symbol=='XBTUSD': continue
         try:
