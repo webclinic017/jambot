@@ -6,7 +6,6 @@ from time import time
 
 import numpy as np
 import pandas as pd
-from columnar import columnar
 
 import Functions as f
 import LiveTrading as live
@@ -77,6 +76,7 @@ class Account():
         return f.percent(change / balance)
 
     def printsummary(self, period='month'):
+        from columnar import columnar
         data = []
         headers = ['Period', 'AcctBalance', 'Change', 'PercentChange']
 
@@ -112,6 +112,7 @@ class Account():
         df.plot(kind='line', x='timestamp', y='balance', logy=logy, linewidth=0.75, color='cyan', title=title)
 
     def printtxns(self):
+        from columnar import columnar
         data = []
         headers = ['Date', 'AcctBalance', 'Amount', 'PercentChange']
         for t in self.txns:
@@ -134,7 +135,7 @@ class Backtest():
     def __init__(self, symbol, startdate=None, strats=[], daterange=365, df=None, row=None, account=None, partial=False, u=None):
 
         if row is None:
-            dfsym = pd.read_csv(os.path.join(f.currentdir(), 'symbols.csv'))
+            dfsym = pd.read_csv(os.path.join(f.curdir(), 'symbols.csv'))
             dfsym = dfsym[dfsym['symbol']==symbol]
             row = list(dfsym.itertuples())[0]
 
@@ -965,6 +966,7 @@ class Strat_Chop(Strategy):
         return self.checkfinalorders(lstOrders)
 
     def printtrades(self, maxmin=0, maxlines=-1):
+        from columnar import columnar
         data = []
         headers = ['N', 'Timestamp', 'Sts', 'Dur', 'Anchor', 'Entry', 'Exit', 'Contracts', 'Filled', 'Pnl', 'Balance']
         for i, t in enumerate(self.trades):
@@ -990,27 +992,63 @@ class Strat_Chop(Strategy):
         print(table)
 
 class Strat_SFP(Strategy):
-    def __init__(self, weight=1, lev=5):
+    def __init__(self, df, weight=1, lev=5):
         self.name = 'SFP'
         super().__init__(self.name, weight, lev)
 
-        # min lookback period = 12?
-        # max lookback period = 7 * 24?
-        min_lookback = 12
-        max_lookback = 3 * 24
+        self.df = df
+        self.minswing = 0.05
 
-        df['sfp_high'] = df.High.rolling(max_lookback).max().shift(min_lookback)
-        df['sfp_low'] = df.High.rolling(max_lookback).min().shift(min_lookback)        
+        offset = 6
+        period_base = 48 #48, 96, 192
 
-    def decide(self, c):
+        for i in range(3):
+            period = period_base * 2 ** i
 
-        # check for swing high
-        if c.High > c.sfp_high and c.Close < c.sfp_high:
-            pass
+            df[f'sfp_high{i}'] = df.High.rolling(period).max().shift(offset)    
+            df[f'sfp_low{i}'] = df.Low.rolling(period).min().shift(offset)
 
-        # check for swing low
-        if c.Low < c.sfp_low and c.Close > c.sfp_low:
-            pass
+    def checktail(self, side, cdl):
+        if cdl.tailsize(side=side) / cdl.size() > self.minswing:
+            return True
+        else:
+            return False
+
+    def checkswing(self, side, swingval, cdl):
+        c = cdl.row
+        px_max = c.High if side == 1 else c.Low
+
+        if (side * (px_max - swingval) > 0 and 
+            side * (c.Close - swingval) < 0):
+            return True
+
+    def isSwingFail(self, i=None):
+        if i is None:
+            i = len(self.df) - 1
+        c = self.df.iloc[i]
+        cdl = Candle(row=c)
+        self.cdl = cdl
+        stypes = dict(high=1, low=-1)
+        sfp = []
+
+        # Swing High - need to check with multiple periods, largest to smallest?
+        # only count further back if high/low is higher
+        for k in stypes:
+            side = stypes[k]
+            prevmax = float('-inf') * side
+
+            for i in range(3):
+                swing = f'{k}{i}'
+                swingval = c[f'sfp_{swing}']
+
+                if (side * (swingval - prevmax) > 0 and
+                    self.checkswing(side=side, swingval=swingval, cdl=cdl) and
+                    self.checktail(side=side, cdl=cdl)):
+                        sfp.append(dict(name=swing, price=swingval))
+
+                prevmax = swingval
+
+        return sfp
 
 
 # TRADE
@@ -1191,7 +1229,7 @@ class Trade():
                 c.Close)
 
     def printorders(self, orders=None):
-        
+        from columnar import columnar
         if orders is None:
             orders = self.allorders()
 
@@ -1848,19 +1886,49 @@ class Candle():
         self.row = row
 
     def dHC(self):
-        return self.row.High - self.row.Close
+        c = self.row
+        return c.High - c.Close
     
     def dLC(self):
-        return self.row.Low - self.row.Close
+        c = self.row
+        return c.Low - c.Close
     
     def percentOCd(self):
-        return (self.row.Close - self.row.Open) / self.row.Open
+        c = self.row
+        return (c.Close - c.Open) / c.Open
 
     def percentOC(self):
         return f.percent(self.percentOCd())
             
     def size(self):
-        return abs(self.row.High - self.row.Low)
+        c = self.row
+        return abs(c.High - c.Low)
+
+    def side(self):
+        c = self.row
+        ans = 1 if c.Close > c.Open else -1
+        return ans
+    
+    def tailpct(self, side):
+        c = self.row
+        return self.tailsize(side=side) / self.size()
+    
+    def tailsize(self, side):
+        # 1 = upper, -1 = lower
+        # tailsize depends on side of candle
+        c = self.row
+
+        if side == 1:
+            return c.High - max(c.Close, c.Open)
+        elif side == -1:
+            return min(c.Close, c.Open) - c.Low
+
+    def getmax(self, side):
+        c = self.row
+        if side == 1:
+            return c.High
+        else:
+            return c.Low
         
     def convertthis(self):
         # Public Function isSwingFail(oSym As cSymBacktest) As Boolean
