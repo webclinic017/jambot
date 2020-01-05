@@ -68,6 +68,7 @@ def run_single(strattype, startdate, dfall, speed0, speed1, row=None, norm=None,
         strat = c.Strat_TrendRev(speed=speed, norm=norm)
         strat.slippage = 0
         strat.stoppercent = -0.03
+        
     elif strattype == 'trend':
         speed = (row.against, row.withspeed)
         strat = c.Strat_Trend(speed=speed)
@@ -450,8 +451,10 @@ def discord(msg, channel='jambot'):
     elif channel == 'err':
         WEBHOOK_ID = '512030769775116319'
         WEBHOOK_TOKEN = 's746HqzlZGedOfnSmgDeC8HJJT_5-bYcgUbgs8KWwvb6gw38gGR_WhQylFKdcWtGyTHi'
-
         msg += '@here'
+    elif channel == 'sfp':
+        WEBHOOK_ID = '663112590397931524'
+        WEBHOOK_TOKEN = 'dm_ZRSAS6DXwNZF7lqNeYThmSau12fDsedJLqRd9eGA1z-7UD1smqGBHceWgXgRfb2iE'
 
     # Create webhook
     webhook = Webhook.partial(WEBHOOK_ID, WEBHOOK_TOKEN,\
