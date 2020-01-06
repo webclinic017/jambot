@@ -161,7 +161,6 @@ class Backtest():
             self.i = 1
             self.candles = []
             
-            
             if df is None:
                 self.df = f.getDataFrame(symbol=symbol, startdate=f.startvalue(startdate), enddate=f.enddate(startdate, daterange))
             else:
@@ -245,9 +244,10 @@ class Confidence():
         self.trendsignals = []
         self.maxconf = 1.5
         self.minconf = 0.25
+        self.startconf = 1
         
     def final(self, side, c):
-        conf = 1
+        conf = self.startconf
         for signal in self.signals:
             conf *= signal.final(side=side, c=c)
 
@@ -433,6 +433,7 @@ class Strategy():
         self.trades = []
         self.trade = None
         self.sym = None
+        self.candle =  None
         self.conf = Confidence()
             
     def loadcols(self):
@@ -474,6 +475,17 @@ class Strategy():
             if order.contracts == 0:
                 del finalorders[i]
         return finalorders
+
+    def inittrade(self, trade, side, entryprice, balance=None, temp=False):
+        if balance is None:
+            balance = self.sym.account.getBalance()
+
+        contracts = f.getContracts(balance, self.lev, entryprice, side, self.sym.altstatus) * self.weight
+        conf = self.conf.final(side=side, c=self.candle)
+        
+        trade.init(price=entryprice, targetcontracts=contracts, strat=self, conf=conf, side=side, temp=temp)
+        
+        return trade
 
     def badtrades(self):
         return list(filter(lambda x: x.pnlfinal <= 0, self.trades))
@@ -552,31 +564,19 @@ class Strat_TrendRev(Strategy):
         self.trend = Signal_Trend(df=df, signals=[df.ema_trend, df.ema_slope], speed=self.speed)
 
     def exittrade(self):
-        trade = self.trade
+        t = self.trade
         c = self.candle
 
-        if not trade.stopped and trade.limitopen.filled and not trade.limitclose.filled:
-            trade.stop.cancel()
-            trade.limitclose.fill(c=c, price=c.Close)
+        if not t.stopped and t.limitopen.filled and not t.limitclose.filled:
+            t.stop.cancel()
+            t.limitclose.fill(c=c, price=c.Close)
             self.unfilledtrades += 1
             
-        self.trade.exittrade()
+        t.exittrade()
         self.trade = None
-
-    def inittrade(self, side, entryprice, balance=None, temp=False):
-        if balance is None:
-            balance = self.sym.account.getBalance()
-
-        contracts = f.getContracts(balance, self.lev, entryprice, side, self.sym.altstatus) * self.weight
-        conf = self.conf.final(side=side, c=self.candle)
-        
-        trade = Trade_TrendRev()
-        trade.init(price=entryprice, targetcontracts=contracts, strat=self, conf=conf, side=side, temp=temp)
-        
-        return trade
     
     def entertrade(self, side, entryprice):
-        self.trade = self.inittrade(side=side, entryprice=entryprice)
+        self.trade = self.inittrade(trade=Trade_TrendRev(), side=side, entryprice=entryprice)
         t = self.trade
         t.checkorders(self.sym.curcandle)
         if not t.active: self.exittrade()
@@ -992,12 +992,22 @@ class Strat_Chop(Strategy):
         print(table)
 
 class Strat_SFP(Strategy):
-    def __init__(self, df, weight=1, lev=5):
+    def __init__(self, weight=1, lev=5):
         self.name = 'SFP'
         super().__init__(self.name, weight, lev)
 
-        self.df = df
+    def init(self, sym=None, df=None):
+        
+        if not sym is None:
+            self.sym = sym
+            self.df = sym.df
+            df = self.df
+            self.a = self.sym.account
+        elif not df is None:
+            self.df = df
+
         self.minswing = 0.05
+        self.stypes = dict(high=1, low=-1)
 
         offset = 6
         period_base = 48 #48, 96, 192
@@ -1005,9 +1015,11 @@ class Strat_SFP(Strategy):
         for i in range(3):
             period = period_base * 2 ** i
 
-            df[f'sfp_high{i}'] = df.High.rolling(period).max().shift(offset)    
+            df[f'sfp_high{i}'] = df.High.rolling(period).max().shift(offset)
             df[f'sfp_low{i}'] = df.Low.rolling(period).min().shift(offset)
 
+        ema = Signal_EMA(df=df, weight=1)
+        
     def checktail(self, side, cdl):
         if cdl.tailsize(side=side) / cdl.size() > self.minswing:
             return True
@@ -1022,10 +1034,13 @@ class Strat_SFP(Strategy):
             side * (c.Close - swingval) < 0):
             return True
 
-    def isSwingFail(self, i=None):
-        if i is None:
-            i = len(self.df) - 1
-        c = self.df.iloc[i]
+    def isSwingFail(self, c=None, i=None):
+        if c is None:
+            if i is None:
+                i = len(self.df) - 1
+
+            c = self.df.iloc[i]
+
         cdl = Candle(row=c)
         self.cdl = cdl
         stypes = dict(high=1, low=-1)
@@ -1039,7 +1054,7 @@ class Strat_SFP(Strategy):
 
             for i in range(3):
                 swing = f'{k}{i}'
-                swingval = c[f'sfp_{swing}']
+                swingval = c._asdict()[f'sfp_{swing}']
 
                 if (side * (swingval - prevmax) > 0 and
                     self.checkswing(side=side, swingval=swingval, cdl=cdl) and
@@ -1049,6 +1064,47 @@ class Strat_SFP(Strategy):
                 prevmax = swingval
 
         return sfp
+
+    def entertrade(self, side, price, c):
+        self.trade = self.inittrade(trade=Trade_SFP(), side=side, entryprice=price)
+        self.trade.enter()
+        self.trade.addCandle(c)
+
+    def exittrade(self, price):
+        t = self.trade
+        t.exit(price=price)
+        self.trade = None
+
+    def decide(self, c):
+        stypes = self.stypes
+        
+        # EXIT Trade
+        if not self.trade is None:
+            t = self.trade
+            t.addCandle(c)
+            if t.duration() == 12:
+                self.exittrade(price=c.Close)
+
+        # ENTER Trade
+        # if swing fail, then enter in opposite direction at close
+        # if multiple swing sides, enter with candle side
+
+        if self.trade is None:
+            sfps = self.isSwingFail(c=c)
+            
+            if sfps:
+                cdl = self.cdl
+                m = {}
+                for k in stypes.keys():
+                    m[k] = len(list(filter(lambda x: k in x['name'], sfps)))
+                
+                m2 = {k:v for k,v in m.items() if v > 0}
+                if len(m2) > 1:
+                    swingtype = cdl.side()
+                else:
+                    swingtype = stypes[list(m2)[0]]
+
+                self.entertrade(side=swingtype * -1, price=c.Close, c=c)
 
 
 # TRADE
@@ -1490,10 +1546,22 @@ class Trade_Chop(Trade):
     def printallorders(self):
         self.strat.printorders(self.allorders())
 
+class Trade_SFP(Trade):
+    def __init__(self):
+        super().__init__()
+
+    def exit(self, price):
+        self.closeorder(price=price, contracts=self.contracts)
+        self.exittrade()
+
+    def enter(self):
+        self.entryprice = self.entrytarget
+        self.contracts = self.targetcontracts
+        # should use order objects
 
 # ORDER
 class Order():
-    def __init__(self, price, side, contracts, ordtype, ordarray=None, trade=None, sym=None,  activate=False, index=0, symbol='', name='', execinst='', ordtype2=''):
+    def __init__(self, price, side, contracts, ordtype, ordarray=None, trade=None, sym=None,  activate=False, index=0, symbol='', name='', execinst='', ordtype2='', manual=False):
 
         self.ordarray = ordarray
         self.trade = trade
@@ -1503,14 +1571,16 @@ class Order():
         self.name = name
         self.orderID = ''
         self.execInst = execinst
-        self.ordtype2 = ordtype2        
+        self.ordtype2 = ordtype2  
+        self.manual = manual      
 
         if not self.ordarray is None:
             self.trade = self.ordarray.trade
 
         if not self.trade is None:
             self.sym = self.trade.strat.sym
-
+            self.slippage = self.trade.strat.slippage
+        
         # live trading
         if not self.sym is None:
             self.decimalfigs = self.sym.decimalfigs
@@ -1525,7 +1595,7 @@ class Order():
         self.side = side
         self.price = self.finalprice(price)
         self.pxoriginal = self.price
-        self.slippage = self.trade.strat.slippage
+        
         self.contracts = contracts
         self.ordtype = ordtype
         self.active = activate
@@ -1608,7 +1678,7 @@ class Order():
         # TODO: Use stoppx() for open too (trend)
         price = self.price if not self.isstop else self.stoppx()
 
-        self.trade.closeorder(price=price, contracts=self.contracts) 
+        self.trade.closeorder(price=price, contracts=self.contracts)
             
     def fill(self, c, price=None):
         self.filled = True
@@ -1671,9 +1741,9 @@ class Order():
 
         with f.Switch(self.ordtype2) as case:
             if case('Limit'):
-                m['price'] = self.finalprice()
+                m['price'] = self.price
             elif case('Stop'):
-                m['stopPx'] = self.finalprice()
+                m['stopPx'] = self.price
 
         if not self.execInst == '':
             m['execInst'] = self.execInst
@@ -1688,9 +1758,9 @@ class Order():
         
         with f.Switch(self.ordtype2) as case:
             if case('Limit'):
-                m['price'] = self.finalprice()
+                m['price'] = self.price
             elif case('Stop'):
-                m['stopPx'] = self.finalprice()
+                m['stopPx'] = self.price
             elif case('Market'):
                 m['ordType'] = self.ordtype2
             # elif case('StopLimit'):
@@ -1702,9 +1772,12 @@ class Order():
         return m
     
     def finalprice(self, price=None):
-        if price is None:
-            price = self.price
-        return round(round(price, self.decimalfigs) + self.decimaldouble * self.side * -1, self.decimalfigs) #slightly excessive rounding
+        if self.manual:
+            return price
+        else:
+            if price is None:
+                price = self.price
+            return round(round(price, self.decimalfigs) + self.decimaldouble * self.side * -1, self.decimalfigs) #slightly excessive rounding
      
 class OrdArray():
     
@@ -1929,85 +2002,3 @@ class Candle():
             return c.High
         else:
             return c.Low
-        
-    def convertthis(self):
-        # Public Function isSwingFail(oSym As cSymBacktest) As Boolean
-        #     MinSwing = 0.5
-        #     MinCloseEma = 0.005
-        #     Dim y As Integer
-            
-        #     aCandles = 24
-        #     For y = Me.i - aCandles To Me.i - 1
-        #         AvgCandleSize = oSym.Candle(y).Size + AvgCandleSize
-        #     Next y
-        #     AvgCandleSize = AvgCandleSize / aCandles
-            
-        #     If TailSize > AvgCandleSize Then
-        #         dCloseEma = SwingType * (Clse - ema10) / ema10
-        #         TailPercent = TailSize / Size
-        #         If (TailPercent > MinSwing And dCloseEma > MinCloseEma) _
-        #             Or (TailPercent > 0.3 And TailSize > 1.75 * AvgCandleSize) _
-        #             Then isSwingFail = True
-        #     End If
-            
-        # End Function
-
-        # Public Property Get SwingType() As Integer
-        #     If Me.Clse > Me.Opn Then
-        #         SwingType = 1
-        #         Else
-        #         SwingType = -1
-        #     End If
-        # End Property
-        # Public Property Get TailSize() As Double
-        #     Select Case SwingType
-        #         Case 1
-        #             TailSize = High - Clse
-        #         Case -1
-        #             TailSize = Clse - Low
-        #     End Select
-        # End Property
-        # Public Property Get TailSizeOpp() As Double
-        #     Select Case SwingType
-        #         Case 1
-        #             TailSizeOpp = Clse - Low
-        #         Case -1
-        #             TailSizeOpp = High - Clse
-        #     End Select
-        # End Property
-        # Public Function printCandle() As String
-        #     Select Case SwingType
-        #         Case 1
-        #             bodyFill = " "
-        #             bodyHigh = Clse
-        #             bodyLow = Opn
-        #         Case -1
-        #             bodyFill = ":"
-        #             bodyHigh = Opn
-        #             bodyLow = Clse
-        #     End Select
-            
-        #     '-------a[      ]b---c
-        #     upWick = Round(High - bodyHigh, 0)
-        #     downWick = Round(bodyLow - Low, 0)
-        #     body = Round(bodyHigh - bodyLow, 0)
-            
-        #     a = Normalize(CDbl(downWick), 500, 5, 100, 1)
-        #     b = Normalize(CDbl(downWick + body), 500, 5, 100, 1)
-        #     c = Normalize(CDbl(downWick + body + upWick), 500, 5, 100, 1)
-            
-        #     For i = 1 To a
-        #         strCandle = strCandle & "-"
-        #     Next i
-        #     strCandle = strCandle & "["
-        #     For i = a To b
-        #         strCandle = strCandle & bodyFill
-        #     Next i
-        #     strCandle = strCandle & "]"
-        #     For i = b To c
-        #         strCandle = strCandle & "-"
-        #     Next i
-        #     'strCandle = "|" & strCandle & "|"
-        #     printCandle = strCandle
-        # End Function
-        pass
