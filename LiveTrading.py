@@ -176,10 +176,23 @@ class User():
                 msg += json.dumps(order.amendorder()) + '\n'
             f.senderror(msg)
 
-    def placesingle(self, order):
+    def placemanual(self, side, contracts, price=None, ordtype='Limit', symbol='XBTUSD'):
 
-        return self.client.Order.Order_new()
+        if price is None: ordtype='Market'
+        
+        order = c.Order(price=price,
+                        side=side,
+                        contracts=contracts,
+                        ordtype=1,
+                        ordtype2=ordtype,
+                        name='Manual',
+                        symbol=symbol,
+                        manual=True)
 
+        display(order.neworder())
+        
+        return self.placebulk(placeorders=[order])
+    
     def placebulk(self, placeorders):
         orders = []
         l = len(placeorders)
@@ -228,23 +241,75 @@ class User():
 
         return df.append(dfpartial, sort=False).reset_index(drop=True)
 
-    def getCandles(self, symbol='', starttime=None, f='', retainpartial=False, includepartial=True):
-        result = self.client.Trade.Trade_getBucketed(
-                                    binSize='1h',
-                                    symbol=symbol,
-                                    startTime=starttime,
-                                    filter=f,
-                                    count=1000,
-                                    reverse=False,
-                                    partial=includepartial).response().result
+    def resample(self, df, includepartial=False):
+        from collections import OrderedDict
+        # convert 5min candles to 15min
+        # need to only include groups of 3 > drop last 1 or 2 rows
+        # remove incomplete candles, split into groups first
+
+        gb = df.groupby('Symbol')
+        lst = []
+
+        for symbol in gb.groups:
+            df = gb.get_group(symbol)
+            
+            if not includepartial:
+                l = len(df)
+                cut = l - (l  // 3) * 3
+                if cut > 0: df = df[:cut * -1]
+
+            lst.append(df.resample('15Min', on='Timestamp').agg(
+                OrderedDict([
+                    ('Symbol', 'first'),
+                    ('Open', 'first'),
+                    ('High', 'max'),
+                    ('Low', 'min'),
+                    ('Close', 'last')])))
+
+        return pd.concat(lst).reset_index()
+
+    def getCandles(self, symbol='', starttime=None, fltr='', retainpartial=False, includepartial=True, interval=1, count=1000, pages=100):
+
+        if interval == 1:
+            binsize = '1h'
+            offset = delta(hours=1)
+        elif interval == '15min':
+            binsize = '5m'
+            offset = delta(minutes=5)
+
+        if not starttime is None:
+            starttime += offset
+
+        resultcount = float('inf')
+        start = 0
+        lst = []
+
+        while resultcount >= 1000 and start // 1000 <= pages:
+            result = self.client.Trade.Trade_getBucketed(
+                                        binSize=binsize,
+                                        symbol=symbol,
+                                        startTime=starttime,
+                                        filter=fltr,
+                                        count=count,
+                                        start=start,
+                                        reverse=False,
+                                        partial=includepartial).response().result
+            
+            # print(start // 1000)
+            resultcount = len(result)
+            lst.extend(result)
+            start += 1000
 
         # convert bitmex dict to df
-        df = pd.io.json.json_normalize(result)
-        usecols = ['symbol', 'timestamp', 'open', 'high', 'low', 'close']
-        newcols = ['Symbol', 'CloseTime', 'Open', 'High', 'Low', 'Close']
-        df = df[usecols]
-        df.columns = newcols
-        df.CloseTime = df.CloseTime.astype('datetime64[ns]')
+        df = pd.io.json.json_normalize(lst)
+        df.columns = [x.capitalize() for x in df.columns]
+        df.Timestamp = df.Timestamp.astype('datetime64[ns]') + offset * -1
+
+        if interval == 15:
+            df = self.resample(df=df, includepartial=includepartial)
+    
+        df['Interval'] = interval
+        df = df[['Interval', 'Symbol', 'Timestamp', 'Open', 'High', 'Low', 'Close']]
 
         if includepartial:
             self.partialcandle = df.tail(1).copy().reset_index(drop=True) # save last as df
@@ -358,7 +423,6 @@ def checksfp(df):
     
     if msg: f.discord(msg=msg, channel='sfp')
 
-    
 def checkfilledorders(minutes=5, refresh=True, u=None):
     
     if u is None: u = User()
@@ -490,7 +554,7 @@ def TopLoop(u=None, partial=False, dfall=None):
     # Only using XBTUSD currently
     startdate, daterange = date.now().date() + delta(days=-15), 30
     if dfall is None:
-        dfall = f.getDataFrame(symbol='XBTUSD', startdate=startdate, daterange=daterange)
+        dfall = f.getDataFrame(symbol='XBTUSD', startdate=startdate, daterange=daterange, interval=1)
         
     for row in dfsym.itertuples():
         if not row.symbol=='XBTUSD': continue

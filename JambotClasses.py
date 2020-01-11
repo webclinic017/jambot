@@ -126,7 +126,7 @@ class Account():
         print(table)
 
     def getDf(self):
-        df = pd.DataFrame(columns=['CloseTime', 'Balance', 'PercentChange'])
+        df = pd.DataFrame(columns=['Timestamp', 'Balance', 'PercentChange'])
         for i, t in enumerate(self.txns):
             df.loc[i] = [t.timestamp, t.acctbalance, t.percentchange]
         return df
@@ -170,7 +170,7 @@ class Backtest():
                 if u is None: u = live.User()
                 self.df = u.appendpartial(df)
            
-            self.startrow = self.df.loc[self.df['CloseTime'] == pd.Timestamp(self.startdate)].index[0]
+            self.startrow = self.df.loc[self.df['Timestamp'] == pd.Timestamp(self.startdate)].index[0]
 
             for strat in self.strats:
                 strat.init(sym=self)
@@ -284,6 +284,7 @@ class Signal_MACD(Signal):
     def __init__(self, df, weight=1, fast=50, slow=200, smooth=50):
         super().__init__(df=df, weight=weight)
         # init macd series
+        self.name = 'macd'
         f.addEma(df=df, p=fast)
         f.addEma(df=df, p=slow)
 
@@ -305,10 +306,11 @@ class Signal_MACD(Signal):
 class Signal_EMA(Signal):
     def __init__(self, df, weight=1, fast=50, slow=200):
         super().__init__(df=df, weight=weight)
+        self.name = 'ema'
         f.addEma(df=df, p=fast)
         f.addEma(df=df, p=slow)
 
-        df['emaspread'] = round((df.ema50 - df.ema200) / ((df.ema50 + df.ema200) / 2) ,6)
+        df['emaspread'] = round((df.ema50 - df.ema200) / ((df.ema50 + df.ema200) / 2) , 6)
         df['ema_trend'] = np.where(df.ema50 > df.ema200, 1, -1)
 
         c = self.getC(maxspread=0.1)
@@ -348,6 +350,7 @@ class Signal_EMA(Signal):
 class Signal_EMA_Slope(Signal):
     def __init__(self, df, weight=1, p=50, slope=5):
         super().__init__(df=df, weight=weight)
+        self.name = 'ema_Slope'
         f.addEma(df=df, p=p)
         df['ema_slope'] = np.where(np.roll(df['ema{}'.format(p)], slope, axis=0) < df['ema{}'.format(p)], 1, -1)
         df.loc[:p + slope, 'ema_slope'] = np.nan
@@ -365,6 +368,7 @@ class Signal_EMA_Slope(Signal):
 class Signal_Volatility(Signal):
     def __init__(self, df, weight=1, norm=(0.004,0.024)):
         super().__init__(df=df, weight=weight)
+        self.name = 'volatility'
 
         df['maxhigh'] = df.High.rolling(48).max()
         df['minlow'] = df.Low.rolling(48).min()
@@ -522,7 +526,7 @@ class Strategy():
         for t in trades[last * -1: min(first, len(trades))]:
             data.append([
                 t.tradenum,
-                t.candles[0].CloseTime,
+                t.candles[0].Timestamp,
                 t.status,
                 t.duration(),
                 t.entryprice,
@@ -688,7 +692,7 @@ class Strat_TrendRev(Strategy):
 
         # NEXT - Init next trade to get next limitopen and stop
         px = c.pxhigh if t_current.side == 1 else c.pxlow
-        t_next = self.inittrade(side=t_current.side * -1, entryprice=px, balance=balance, temp=True)
+        t_next = self.inittrade(side=t_current.side * -1, entryprice=px, balance=balance, temp=True, trade=Trade_TrendRev())
         lst.append(t_next.limitopen)
         lst.append(t_next.stop)    
 
@@ -853,17 +857,6 @@ class Strat_Chop(Strategy):
     def init(self, sym):
         self.sym = sym
 
-        # c = dict()
-        # c[self.name + '_Status'] = np.nan
-        # c[self.name + '_Contracts'] = np.nan
-        # c[self.name + '_Info'] = np.nan
-        # c[self.name + '_Pnl'] = 0.00
-        # sym.df = sym.df.assign(**c)
-
-        # self.loadcols()
-
-        # self.speed = (sym.row.lowernormal, sym.row.uppernormal)
-
         sym.df = f.setTradePrices(self.name, sym.df, speed=self.speed)
         sym.df = f.setTradePrices('tp', sym.df, speed=self.speedtp)
         sym.df = f.setVolatility(sym.df, norm=self.norm)
@@ -903,15 +896,13 @@ class Strat_Chop(Strategy):
 
     def getNextOrdArrays(self, anchorprice, c, side, trade=None):
 
-        orders = OrdArray(
-                        ordtype=1,
+        orders = OrdArray(ordtype=1,
                         anchorprice=anchorprice,
                         orderspread=0.002 * c.norm,
                         trade=trade,
                         activate=True)
         
-        stops = OrdArray(
-                        ordtype=2,
+        stops = OrdArray(ordtype=2,
                         anchorprice=f.getPrice(
                             -0.01 * c.norm,
                             orders.maxprice,
@@ -922,8 +913,7 @@ class Strat_Chop(Strategy):
         
         outerprice = c.tp_high if side == 1 else c.tp_low
 
-        takeprofits = OrdArray(
-                        ordtype=3,
+        takeprofits = OrdArray(ordtype=3,
                         anchorprice=trade.anchorstart,
                         outerprice=outerprice,
                         orderspread=0,
@@ -944,8 +934,6 @@ class Strat_Chop(Strategy):
 
             # rescale contracts to reflect actual user balance
             targetcontracts = f.getContracts(balance, self.lev, t.anchorstart, t.side, self.sym.altstatus)
-            # print(targetcontracts)
-            # t.printallorders()
 
             lstOrders.extend(t.orders.getUnfilledOrders(targetcontracts))
             lstOrders.extend(t.stops.getUnfilledOrders(targetcontracts, remainingcontracts))
@@ -974,7 +962,7 @@ class Strat_Chop(Strategy):
 
             data.append([
                 t.tradenum,
-                '{:%Y-%m-%d %H}'.format(t.candles[0].CloseTime),
+                '{:%Y-%m-%d %H}'.format(t.candles[0].Timestamp),
                 t.status,
                 t.duration(),
                 '{:,.0f}'.format(t.anchorstart),
@@ -1067,12 +1055,11 @@ class Strat_SFP(Strategy):
 
     def entertrade(self, side, price, c):
         self.trade = self.inittrade(trade=Trade_SFP(), side=side, entryprice=price)
-        self.trade.enter()
         self.trade.addCandle(c)
+        # self.trade.enter()
 
     def exittrade(self, price):
-        t = self.trade
-        t.exit(price=price)
+        self.trade.exit(price=price)
         self.trade = None
 
     def decide(self, c):
@@ -1137,7 +1124,7 @@ class Trade():
         self.conf = round(conf, 3)
         self.tradenum = strat.tradecount()
         self.timeout = strat.timeout
-        self.candle = self.sym.curcandle
+        self.candle = self.sym.curcandle # this might not be necessary
         self.entrybalance = self.sym.account.getBalance()
         self.i_enter = self.strat.i
 
@@ -1169,7 +1156,7 @@ class Trade():
         if self.entryprice == 0:
             raise ValueError('entry price cant be 0!')
 
-        self.sym.account.modify(f.getPnlXBT(contracts * -1, self.entryprice, price, self.sym.altstatus), self.candle.CloseTime)
+        self.sym.account.modify(f.getPnlXBT(contracts * -1, self.entryprice, price, self.sym.altstatus), self.candle.Timestamp)
         
         self.exitcontracts += contracts
         self.contracts += contracts
@@ -1270,15 +1257,15 @@ class Trade():
     def df(self):
         return self.sym.df.iloc[self.i_enter:self.i_exit]
 
-    def chart(self, pre=36, post=None):
+    def chart(self, pre=36, post=None, width=900):
         dur = self.duration()
         post = dur if post is None and dur > 36 else 36
-        f.chartorders(self.sym.df, self, pre=pre, post=post)
+        f.chartorders(self.sym.df, self, pre=pre, post=post, width=width)
 
     def printcandles(self):
         for c in self.candles:
             print(
-                c.CloseTime,
+                c.Timestamp,
                 c.Open,
                 c.High,
                 c.Low,
@@ -1551,13 +1538,36 @@ class Trade_SFP(Trade):
         super().__init__()
 
     def exit(self, price):
-        self.closeorder(price=price, contracts=self.contracts)
+        self.marketclose.price = price # so that not 'marketfilled'
+        self.marketclose.fill(c=self.candle)
         self.exittrade()
 
     def enter(self):
         self.entryprice = self.entrytarget
-        self.contracts = self.targetcontracts
-        # should use order objects
+        # self.contracts = self.targetcontracts
+
+        self.marketopen = Order(
+                    price=self.entryprice,
+                    side=self.side,
+                    contracts=self.targetcontracts,
+                    activate=True,
+                    ordtype=5,
+                    ordtype2='Market',
+                    name='marketopen',
+                    trade=self)
+
+        self.marketclose = Order(
+                    price=self.entryprice,
+                    side=self.side * -1,
+                    contracts=self.targetcontracts,
+                    activate=True,
+                    ordtype=6,
+                    ordtype2='Market',
+                    name='marketclose',
+                    trade=self)
+
+        self.orders.extend([self.marketopen, self.marketclose])
+        self.marketopen.fill(c=self.candle)
 
 # ORDER
 class Order():
@@ -1612,8 +1622,10 @@ class Order():
         # 2 - StopClose
         # 3 - LimitClose
         # 4 - StopOpen
+        # 5 - MarketOpen - only used for addsubtract
+        # 6 - MarketClose
         self.enterexit = -1 if ordtype in (1, 2) else 1
-        self.addsubtract = -1 if ordtype in (2, 3) else 1
+        self.addsubtract = -1 if ordtype in (2, 3, 6) else 1
         self.isstop = True if ordtype in (2, 4) else False
         if not self.trade is None:
             self.direction = self.trade.side * self.enterexit
@@ -1665,13 +1677,13 @@ class Order():
             self.fill(c=c)
             
     def open(self):
-        trade = self.trade
+        t = self.trade
         contracts = self.contracts
 
         if contracts == 0: return
 
-        trade.entryprice = (trade.entryprice * trade.contracts + self.price * contracts) / (trade.contracts + contracts)
-        trade.contracts += contracts            
+        t.entryprice = (t.entryprice * t.contracts + self.price * contracts) / (t.contracts + contracts)
+        t.contracts += contracts            
             
     def close(self):
         # use price if Limit, else use slippage price
@@ -1682,7 +1694,7 @@ class Order():
             
     def fill(self, c, price=None):
         self.filled = True
-        self.filledtime = c.CloseTime
+        self.filledtime = c.Timestamp
 
         # market filling
         if not price is None:
@@ -1693,14 +1705,14 @@ class Order():
             
     def isactive(self, c):
         if not self.delaytime is None:
-            active = True if self.active and c.CloseTime >= self.delaytime else False
+            active = True if self.active and c.Timestamp >= self.delaytime else False
         else:
             active = self.active
 
         return active        
             
     def activate(self, c, delay=0):
-        self.delaytime = c.CloseTime + delta(hours=delay)
+        self.delaytime = c.Timestamp + delta(hours=delay)
         self.active = True
             
     def printself(self):
@@ -1716,7 +1728,7 @@ class Order():
     def cancel(self):
         self.active = False
         self.cancelled = True
-        self.filledtime = self.sym.curcandle.CloseTime
+        self.filledtime = self.sym.curcandle.Timestamp
         if not self.ordarray is None:
             self.ordarray.openorders -= 1
 

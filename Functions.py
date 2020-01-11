@@ -152,10 +152,6 @@ def printTime(start):
         
     print(ans)
 
-def hournow():
-    return date.utcnow().replace(microsecond=0, second=0, minute=0)
-
-
 def line():
     return '\n'
 
@@ -229,7 +225,7 @@ def addorder(order, ts, price=None):
             width=2,
             dash=linedash))
 
-def chartorders(df, t, pre=36, post=36):
+def chartorders(df, t, pre=36, post=36, width=900):
     import plotly.graph_objs as go
     import plotly.offline as py
 
@@ -267,7 +263,7 @@ def chartorders(df, t, pre=36, post=36):
 
     fig.update_layout(
         height=750 * scale,
-        width=900 * scale,
+        width=width * scale,
         paper_bgcolor='#000B15',
         plot_bgcolor='#000B15',
         font_color='white',
@@ -491,81 +487,94 @@ def getGoogleSheet():
     sheet = c.open("Jambot Settings")
     return sheet
 
-def getDataFrame(symbol=None, period=300, startdate=None, enddate=None, daterange=None):
-    e = engine()
+def getDataFrame(symbol=None, period=300, startdate=None, enddate=None, daterange=None, interval=1, db=None):
+    if db is None: db = DB()
+    
+    if startdate is None:
+        startdate = timenow(interval=interval) + delta(hours=abs(period) * -1)
 
     if enddate is None and not daterange is None:
         enddate = startdate + delta(days=daterange)
 
-    sql=getQuery(symbol=symbol, period=period, startdate=startvalue(startdate), enddate=enddate)
-    Query = pd.read_sql_query(sql=sql, con=e, parse_dates=['CloseTime'])
-    e.raw_connection().close()
-
-    return pd.DataFrame(Query)
-
-def getmaxdates(db=None):
-    # Make sure to close conn
-    if db is None: db = DB()
-
-    tbl = pk.Table('Bitmex_OHLC')
+    tbl = pk.Table('Bitmex')
     q = (pk.Query.from_(tbl)
-        .select('Symbol', fn.Max(tbl.CloseTime)
-            .as_('CloseTime'))
-        .groupby(tbl.Symbol)
-        .orderby('CloseTime'))
+        .select('Symbol', 'Timestamp', 'Open', 'High', 'Low', 'Close')
+        .where(tbl.Interval==interval)
+        .where(tbl.Timestamp>=startvalue(startdate))
+        .orderby('Symbol', 'Timestamp'))
 
-    df = pd.read_sql_query(sql=q.get_sql(), con=db.conn, parse_dates=['CloseTime'])
+    if not symbol is None: q = q.where(tbl.Symbol==symbol)
+    if not enddate is None: q = q.where(tbl.Timestamp<=enddate)
+
+    df = pd.read_sql_query(sql=q.get_sql(), con=db.conn, parse_dates=['Timestamp'])
+    db.close()
 
     return df
 
-def updateAllSymbols(u=None):
-    db = DB()
+def getmaxdates(db=None, interval=1):
+    # Make sure to close conn
+    if db is None: db = DB()
+
+    tbl = pk.Table('Bitmex')
+    q = (pk.Query.from_(tbl)
+        .select('Interval', 'Symbol', fn.Max(tbl.Timestamp)
+            .as_('Timestamp'))
+        .where(tbl.Interval==interval)
+        .groupby(tbl.Symbol, tbl.Interval)
+        .orderby('Timestamp'))
+
+    df = pd.read_sql_query(sql=q.get_sql(), con=db.conn, parse_dates=['Timestamp'])
+    df.Interval = df.Interval.astype('int')
+
+    return df
+
+def getInterval(interval='1h'):
+    if interval == '1h':
+        return 1
+    elif interval == '15min':
+        return 15    
+
+def getDelta(interval=1):
+    if interval == 1:
+        return delta(hours=1)
+    elif interval == 15:
+        return delta(minutes=15)
+
+def timenow(interval=1):
+    if interval == 1:
+        return date.utcnow().replace(microsecond=0, second=0, minute=0)
+    elif interval == 15:
+        return round_minutes(dt=date.utcnow(), resolution=15).replace(microsecond=0, second=0)
+
+def round_minutes(dt, resolution):
+    new_minute = (dt.minute // resolution) * resolution
+    return dt + delta(minutes=new_minute - dt.minute)
+
+def updateAllSymbols(u=None, db=None, interval=1):
     lst = []
     if u is None: u = live.User()
-    datenow = hournow()
+    if db is None: db = DB()
 
     # loop query result, add all to dict with maxtime as KEY, symbols as LIST
     m = defaultdict(list)
-    for i, row in getmaxdates(db).iterrows():
-        m[row.CloseTime].append(row.Symbol)
+    for _, row in getmaxdates(db, interval=interval).iterrows():
+        m[row.Timestamp].append(row.Symbol)
 
     # loop dict and call bitmex for each list of syms in maxdate
     for maxdate in m.keys():
-        fltr = json.dumps(dict(symbol=m[maxdate])) # filter symbols needed
-        numsyms = len(m[maxdate])
+        starttime = maxdate + getDelta(interval)
+        if starttime < timenow(interval):
+            fltr = json.dumps(dict(symbol=m[maxdate])) # filter symbols needed
 
-        while maxdate < datenow:
-            dfcandles = u.getCandles(starttime=maxdate + delta(hours=1), f=fltr, includepartial=False)
+            dfcandles = u.getCandles(starttime=starttime, fltr=fltr, includepartial=False, interval=interval)
             lst.append(dfcandles)
 
-            maxdate += delta(hours=1000 // numsyms)
-
     if lst:
-        df = pd.concat(lst)
-        df.to_sql(name='Bitmex_OHLC', con=db.conn, if_exists='append', index=False)
+        df = pd.concat(lst) # maybe remove duplicates
+        df.to_sql(name='Bitmex', con=db.conn, if_exists='append', index=False)
     
     # TODO: keep db conn open and pass to TopLoop
     db.close()
-
-def getQuery(symbol=None, period=300, startdate=None, enddate=None):
-
-    # TODO: Rebuild this with pypika
-    if startdate is None:
-        startdate = date.utcnow() + delta(hours=abs(period) * -1)
-        # startdate = t.strftime(TimeFormat())
-
-    sFilter = 'Where CloseTime>=' + qIt(startdate.strftime(TimeFormat(mins=True)))
-
-    if not enddate is None:
-        sFilter = sFilter + ' and CloseTime<=' + qIt(enddate.strftime(TimeFormat(mins=True)))
-
-    if not symbol is None:
-        sFilter = sFilter + ' and Symbol=' + qIt(symbol)
-
-    Query = 'Select Symbol, CloseTime, [Open], High, Low, [Close] From Bitmex_OHLC ' + \
-        sFilter + ' Order By Symbol, CloseTime '
-    # print(Query)
-    return Query
 
 def qIt(s):
     return "'" + s + "'"
