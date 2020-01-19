@@ -171,12 +171,12 @@ def heatmap(df, cols, title='', dims=(15,15)):
 
 def readcsv(startdate, daterange, symbol=None):
     p = Path.cwd().parent / 'Testing/df.csv'
-    df = pd.read_csv(p, parse_dates=['CloseTime'], index_col=0)
+    df = pd.read_csv(p, parse_dates=['Timestamp'], index_col=0)
 
     if not symbol is None:
         df = filterdf(dfall=df, symbol=symbol)
 
-    mask = ((df['CloseTime'] >= startvalue(startdate)) & (df['CloseTime'] <= enddate(startdate, daterange)))
+    mask = ((df['Timestamp'] >= startvalue(startdate)) & (df['Timestamp'] <= enddate(startdate, daterange)))
     df = df.loc[mask].reset_index(drop=True)
     return df
 
@@ -225,15 +225,15 @@ def addorder(order, ts, price=None):
             width=2,
             dash=linedash))
 
-def chartorders(df, t, pre=36, post=36, width=900):
+def chartorders(df, t, pre=36, post=36, width=900, fast=50, slow=200):
     import plotly.graph_objs as go
     import plotly.offline as py
 
-    ts = t.candles[0].CloseTime
+    ts = t.candles[0].Timestamp
     timelower = ts - delta(hours=pre)
     timeupper = ts + delta(hours=post)
 
-    mask = (df['CloseTime'] >= timelower) & (df['CloseTime'] <= timeupper)
+    mask = (df['Timestamp'] >= timelower) & (df['Timestamp'] <= timeupper)
     df = df.loc[mask].reset_index(drop=True)
     
     shapes, x, y, text = [], [], [], []
@@ -250,12 +250,8 @@ def chartorders(df, t, pre=36, post=36, width=900):
 
     fig = go.Figure()
     
-    # fig.add_trace(go.Scatter(x=df['CloseTime'], y=df['norm'],line=dict(color='yellow', width=1), yaxis='y2'))
-    # fig.add_trace(go.Scatter(x=df['CloseTime'], y=df['trendrev_high'],line=dict(color='red', width=1)))
-    # fig.add_trace(go.Scatter(x=df['CloseTime'], y=df['trendrev_low'],line=dict(color='red', width=1)))
-    # fig.add_trace(go.Scatter(x=df['CloseTime'], y=df['ema10'],line=dict(color='#ffb066', width=1)))
-    fig.add_trace(go.Scatter(x=df['CloseTime'], y=df['ema50'],line=dict(color='#18f27d', width=1)))
-    fig.add_trace(go.Scatter(x=df['CloseTime'], y=df['ema200'],line=dict(color='#9d19fc', width=1)))
+    fig.add_trace(go.Scatter(x=df['Timestamp'], y=df[f'ema{fast}'],line=dict(color='#18f27d', width=1)))
+    fig.add_trace(go.Scatter(x=df['Timestamp'], y=df[f'ema{slow}'],line=dict(color='#9d19fc', width=1)))
     fig.add_trace(candlestick(df))
     fig.add_trace(labels)
     
@@ -294,7 +290,7 @@ def chartorders(df, t, pre=36, post=36, width=900):
 def candlestick(df):
     import plotly.graph_objs as go
     trace = go.Candlestick(
-        x=df['CloseTime'],
+        x=df['Timestamp'],
         open=df['Open'],
         high=df['High'],
         low=df['Low'],
@@ -322,26 +318,26 @@ def chart(df, symbol, df2=None):
             if '50' in col: sColour = '#18f27d'
             if '200' in col: sColour = '#9d19fc'
             emaTrace = go.Scatter(
-                x=df['CloseTime'],
+                x=df['Timestamp'],
                 y=df[col],
                 mode='lines',
                 line=dict(color=sColour, width=1))
             fig.append_trace(emaTrace, row=1, col=1)
 
     df3 = df2.loc[df2['PercentChange'] < 0]
-    percentTrace = go.Bar(x=df3['CloseTime'], 
+    percentTrace = go.Bar(x=df3['Timestamp'], 
                y=df3['PercentChange'], 
                marker=dict(line=dict(width=2, color='#ff7a7a')))
     fig.append_trace(percentTrace, row=2, col=1)
     
     df3 = df2.loc[df2['PercentChange'] >= 0]
-    percentTrace = go.Bar(x=df3['CloseTime'], 
+    percentTrace = go.Bar(x=df3['Timestamp'], 
                y=df3['PercentChange'], 
                marker=dict(line=dict(width=2, color='#91ffff')))
     fig.append_trace(percentTrace, row=2, col=1)
 
     balanceTrace = go.Scatter(
-                    x=df2['CloseTime'],
+                    x=df2['Timestamp'],
                     y=df2['Balance'],
                     mode='lines',
                     line=dict(color='#91ffff', width=1))
@@ -438,23 +434,12 @@ def discord(msg, channel='jambot'):
     import discord
     from discord import Webhook, RequestsWebhookAdapter, File
 
-    if channel == 'orders':
-        WEBHOOK_ID = '546699038704140329'
-        WEBHOOK_TOKEN = '95ZgQfMEv7sj8qGGUciuaMmjHJuxpskG-0nYjOCSZCGBnnSr93MBj7j9_R7nfC1f3AIC'
-    elif channel == 'jambot':
-        WEBHOOK_ID = '506472880620568576'
-        WEBHOOK_TOKEN = 'o1EkqIpGizc5ewUyjivFeEAkvgbU_91qr6Pi-FDLP0qCzu-j7yNFc9vskULJ53JZ6aC1'
-    elif channel == 'err':
-        WEBHOOK_ID = '512030769775116319'
-        WEBHOOK_TOKEN = 's746HqzlZGedOfnSmgDeC8HJJT_5-bYcgUbgs8KWwvb6gw38gGR_WhQylFKdcWtGyTHi'
-        msg += '@here'
-    elif channel == 'sfp':
-        WEBHOOK_ID = '663112590397931524'
-        WEBHOOK_TOKEN = 'dm_ZRSAS6DXwNZF7lqNeYThmSau12fDsedJLqRd9eGA1z-7UD1smqGBHceWgXgRfb2iE'
+    p = Path(curdir()) / 'ApiKeys/discord.csv'
+    r = pd.read_csv(p, index_col='channel').loc[channel]
+    if channel == 'err': msg += '@here' 
 
     # Create webhook
-    webhook = Webhook.partial(WEBHOOK_ID, WEBHOOK_TOKEN,\
-    adapter=RequestsWebhookAdapter())
+    webhook = Webhook.partial(r.id, r.token, adapter=RequestsWebhookAdapter())
     
     # split into strings of max 2000 char for discord
     n = 2000
@@ -487,25 +472,27 @@ def getGoogleSheet():
     sheet = c.open("Jambot Settings")
     return sheet
 
-def getDataFrame(symbol=None, period=300, startdate=None, enddate=None, daterange=None, interval=1, db=None):
+def getDataFrame(symbol=None, period=300, startdate=None, enddate=None, daterange=None, interval=1, db=None, offset=-15):
     if db is None: db = DB()
     
     if startdate is None:
         startdate = timenow(interval=interval) + delta(hours=abs(period) * -1)
+    else:
+        if enddate is None and not daterange is None:
+            enddate = startdate + delta(days=daterange)
 
-    if enddate is None and not daterange is None:
-        enddate = startdate + delta(days=daterange)
+        startdate += delta(days=offset)
 
     tbl = pk.Table('Bitmex')
     q = (pk.Query.from_(tbl)
         .select('Symbol', 'Timestamp', 'Open', 'High', 'Low', 'Close')
         .where(tbl.Interval==interval)
-        .where(tbl.Timestamp>=startvalue(startdate))
+        .where(tbl.Timestamp>=startdate)
         .orderby('Symbol', 'Timestamp'))
 
     if not symbol is None: q = q.where(tbl.Symbol==symbol)
     if not enddate is None: q = q.where(tbl.Timestamp<=enddate)
-
+    
     df = pd.read_sql_query(sql=q.get_sql(), con=db.conn, parse_dates=['Timestamp'])
     db.close()
 
@@ -627,15 +614,15 @@ def neg_red(s):
     return ['color: #ff8080' if v < 0 else '' for v in s]
 
 # Pandas plot on 2 axis
-# ax = sym.df.plot(kind='line', x='CloseTime', y=['ema50', 'ema200'])
-# sym.df.plot(kind='line', x='CloseTime', y='conf', secondary_y=True, ax=ax)
+# ax = sym.df.plot(kind='line', x='Timestamp', y=['ema50', 'ema200'])
+# sym.df.plot(kind='line', x='Timestamp', y='conf', secondary_y=True, ax=ax)
 
 
 # Column math functions
 def addEma(df, p, c='Close'):
     # check if column already exists
-    col = 'ema{}'.format(p)
-    if not col in df:
+    col = f'ema{p}'
+    if not col in df.columns:
         df[col] = df[c].ewm(span=p, min_periods=p).mean()
 
 class Switch:

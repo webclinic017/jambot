@@ -26,6 +26,7 @@ class User():
         self.totalbalancewallet = 0
         self.reservedbalance = 0
         self.unrealizedpnl = 0
+        self.prevpnl = 0
         self.orders = None
         self.positions = None
         self.partialcandle = None
@@ -74,6 +75,14 @@ class User():
     def setPositions(self, fltr=''):
         self.positions = self.client.Position.Position_get(filter=fltr).result()[0]
 
+    def opencontracts(self):
+        self.setPositions()
+        m = {}
+        for p in self.positions:
+            m[p['symbol']] = p['currentQty']
+
+        return m
+
     def dfOrders(self, symbol=None, newonly=True, refresh=False):
         orders = self.getOrders(symbol=symbol, newonly=newonly, refresh=refresh)
         cols = ['ordType', 'name', 'size', 'price', 'execInst', 'symbol']
@@ -81,7 +90,7 @@ class User():
         if not orders:
             df = pd.DataFrame(columns=cols, index=range(1))
         else:
-            df = pd.io.json.json_normalize(orders)
+            df = pd.json_normalize(orders)
             df['size'] = df.orderQty * df.side
             df['price'] = np.where(df.price > 0, df.price, df.stopPx)
         
@@ -109,10 +118,10 @@ class User():
         self.setOrders(symbol=symbol, fltr=fltr, newonly=False, starttime=starttime, reverse=False)
         return self.orders
         
-    def getOrders(self, symbol=None, newonly=True, botonly=False, refresh=False):
+    def getOrders(self, symbol=None, newonly=True, botonly=False, refresh=False, count=100):
         if self.orders is None or refresh:
             self.orders = []
-            self.setOrders(newonly=newonly)
+            self.setOrders(newonly=newonly, count=count)
         
         orders = self.orders
 
@@ -138,7 +147,7 @@ class User():
                                         reverse=reverse,
                                         count=count,
                                         startTime=starttime).response().result
-
+        
         for i, o in enumerate(self.orders):
             
             o['sideStr'] = o['side']
@@ -162,6 +171,7 @@ class User():
         self.totalbalancemargin = res['marginBalance'] / div # unrealized + realized > don't actually use 
         self.totalbalancewallet = res['walletBalance'] / div # realized
         self.unrealizedpnl = res['unrealisedPnl'] / div
+        self.prevpnl = res['prevRealisedPnl'] / div
         # return res
 
     def amendbulk(self, amendorders):
@@ -219,17 +229,20 @@ class User():
         return self.checkrequest(self.client.Order.Order_cancel(orderID=json.dumps(orders)))
         
     def getpartial(self, symbol):
-        
-        # need to compare timestamp of partial
-        
-        if self.partialcandle is None or not self.partialcandle.Symbol[0] == symbol:
-            self.setpartial(symbol=symbol)
+        timediff = 0
+        if not self.partialcandle is None:
+            timediff = (self.partialcandle.Timestamp[0] - f.timenow()).seconds
+
+        if (timediff > 7200
+            or self.partialcandle is None
+            or not self.partialcandle.Symbol[0] == symbol):
+                self.setpartial(symbol=symbol)
         
         return self.partialcandle
         
     def setpartial(self, symbol):
         # call only partial candle from bitmex, save to self.partialcandle
-        starttime = date.utcnow() + delta(hours=-1)
+        starttime = date.utcnow() + delta(hours=-2)
         self.getCandles(symbol=symbol, starttime=starttime)
     
     def appendpartial(self, df):
@@ -273,7 +286,7 @@ class User():
         if interval == 1:
             binsize = '1h'
             offset = delta(hours=1)
-        elif interval == '15min':
+        elif interval == 15:
             binsize = '5m'
             offset = delta(minutes=5)
 
@@ -301,7 +314,7 @@ class User():
             start += 1000
 
         # convert bitmex dict to df
-        df = pd.io.json.json_normalize(lst)
+        df = pd.json_normalize(lst)
         df.columns = [x.capitalize() for x in df.columns]
         df.Timestamp = df.Timestamp.astype('datetime64[ns]') + offset * -1
 
@@ -404,7 +417,8 @@ def checksfp(df):
     # 'Swing High to xxxx', 'swung highs at xxxx', 'tail = xx%'
     # if one candle swings highs and lows, go with... direction of candle? bigger tail?
         
-    sfp = c.Strat_SFP(df=df)
+    sfp = c.Strat_SFP()
+    sfp.init(df=df)
     sfps = sfp.isSwingFail()
     msg = ''
     cdl = sfp.cdl
@@ -430,7 +444,7 @@ def checkfilledorders(minutes=5, refresh=True, u=None):
     orders = u.getFilledOrders(starttime=starttime)
 
     if orders:
-        df = pd.read_csv(os.path.join(f.curdir(), 'symbols.csv'))
+        df = pd.read_csv(Path(f.curdir()) / 'symbols.csv')
         
         lst, syms, templist = [], [], []
         nonmarket = False
@@ -552,9 +566,9 @@ def TopLoop(u=None, partial=False, dfall=None):
     # TODO: filter dfall to only symbols needed, don't pull everything from db
     # use 'WHERE symbol in []', try pypika
     # Only using XBTUSD currently
-    startdate, daterange = date.now().date() + delta(days=-15), 30
+    startdate = f.timenow() + delta(days=-15)
     if dfall is None:
-        dfall = f.getDataFrame(symbol='XBTUSD', startdate=startdate, daterange=daterange, interval=1)
+        dfall = f.getDataFrame(symbol='XBTUSD', startdate=startdate, interval=1)
         
     for row in dfsym.itertuples():
         if not row.symbol=='XBTUSD': continue
