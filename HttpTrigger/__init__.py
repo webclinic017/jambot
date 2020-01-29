@@ -1,8 +1,7 @@
-import sys
-from os import path
-sys.path.append(path.dirname(path.dirname(__file__)))
-
 import logging
+import sys
+from pathlib import Path
+sys.path.append(str(Path(__file__).parents[1] / 'Project'))
 
 import azure.functions as func
 

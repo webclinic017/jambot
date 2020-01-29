@@ -43,7 +43,8 @@ def runtrend(symbol, startdate, mr, df, against, wth, row, titles):
 def run_parallel():
     from joblib import Parallel, delayed
     symbol = 'XBTUSD'
-    dfsym = pd.read_csv(os.path.join(curdir(), 'symbols.csv'))
+    p = Path(curdir()) / 'symbols.csv'
+    dfsym = pd.read_csv(p)
     dfsym = dfsym[dfsym.symbol==symbol]
     startdate, daterange = date(2019, 1, 1), 365 * 3
     dfall = readcsv(startdate, daterange, symbol=symbol)
@@ -181,7 +182,7 @@ def readcsv(startdate, daterange, symbol=None):
     return df
 
 def curdir():
-    return os.path.join(os.path.dirname(os.path.realpath(__file__)), '')
+    return Path(__file__).parents[1]
 
 def plotChart(df, symbol, df2=None):
     import plotly.offline as py

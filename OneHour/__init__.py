@@ -1,7 +1,6 @@
 import sys
-from os import path
-sys.path.append('/home/site/wwwroot')
-sys.path.append(path.dirname(path.dirname(__file__)))
+from pathlib import Path
+sys.path.append(str(Path(__file__).parents[1] / 'Project'))
 
 from datetime import datetime as date
 from datetime import timedelta as delta
