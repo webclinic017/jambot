@@ -8,7 +8,7 @@ In production, this app is hosted as an Azure Functions app running on a timer t
 >
 >**[JambotClasses](Project/JambotClasses.py)** - Main classes for backtesting strategies.
 >
->**Launch** - Control module for local development, testing, backtesting strategies, multiprocess optimization etc. Used in VS Code with a Python Interactive >(jupyter) environment.
+>**Launch** - Control module for local development, testing, backtesting strategies, multiprocess optimization etc. Used in VS Code with a Python Interactive (jupyter) environment.
 >
 >**[LiveTrading](Project/LiveTrading.py)** - Interaction with Bitmex for executing trades, and Google sheets for live dashboard of current status.
 >TopLoop() is main control function, runs every 1 hour
@@ -22,6 +22,12 @@ In production, this app is hosted as an Azure Functions app running on a timer t
 
 ## Example
 ``` py
+from datetime import datetime as date
+
+import Functions as f
+import JambotClasses as c
+import LiveTrading as live
+
 symbol = 'XBTUSD'
 daterange = 365
 startdate = date(2019, 1, 1)
