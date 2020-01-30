@@ -57,9 +57,9 @@ strat.printtrades(last=15)
 ```
 ![PrintTrades](docs/pics/PrintTrades.png)
 
+Use plotly to create interactive chart with order fill prices. Very useful to look through backtested trades and see what worked or not.
 ```
-trades = strat.trades
-t = trades[8]
+t = strat.trades[8]
 t.chart()
 ```
 ![PlotTrade](docs/pics/PlotTrade.png)
