@@ -10,8 +10,8 @@ import numpy as np
 import pandas as pd
 from bitmex import bitmex
 
-import Functions as f
-import JambotClasses as c
+from Project.Functions import *
+from Project.JambotClasses import *
 
 
 class User():
@@ -32,7 +32,7 @@ class User():
         self.partialcandle = None
         self.div = 100000000
 
-        df = pd.read_csv(Path(f.curdir()) / 'ApiKeys/bitmex.csv')
+        df = pd.read_csv(Path(curdir()) / 'ApiKeys/bitmex.csv')
         user = 'jayme' if not test else 'testnet'
         api_key = df.apikey.loc[df.user == user].values[0]
         api_secret = df.apisecret.loc[df.user == user].values[0]
@@ -61,10 +61,10 @@ class User():
                 time.sleep(sleeptime)
                 return self.checkrequest(request=request, retries=retries)
             else:
-                f.senderror('{}: {}\n{}'.format(status, response.result, request.future.request.data))
+                senderror('{}: {}\n{}'.format(status, response.result, request.future.request.data))
         except:
             # request.prepare() #TODO: this doesn't work
-            f.senderror('HTTP Error: {}'.format(request.future.request.data))
+            senderror('HTTP Error: {}'.format(request.future.request.data))
 
     def getPosition(self, symbol, refresh=False):
         if self.positions is None or refresh:
@@ -184,13 +184,13 @@ class User():
             msg = ''
             for order in amendorders:
                 msg += json.dumps(order.amendorder()) + '\n'
-            f.senderror(msg)
+            senderror(msg)
 
     def placemanual(self, side, contracts, price=None, ordtype='Limit', symbol='XBTUSD'):
 
         if price is None: ordtype='Market'
         
-        order = c.Order(price=price,
+        order = Order(price=price,
                         side=side,
                         contracts=contracts,
                         ordtype=1,
@@ -220,7 +220,7 @@ class User():
             msg = ''
             for order in placeorders:
                 msg += json.dumps(order.neworder()) + '\n'
-            f.senderror(msg) 
+            senderror(msg) 
     
     def cancelbulk(self, cancelorders):
         # only need ordID to cancel
@@ -231,7 +231,7 @@ class User():
     def getpartial(self, symbol):
         timediff = 0
         if not self.partialcandle is None:
-            timediff = (self.partialcandle.Timestamp[0] - f.timenow()).seconds
+            timediff = (self.partialcandle.Timestamp[0] - timenow()).seconds
 
         if (timediff > 7200
             or self.partialcandle is None
@@ -340,13 +340,13 @@ def comparestate(strat, pos):
     # Could also check current contracts?
     # only works for trend, don't use for now
     contracts = pos['currentQty']
-    side = f.side(contracts)
+    side = side(contracts)
 
     ans = True if side == 0 or strat.getSide() == side else False
 
     if not ans:
         err = '{}: {}, expected: {}'.format(strat.sym.symbolshort, side, strat.getSide())
-        f.discord(err)
+        discord(err)
 
     return ans
 
@@ -394,16 +394,16 @@ def checkmatched(matched):
     return amend
 
 def refresh_gsheet_balance(u=None):
-    sht = f.getGoogleSheet()
+    sht = getGoogleSheet()
     ws = sht.worksheet_by_title('Bitmex')
     df = ws.get_as_df(start='A1', end='J14')
     lst = list(df['Sym'].dropna())
     syms = []
 
-    df2 = pd.read_csv(os.path.join(f.curdir(), 'symbols.csv'))
+    df2 = pd.read_csv(os.path.join(curdir(), 'symbols.csv'))
     for row in df2.itertuples():
         if row.symbolshort in lst:
-            syms.append(c.Backtest(symbol=row.symbol, row=row))
+            syms.append(Backtest(symbol=row.symbol, row=row))
 
     if u is None: u = User()
     writeUserBalanceGoogle(syms, u, sht=sht, ws=ws, df=df)
@@ -417,7 +417,7 @@ def checksfp(df):
     # 'Swing High to xxxx', 'swung highs at xxxx', 'tail = xx%'
     # if one candle swings highs and lows, go with... direction of candle? bigger tail?
         
-    sfp = c.Strat_SFP()
+    sfp = Strat_SFP()
     sfp.init(df=df)
     sfps = sfp.isSwingFail()
     msg = ''
@@ -435,7 +435,7 @@ def checksfp(df):
             for sfp in lst:
                 msg += '    {} at: {}\n'.format(sfp['name'], sfp['price'])
     
-    if msg: f.discord(msg=msg, channel='sfp')
+    if msg: discord(msg=msg, channel='sfp')
 
 def checkfilledorders(minutes=5, refresh=True, u=None):
     
@@ -444,7 +444,7 @@ def checkfilledorders(minutes=5, refresh=True, u=None):
     orders = u.getFilledOrders(starttime=starttime)
 
     if orders:
-        df = pd.read_csv(Path(f.curdir()) / 'symbols.csv')
+        df = pd.read_csv(Path(curdir()) / 'symbols.csv')
         
         lst, syms, templist = [], [], []
         nonmarket = False
@@ -467,7 +467,7 @@ def checkfilledorders(minutes=5, refresh=True, u=None):
                 # need to have all correct symbols in symbols.csv
                 if not symbol in templist:
                     templist.append(symbol)
-                    syms.append(c.Backtest(symbol=symbol))       
+                    syms.append(Backtest(symbol=symbol))       
 
             ordprice = f' ({price})' if not price == avgpx else ''
 
@@ -485,13 +485,13 @@ def checkfilledorders(minutes=5, refresh=True, u=None):
             # writeUserBalanceGoogle(syms, u, preservedf=True)
 
         msg = '\n'.join(lst)
-        f.discord(msg=msg+'\n@here', channel='orders')
+        discord(msg=msg+'\n@here', channel='orders')
         # return msg
 
 def writeUserBalanceGoogle(syms, u, sht=None, ws=None, preservedf=False, df=None):
     
     if sht is None:
-        sht = f.getGoogleSheet()
+        sht = getGoogleSheet()
     if ws is None:
         ws = sht.worksheet_by_title('Bitmex')
 
@@ -514,8 +514,8 @@ def writeUserBalanceGoogle(syms, u, sht=None, ws=None, preservedf=False, df=None
             df.at[i, 'Entry'] = round(pos['avgEntryPrice'], figs)
             df.at[i, 'Last'] = round(pos['lastPrice'], figs)
             df.at[i, 'Pnl'] = round(pos['unrealisedPnl'] / u.div, 3)
-            df.at[i, '%'] = f.percent(pos['unrealisedPnlPcnt'])
-            df.at[i, 'ROE'] = f.percent(pos['unrealisedRoePcnt'])
+            df.at[i, '%'] = percent(pos['unrealisedPnlPcnt'])
+            df.at[i, 'ROE'] = percent(pos['unrealisedRoePcnt'])
             df.at[i, 'Value'] = pos['maintMargin'] / u.div
 
         if sym.strats:
@@ -531,15 +531,15 @@ def writeUserBalanceGoogle(syms, u, sht=None, ws=None, preservedf=False, df=None
 
     # set current time
     df.at[12, 'Sym'] = 'Last:'
-    df.at[12, 'Size'] = date.strftime(date.utcnow(), f.TimeFormat(mins=True))
+    df.at[12, 'Size'] = date.strftime(date.utcnow(), TimeFormat(mins=True))
 
     # concat last 10 trades for google sheet
     sym = list(filter(lambda x: x.symbol=='XBTUSD', syms))[0]
     if sym.strats:
         dfTrades = sym.strats[0].result(last=10).drop(columns=['N', 'Contracts', 'Bal'])
         dfTrades.Timestamp = dfTrades.Timestamp.dt.strftime('%Y-%m-%d %H')
-        dfTrades.Pnl = dfTrades.Pnl.apply(lambda x: f.percent(x))
-        dfTrades.PnlAcct = dfTrades.PnlAcct.apply(lambda x: f.percent(x))
+        dfTrades.Pnl = dfTrades.Pnl.apply(lambda x: percent(x))
+        dfTrades.PnlAcct = dfTrades.PnlAcct.apply(lambda x: percent(x))
     else:
         dfTrades = ws.get_as_df(start='Q1', end='Y14') # df.loc[:, 'Timestamp':'PnlAcct']
 
@@ -551,9 +551,9 @@ def TopLoop(u=None, partial=False, dfall=None):
     # run every 1 hour, or when called by checkfilledorders()
 
     # Google - get user/position info
-    sht = f.getGoogleSheet()
+    sht = getGoogleSheet()
     g_usersettings = sht.worksheet_by_title('UserSettings').get_all_records()
-    dfsym = pd.read_csv(Path(f.curdir()) / 'symbols.csv')
+    dfsym = pd.read_csv(Path(curdir()) / 'symbols.csv')
     g_user = g_usersettings[0] #0 is jayme
     syms = []
 
@@ -566,9 +566,9 @@ def TopLoop(u=None, partial=False, dfall=None):
     # TODO: filter dfall to only symbols needed, don't pull everything from db
     # use 'WHERE symbol in []', try pypika
     # Only using XBTUSD currently
-    startdate = f.timenow() + delta(days=-15)
+    startdate = timenow() + delta(days=-15)
     if dfall is None:
-        dfall = f.getDataFrame(symbol='XBTUSD', startdate=startdate, interval=1)
+        dfall = getDataFrame(symbol='XBTUSD', startdate=startdate, interval=1)
         
     for row in dfsym.itertuples():
         if not row.symbol=='XBTUSD': continue
@@ -584,11 +584,11 @@ def TopLoop(u=None, partial=False, dfall=None):
             # TREND_REV
             speed = (16, 6)
             norm = (0.004, 0.024)
-            strat = c.Strat_TrendRev(speed=speed, norm=norm)
+            strat = Strat_TrendRev(speed=speed, norm=norm)
             strat.stoppercent = -0.03
             strats = [strat]
 
-            sym = c.Backtest(symbol=symbol, startdate=startdate, strats=strats, row=row, df=df, partial=partial, u=u)
+            sym = Backtest(symbol=symbol, startdate=startdate, strats=strats, row=row, df=df, partial=partial, u=u)
             if weight <= 0:
                 sym.tradingenabled = False #this should come from strat somehow
             sym.decidefull()
@@ -605,6 +605,6 @@ def TopLoop(u=None, partial=False, dfall=None):
                 u.placebulk(missing)
 
         except:
-            f.senderror(symbol)
+            senderror(symbol)
 
     writeUserBalanceGoogle(syms, u, sht)
