@@ -8,8 +8,8 @@ from time import time
 import numpy as np
 import pandas as pd
 
-import Functions as f
-import LiveTrading as live
+from Project.Functions import *
+from Project.LiveTrading import *
 
 
 # BACKTEST
@@ -43,8 +43,8 @@ class Account():
         if self.balance < self.min: self.min = self.balance    
 
     def getPeriodNum(self, timestamp, period='month'):
-        timestamp = f.checkDate(timestamp)
-        with f.Switch(period) as case:
+        timestamp = checkDate(timestamp)
+        with Switch(period) as case:
             if case('month'):
                 return timestamp.month
             elif case('week'):
@@ -65,17 +65,17 @@ class Account():
                 drawdown = curdraw
                 txlow = txn
                 txhigh = txmax_seen
-
+        
         drawdates = '{:.2f} ({}) - {:.2f} ({})'.format(
             txhigh.acctbalance,
-            date.strftime(txhigh.timestamp, f.TimeFormat()),
+            date.strftime(txhigh.timestamp, TimeFormat()),
             txlow.acctbalance,
-            date.strftime(txlow.timestamp, f.TimeFormat()))
+            date.strftime(txlow.timestamp, TimeFormat()))
         
         return drawdown * -1, drawdates
     
     def getPercentChange(self, balance, change):
-        return f.percent(change / balance)
+        return percent(change / balance)
 
     def printsummary(self, period='month'):
         from columnar import columnar
@@ -122,7 +122,7 @@ class Account():
                 '{:%Y-%m-%d %H}'.format(t.timestamp),
                 '{:.{prec}f}'.format(t.acctbalance, prec=3),
                 '{:.{prec}f}'.format(t.amount, prec=2),
-                f.percent(t.percentchange)
+                percent(t.percentchange)
             ])
         table = columnar(data, headers, no_borders=True, justify='r')
         print(table)
@@ -139,7 +139,7 @@ class Backtest():
         if not isinstance(strats, list): strats = [strats]
 
         if row is None:
-            dfsym = pd.read_csv(Path(f.curdir()) / 'symbols.csv')
+            dfsym = pd.read_csv(Path(curdir()) / 'symbols.csv')
             dfsym = dfsym[dfsym['symbol']==symbol]
             row = list(dfsym.itertuples())[0]
 
@@ -153,7 +153,7 @@ class Backtest():
         self.partial = partial
 
         self.symbol = symbol
-        self.startdate = f.checkDate(startdate)
+        self.startdate = checkDate(startdate)
         self.strats = strats
 
         # actual backtest, not just admin info
@@ -165,12 +165,12 @@ class Backtest():
             self.candles = []
             
             if df is None:
-                self.df = f.getDataFrame(symbol=symbol, startdate=f.startvalue(startdate), enddate=f.enddate(startdate, daterange))
+                self.df = getDataFrame(symbol=symbol, startdate=startvalue(startdate), enddate=enddate(startdate, daterange))
             else:
                 self.df = df
 
             if partial:
-                if u is None: u = live.User()
+                if u is None: u = User()
                 self.df = u.appendpartial(df)
            
             self.startrow = self.df.loc[self.df['Timestamp'] == pd.Timestamp(self.startdate)].index[0]
@@ -289,8 +289,8 @@ class Signal_MACD(Signal):
         super().__init__(df=df, weight=weight)
         # init macd series
         self.name = 'macd'
-        f.addEma(df=df, p=fast)
-        f.addEma(df=df, p=slow)
+        addEma(df=df, p=fast)
+        addEma(df=df, p=slow)
 
         df['macd'] = df[f'ema{fast}'] - df[f'ema{slow}']
         df['macd_signal'] = df.macd.ewm(span=smooth, min_periods=smooth).mean()
@@ -311,8 +311,8 @@ class Signal_EMA(Signal):
     def __init__(self, df, weight=1, fast=50, slow=200):
         super().__init__(df=df, weight=weight)
         self.name = 'ema'
-        f.addEma(df=df, p=fast)
-        f.addEma(df=df, p=slow)
+        addEma(df=df, p=fast)
+        addEma(df=df, p=slow)
         colfast, colslow = f'ema{fast}', f'ema{slow}'
 
         df['emaspread'] = round((df[colfast] - df[colslow]) / ((df[colfast] + df[colslow]) / 2) , 6)
@@ -356,7 +356,7 @@ class Signal_EMA_Slope(Signal):
     def __init__(self, df, weight=1, p=50, slope=5):
         super().__init__(df=df, weight=weight)
         self.name = 'ema_Slope'
-        f.addEma(df=df, p=p)
+        addEma(df=df, p=p)
         df['ema_slope'] = np.where(np.roll(df['ema{}'.format(p)], slope, axis=0) < df['ema{}'.format(p)], 1, -1)
         df.loc[:p + slope, 'ema_slope'] = np.nan
 
@@ -481,7 +481,7 @@ class Strategy():
         if balance is None:
             balance = self.sym.account.getBalance()
 
-        contracts = f.getContracts(balance, self.lev, entryprice, side, self.sym.altstatus) * self.weight
+        contracts = getContracts(balance, self.lev, entryprice, side, self.sym.altstatus) * self.weight
 
         if conf is None:
             conf = self.conf.final(side=side, c=self.cdl)
@@ -630,7 +630,7 @@ class Strat_TrendRev(Strategy):
         # CLOSE - Check if current limitclose is still open with same side
         prevclose = self.trades[-2].limitclose
         if prevclose.marketfilled:
-            prevclose_actual = u.getOrderByKey(key=f.key(symbol, 'limitclose', prevclose.side, 3))
+            prevclose_actual = u.getOrderByKey(key=key(symbol, 'limitclose', prevclose.side, 3))
             if (not prevclose_actual is None
                 and prevclose_actual['side'] == prevclose.side):
                     prevclose.setname('marketclose')
@@ -647,7 +647,7 @@ class Strat_TrendRev(Strategy):
 
         # OPEN
         limitopen = t_current.limitopen
-        limitopen_actual = u.getOrderByKey(key=f.key(symbol, 'limitopen', limitopen.side, 1))
+        limitopen_actual = u.getOrderByKey(key=key(symbol, 'limitopen', limitopen.side, 1))
         
         if limitopen.filled:
             if (limitopen.marketfilled 
@@ -688,7 +688,7 @@ class Strat_TrendRev(Strategy):
             lst.append(limitclose)
 
             if stopclose.contracts == 0 or not stopclose in lst:
-                f.discord(msg='Error: no stop for current position', channel='err')
+                discord(msg='Error: no stop for current position', channel='err')
 
         # NEXT - Init next trade to get next limitopen and stop
         px = c.pxhigh if t_current.side == 1 else c.pxlow
@@ -795,7 +795,7 @@ class Strat_Trend(Strategy):
                     sym=self.sym))
 
         # stopbuy
-        contracts = f.getContracts(
+        contracts = getContracts(
                         u.totalbalancewallet * weight,
                         self.lev,
                         price,
@@ -883,9 +883,9 @@ class Strat_Chop(Strategy):
     def init(self, sym):
         self.sym = sym
 
-        sym.df = f.setTradePrices(self.name, sym.df, speed=self.speed)
-        sym.df = f.setTradePrices('tp', sym.df, speed=self.speedtp)
-        sym.df = f.setVolatility(sym.df, norm=self.norm)
+        sym.df = setTradePrices(self.name, sym.df, speed=self.speed)
+        sym.df = setTradePrices('tp', sym.df, speed=self.speedtp)
+        sym.df = setVolatility(sym.df, norm=self.norm)
 
     def decide(self, c):
         self.cdl = c
@@ -907,7 +907,7 @@ class Strat_Chop(Strategy):
         if balance is None:
             balance = self.sym.account.getBalance()
 
-        contracts = f.getContracts(balance * self.weight, self.lev, entryprice, side, self.sym.altstatus)
+        contracts = getContracts(balance * self.weight, self.lev, entryprice, side, self.sym.altstatus)
 
         trade = Trade_Chop()
         trade.init(entryprice, contracts, self, side=side)
@@ -929,7 +929,7 @@ class Strat_Chop(Strategy):
                         activate=True)
         
         stops = OrdArray(ordtype=2,
-                        anchorprice=f.getPrice(
+                        anchorprice=getPrice(
                             -0.01 * c.norm,
                             orders.maxprice,
                             side),
@@ -959,7 +959,7 @@ class Strat_Chop(Strategy):
             t = self.trade
 
             # rescale contracts to reflect actual user balance
-            targetcontracts = f.getContracts(balance, self.lev, t.anchorstart, t.side, self.sym.altstatus)
+            targetcontracts = getContracts(balance, self.lev, t.anchorstart, t.side, self.sym.altstatus)
 
             lstOrders.extend(t.orders.getUnfilledOrders(targetcontracts))
             lstOrders.extend(t.stops.getUnfilledOrders(targetcontracts, remainingcontracts))
@@ -1171,7 +1171,7 @@ class Trade():
 
     def exittrade(self):
         self.strat.status = 0
-        self.pnlfinal = f.getPnl(self.side, self.entryprice, self.exitprice)
+        self.pnlfinal = getPnl(self.side, self.entryprice, self.exitprice)
         self.exitbalance = self.sym.account.getBalance()
         self.i_exit = self.strat.i
         self.active = False
@@ -1185,7 +1185,7 @@ class Trade():
         if self.entryprice == 0:
             raise ValueError('entry price cant be 0!')
 
-        self.sym.account.modify(f.getPnlXBT(contracts * -1, self.entryprice, price, self.sym.altstatus), self.cdl.Timestamp)
+        self.sym.account.modify(getPnlXBT(contracts * -1, self.entryprice, price, self.sym.altstatus), self.cdl.Timestamp)
         
         self.exitcontracts += contracts
         self.contracts += contracts
@@ -1214,17 +1214,17 @@ class Trade():
 
     def pnlxbt(self):
         # not used
-        return f.getPnlXBT(contracts=self.filledcontracts,
+        return getPnlXBT(contracts=self.filledcontracts,
                             entryprice=self.entryprice,
                             exitprice=self.exitprice,
                             isaltcoin=self.sym.altstatus)
 
     def pnlcurrent(self, c=None):
         if c is None: c = self.getCandle(self.duration())
-        return f.getPnl(self.side, self.entryprice, c.Close)
+        return getPnl(self.side, self.entryprice, c.Close)
 
     def pnlmaxmin(self, maxmin, firstonly=False):
-        return f.getPnl(self.side, self.entryprice, self.extremum(self.side * maxmin, firstonly))
+        return getPnl(self.side, self.entryprice, self.extremum(self.side * maxmin, firstonly))
 
     def isgood(self):
         ans = True if self.pnlfinal > 0 else False
@@ -1246,7 +1246,7 @@ class Trade():
         
         # entry candle
         c = self.candles[0]
-        with f.Switch(self.status * highlow) as case:
+        with Switch(self.status * highlow) as case:
             if case(1, -2):
                 if highlow == 1:
                     ext = c.High
@@ -1267,7 +1267,7 @@ class Trade():
 
         # exit candle
         c = self.candles[self.duration() - 1]
-        with f.Switch(self.status * highlow) as case:
+        with Switch(self.status * highlow) as case:
             if case(-1, 2):
                 fExt = self.exitprice
             elif case(1, -2):
@@ -1292,7 +1292,7 @@ class Trade():
     def chart(self, pre=36, post=None, width=900, fast=50, slow=200):
         dur = self.duration()
         post = dur if post is None and dur > 36 else 36
-        f.chartorders(self.sym.df, self, pre=pre, post=post, width=width, fast=fast, slow=slow)
+        chartorders(self.sym.df, self, pre=pre, post=post, width=width, fast=fast, slow=slow)
 
     def printcandles(self):
         for c in self.candles:
@@ -1350,7 +1350,7 @@ class Trade_TrendRev(Trade):
 
         limitbuyprice = self.entrytarget * (1 + self.enteroffset * self.side * -1)
         limitcloseprice = self.closeprice()
-        self.stoppx = f.getPrice(self.stoppercent, limitbuyprice, self.side)
+        self.stoppx = getPrice(self.stoppercent, limitbuyprice, self.side)
 
         contracts = int(self.targetcontracts * self.conf)
 
@@ -1423,7 +1423,7 @@ class Trade_TrendRev(Trade):
                     elif o.ordtype == 2:
                         self.limitclose.cancel() #make limitclose filledtime be end of trade
                         self.stopped = True
-                        self.pnlfinal = f.getPnl(self.side, self.entryprice, self.exitprice)
+                        self.pnlfinal = getPnl(self.side, self.entryprice, self.exitprice)
                         self.exitbalance = self.sym.account.getBalance()
                     elif o.ordtype == 3:
                         self.stop.cancel()
@@ -1701,7 +1701,7 @@ class Order():
         self.setkey()
 
     def setkey(self):
-        self.key = f.key(self.symbolbitmex, self.name, self.side, self.ordtype)
+        self.key = key(self.symbolbitmex, self.name, self.side, self.ordtype)
         self.clOrdID = '{}-{}'.format(self.key, int(time()))        
 
     def stoppx(self):
@@ -1709,7 +1709,7 @@ class Order():
 
     def outofrange(self, c):
         # not used
-        pnl = f.getPnl(entryprice=self.price,
+        pnl = getPnl(entryprice=self.price,
                         exitprice=c.Close,
                         side=self.side)
 
@@ -1786,7 +1786,7 @@ class Order():
             self.ordarray.openorders -= 1
 
     def rescalecontracts(self, balance, conf=1):
-        self.contracts = int(conf * f.getContracts(
+        self.contracts = int(conf * getContracts(
                         xbt=balance,
                         leverage=self.trade.strat.lev,
                         entryprice=self.price,
@@ -1804,7 +1804,7 @@ class Order():
         m['symbol'] = self.sym.symbolbitmex
         m['orderQty'] = self.contracts
 
-        with f.Switch(self.ordtype2) as case:
+        with Switch(self.ordtype2) as case:
             if case('Limit'):
                 m['price'] = self.price
             elif case('Stop'):
@@ -1821,7 +1821,7 @@ class Order():
         m['orderQty'] = self.contracts
         m['clOrdID'] = self.clOrdID
         
-        with f.Switch(self.ordtype2) as case:
+        with Switch(self.ordtype2) as case:
             if case('Limit'):
                 m['price'] = self.price
             elif case('Stop'):
@@ -1895,7 +1895,7 @@ class OrdArray():
         # init and add all orders to self (ordArray)
         modi = 'lwr' if self.trade.side == 1 else 'upr'
 
-        with f.Switch(self.ordtype) as case:
+        with Switch(self.ordtype) as case:
             if case(1):
                 ordtype2 = 'Limit'
             elif case(2):
@@ -1953,7 +1953,7 @@ class OrdArray():
             self.active = False
 
     def letter(self):
-        with f.Switch(self.ordtype) as case:
+        with Switch(self.ordtype) as case:
             if case(1):
                 return 'O'
             elif case(2):
@@ -2036,7 +2036,7 @@ class Candle():
         return (c.Close - c.Open) / c.Open
 
     def percentOC(self):
-        return f.percent(self.percentOCd())
+        return percent(self.percentOCd())
             
     def size(self):
         c = self.row

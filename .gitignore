@@ -41,10 +41,11 @@ venv/
 ENV/
 env.bak/
 venv.bak/
+Pipfile.lock
 
 # Byte-compiled / optimized / DLL files
 Project/__pycache__/
 __pycache__/
 *.py[cod]
 *$py.class
-JambotFunctionApp.zip
+Jambot.zip

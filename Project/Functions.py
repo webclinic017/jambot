@@ -4,10 +4,10 @@ import os
 from collections import defaultdict
 from datetime import datetime as date
 from datetime import timedelta as delta
+from pathlib import Path
 from sys import platform
 from time import time
 from urllib import parse as prse
-from pathlib import Path
 
 import pandas as pd
 import pypika as pk
@@ -15,8 +15,8 @@ import sqlalchemy as sa
 from dateutil.parser import parse
 from pypika import functions as fn
 
-import LiveTrading as live
 import pyodbc
+from Project.LiveTrading import *
 
 
 # PARALLEL
@@ -540,7 +540,7 @@ def round_minutes(dt, resolution):
 
 def updateAllSymbols(u=None, db=None, interval=1):
     lst = []
-    if u is None: u = live.User()
+    if u is None: u = User()
     if db is None: db = DB()
 
     # loop query result, add all to dict with maxtime as KEY, symbols as LIST
@@ -638,5 +638,3 @@ class Switch:
 
     def __call__(self, *values):
         return self.value in values
-
-

@@ -1,0 +1,25 @@
+[[source]]
+name = "pypi"
+url = "https://pypi.org/simple"
+verify_ssl = true
+
+[dev-packages]
+jupyter = "*"
+seaborn = "*"
+plotly = "*"
+joblib = "*"
+pylint = "*"
+
+[packages]
+bitmex = "*"
+discord = "*"
+pypika = "*"
+pygsheets = "*"
+pyodbc = "*"
+pandas = "==1.0.0rc0"
+sqlalchemy = "*"
+pyyaml = "*"
+numpy = "*"
+
+[requires]
+python_version = "3.8"
