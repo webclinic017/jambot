@@ -9,6 +9,7 @@ from sys import platform
 from time import time
 from urllib import parse as prse
 
+from IPython.display import display
 import pandas as pd
 import pypika as pk
 import sqlalchemy as sa
@@ -16,19 +17,19 @@ from dateutil.parser import parse
 from pypika import functions as fn
 
 import pyodbc
-from Project.LiveTrading import *
+import LiveTrading as live
 
 
 # PARALLEL
 def filterdf(dfall, symbol):
     return dfall[dfall.Symbol==symbol].reset_index(drop=True)
 
-def runtrend(symbol, startdate, mr, df, against, wth, row, titles):
+def runtrend(symbol, startdate, df, against, wth, row, titles):
     import JambotClasses as c
     dfTemp = pd.DataFrame(columns=[titles[0], titles[1], 'min', 'max', 'final', 'numtrades'])
 
     # Strat_Trend
-    trend = c.Strat_Trend(speed=(against, wth), mr=mr)
+    trend = c.Strat_Trend(speed=(against, wth))
     strats = []
     strats.append(trend)
 
@@ -166,7 +167,7 @@ def heatmap(df, cols, title='', dims=(15,15)):
     import seaborn as sns
     from matplotlib import pyplot
 
-    fig, ax = pyplot.subplots(figsize=dims)
+    _, ax = pyplot.subplots(figsize=dims)
     ax.set_title(title)
     return sns.heatmap(ax=ax, data=matrix(df, cols), annot=True, annot_kws={"size":8}, fmt='.1f')
 
@@ -540,7 +541,7 @@ def round_minutes(dt, resolution):
 
 def updateAllSymbols(u=None, db=None, interval=1):
     lst = []
-    if u is None: u = User()
+    if u is None: u = live.User()
     if db is None: db = DB()
 
     # loop query result, add all to dict with maxtime as KEY, symbols as LIST

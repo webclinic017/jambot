@@ -16,10 +16,11 @@ project.lock.json
 /TestResults
 
 /tools/NuGet.exe
+/ApiKeys
 /App_Data
 /secrets
 /data
-/ApiKeys
+/docs/.exclude
 .secrets
 appsettings.json
 local.settings.json
