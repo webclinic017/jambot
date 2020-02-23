@@ -9,15 +9,20 @@ from sys import platform
 from time import time
 from urllib import parse as prse
 
-from IPython.display import display
 import pandas as pd
+import pyodbc
 import pypika as pk
 import sqlalchemy as sa
 from dateutil.parser import parse
 from pypika import functions as fn
 
-import pyodbc
 import LiveTrading as live
+
+try:
+    from IPython.display import display
+except ModuleNotFoundError:
+    pass
+
 
 
 # PARALLEL
@@ -234,7 +239,7 @@ def chartorders(df, t, pre=36, post=36, width=900, fast=50, slow=200):
     ts = t.candles[0].Timestamp
     timelower = ts - delta(hours=pre)
     timeupper = ts + delta(hours=post)
-
+    
     mask = (df['Timestamp'] >= timelower) & (df['Timestamp'] <= timeupper)
     df = df.loc[mask].reset_index(drop=True)
     
@@ -419,14 +424,46 @@ def side(x):
     side = lambda x: -1 if x < 0 else (1 if x > 0 else 0)
     return side(x)
 
-def sidestr(side, ordtype):
-    # opposite only for stops
-    if not ordtype == 1:
-        side *= -1
-    return 'long' if side == 1 else 'short'
+def sum_orders_before(orders, checkorder=None, isstop=False, price=None, side=None):
+    if not checkorder is None:
+        price = checkorder.price
+        side = checkorder.side
+        isstop = checkorder.isstop
+    
+    # stops include orders of opposite side which hit before them
+    # tp include same side, hit before
+    checkside = side * -1 if isstop else side
+
+    # filter for orders of correct side and less/greater than check order's price
+    orders = list(filter(lambda x: 
+                                x['ordType'] == 'Limit' and 
+                                x['side'] == checkside and 
+                                (x['price'] - price) * side * checkside < 0, orders))
+
+    return sum(x['contracts'] for x in orders)
+
+def usefulkeys(orders):
+    keys = ('symbol', 'clOrdID', 'side', 'price', 'stopPx', 'ordType', 'execInst', 'ordStatus', 'contracts', 'name', 'bot')
+    if not isinstance(orders, list):
+        islist = False
+        orders = [orders]
+    else:
+        islist = True
+
+    result = [{key: o[key] for key in o.keys() if key in keys} for o in orders]
+    
+    if islist:
+        return result
+    else:
+        return result[0]
 
 def key(symbol, name, side, ordtype):
-    return '{}-{}-{}'.format(symbol, name.lower(), sidestr(side, ordtype))
+    # if ordtype == 'Stop':
+    #     side *= -1
+    
+    sidestr = 'long' if side == 1 else 'short'
+
+    return '{}-{}-{}'.format(symbol, name.lower(), sidestr)
 
 def col(df, col):
     return df.columns.get_loc(col)
@@ -461,9 +498,9 @@ def senderror(msg='', prnt=False):
 
     if prnt or not 'linux' in platform:
         print(err)
-        discord(err, channel='err')
     else:
-        discord(err, channel='err')
+        discord(msg=err, channel='err')
+    # return err
 
 
 # DATABASE
@@ -576,9 +613,11 @@ def strConn():
     return 'DRIVER={};SERVER={};DATABASE={};UID={};PWD={}'.format(driver, m['server'], m['database'], m['username'], m['password'])
 
 def engine():
+    print('loading db')
     params = prse.quote_plus(strConn())
     return sa.create_engine('mssql+pyodbc:///?odbc_connect={}'.format(params), fast_executemany=True)
 
+# TODO: move database into its own class
 class DB(object):
     def __init__(self):
         self.df_unit = None

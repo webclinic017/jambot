@@ -27,6 +27,7 @@ local.settings.json
 host.json
 .gitignore
 .funcignore
+errlog.txt
 
 node_modules
 dist

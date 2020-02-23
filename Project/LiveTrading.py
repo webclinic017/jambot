@@ -1,12 +1,12 @@
 import json
 import os
+import sys
 import time
 from collections import defaultdict
 from datetime import datetime as date
 from datetime import timedelta as delta
 from pathlib import Path
 
-from IPython.display import display
 import numpy as np
 import pandas as pd
 from bitmex import bitmex
@@ -14,10 +14,15 @@ from bitmex import bitmex
 import Functions as f
 import JambotClasses as c
 
+try:
+    from IPython.display import display
+except ModuleNotFoundError:
+    pass
+
+
 
 class User():
     def __init__(self, test=False):
-        
         self.name = ''
         self.nameshort = ''
         self.percentbalance = 1
@@ -104,8 +109,12 @@ class User():
         if self.orders is None:
             self.setOrders(newonly=True)
         
-        if key in self.orderkeysdict:
-            return self.orders[self.orderkeysdict[key]]       
+        # Manual orders don't have a key, not unique
+        orders = list(filter(lambda x: 'key' in x.keys(), self.orders))
+        orders = list(filter(lambda x: x['key']==key, orders))
+
+        if orders:
+            return orders[0] # assuming only one order will match given key
         else:
             return defaultdict(type(None))
 
@@ -116,10 +125,10 @@ class User():
 
         fltr = dict(ordStatus='Filled')
 
-        self.setOrders(symbol=symbol, fltr=fltr, newonly=False, starttime=starttime, reverse=False)
+        self.setOrders(fltr=fltr, newonly=False, starttime=starttime, reverse=False)
         return self.orders
         
-    def getOrders(self, symbol=None, newonly=True, botonly=False, refresh=False, count=100):
+    def getOrders(self, symbol=None, newonly=True, botonly=False, manualonly=False, refresh=False, count=100):
         if self.orders is None or refresh:
             self.orders = []
             self.setOrders(newonly=newonly, count=count)
@@ -132,38 +141,49 @@ class User():
         if botonly:
             orders = list(filter(lambda x: x['bot']==True, orders))
 
+        if manualonly:
+            orders = list(filter(lambda x: x['bot']==False, orders))
+
         return orders
             
-    def setOrders(self, symbol='', fltr={}, newonly=True, count=100, starttime=None, reverse=True):
-        self.orderkeysdict = {}
-        
+    def addOrderInfo(self, orders):
+        if not isinstance(orders, list): orders = [orders]
+
+        for o in orders:
+            o['sideStr'] = o['side']
+            o['side'] = 1 if o['side'] == 'Buy' else -1
+            o['contracts'] = int(o['side'] * o['orderQty'])
+
+            # add key to the order, excluding manual orders
+            if not o['clOrdID'] == '':
+                o['name'] = '-'.join(o['clOrdID'].split('-')[1:-1])
+                
+                if not 'manual' in o['clOrdID']:
+                    o['key'] = '-'.join(o['clOrdID'].split('-')[:-1])
+                    o['bot'] = True
+                else:
+                    o['bot'] = False
+            else:
+                o['name'] = '(manual)'
+                o['bot'] = False
+
+        return orders
+            
+    def setOrders(self, fltr={}, newonly=True, count=100, starttime=None, reverse=True):
         if newonly:
             fltr['ordStatus'] = 'New'
 
         fltr = json.dumps(fltr)
 
         ep = self.client.Order
-        self.orders = ep.Order_getOrders(symbol=symbol,
-                                        filter=fltr,
-                                        reverse=reverse,
-                                        count=count,
-                                        startTime=starttime).response().result
+        orders = ep.Order_getOrders(
+                                filter=fltr,
+                                reverse=reverse,
+                                count=count,
+                                startTime=starttime).response().result
         
-        for i, o in enumerate(self.orders):
-            
-            o['sideStr'] = o['side']
-            o['side'] = 1 if o['side'] == 'Buy' else -1
-            o['orderQty_fixed'] = int(o['side'] * o['orderQty'])
+        self.orders = self.addOrderInfo(orders)
 
-            # add key to the order
-            if not o['clOrdID'] == '':
-                o['key'] = '-'.join(o['clOrdID'].split('-')[:-1])
-                o['name'] = '-'.join(o['clOrdID'].split('-')[1:-1])
-                o['bot'] = True
-                self.orderkeysdict[o['key']] = i
-            else:
-                o['name'] = '(manual)'
-                o['bot'] = False
 
     def setTotalBalance(self):
         div = self.div
@@ -187,41 +207,50 @@ class User():
                 msg += json.dumps(order.amendorder()) + '\n'
             f.senderror(msg)
 
-    def placemanual(self, side, contracts, price=None, ordtype='Limit', symbol='XBTUSD'):
+    def placemanual(self, contracts, price=None, ordtype='Limit', symbol='XBTUSD'):
 
-        if price is None: ordtype='Market'
+        if price is None:
+            ordtype='Market'
         
         order = c.Order(price=price,
-                        side=side,
                         contracts=contracts,
-                        ordtype=1,
-                        ordtype2=ordtype,
-                        name='Manual',
-                        symbol=symbol,
-                        manual=True)
-
+                        ordtype=ordtype,
+                        symbol=symbol)
+        
+        print('Sending neworder:')
         display(order.neworder())
         
-        return self.placebulk(placeorders=[order])
+        o = self.placebulk(placeorders=order)[0]
+        display(o)
     
     def placebulk(self, placeorders):
         orders = []
+        if not isinstance(placeorders, list): placeorders = [placeorders]
         l = len(placeorders)
 
         for order in placeorders:
             if l > 1 and order.neworder().get('ordType', '') == 'Market':
-                self.placebulk([order])
+                self.placebulk(order)
             else:
                 orders.append(order.neworder())
                     
         if not orders: return
         try:
-            return self.checkrequest(self.client.Order.Order_newBulk(orders=json.dumps(orders)))
+            result = self.addOrderInfo(
+                        self.checkrequest(
+                            self.client.Order.Order_newBulk(
+                                orders=json.dumps(orders))))
+            
+            for o in result:
+                if o['ordStatus'] == 'Canceled':
+                    f.senderror(msg='***** ERROR: Order CANCELLED! \n{} \n{}'.format(f.usefulkeys(o), o['text']))
+
+            return result
         except:
-            msg = ''
+            msg = 'Cant place orders: \n'
             for order in placeorders:
-                msg += json.dumps(order.neworder()) + '\n'
-            f.senderror(msg) 
+                msg += str(order.neworder()).replace(', ', '\n') + '\n\n'
+            f.senderror(msg=msg)
     
     def cancelbulk(self, cancelorders):
         # only need ordID to cancel
@@ -351,46 +380,59 @@ def comparestate(strat, pos):
 
     return ans
 
-def compareorders(theo=[], actual=[]):
+def compareorders(theo=[], actual=[], show=False):
     
     matched, missing, notmatched = [], [], []
     m1, m2 = {}, {}
+    # TODO: this could be done with filtering
 
-    for i, order in enumerate(theo):
-        m1[order.key] = i
+    for i, o in enumerate(theo):
+        m1[o.key] = i
     
-    for i, order in enumerate(actual):
-        m2[order['key']] = i
+    for i, o in enumerate(actual):
+        m2[o['key']] = i
 
-    for order in theo:
-        if order.key in m2:
-            order.matched = True # do we need this if using a 'matched' list?
-            order.intakelivedata(actual[m2[order.key]])
-            matched.append(order)
+    for o in theo:
+        if o.key in m2:
+            o.intakelivedata(actual[m2[o.key]])
+            matched.append(o)
         else:
-            missing.append(order)
+            missing.append(o)
 
-    for order in actual:
-        if not order['key'] in m1:
-            notmatched.append(order)
+    for o in actual:
+        if not o['key'] in m1:
+            notmatched.append(o)
 
-    # notmatched = [order for order in actual if not order['key'] in m1]
+    if show and not 'linux' in sys.platform:
+        print('Matched: ')
+        for o in matched: display(o.to_dict())
+        print('Missing:')
+        for o in missing: display(o.to_dict())
+        print('Not matched:')
+        for o in notmatched: display(o)
     
     return matched, missing, notmatched
 
-def checkmatched(matched):
+def checkmatched(matched, show=False):
     
     amend = []
 
     for order in matched:
         ld = order.livedata
         checkprice = ld['price'] if ld['ordType'] == 'Limit' else ld['stopPx']
-        side = 1 if ld['side'] == 'Buy' else -1
 
         if not (order.price == checkprice and
-                abs(order.contracts) == ld['orderQty'] and
-                order.side == side):
+                order.contracts == ld['contracts'] and
+                order.side == ld['side']):
             amend.append(order)
+            
+            if show and not 'linux' in sys.platform:
+                print('Ammending:')
+                print(order.name)
+                print(order.price == checkprice, order.price, checkprice)
+                print(order.contracts == ld['contracts'], order.contracts, ld['contracts'])
+                print(order.side == ld['side'], order.side, ld['side'])
+                display(order.amendorder())
         
     return amend
 
@@ -475,7 +517,7 @@ def checkfilledorders(minutes=5, refresh=True, u=None):
             lst.append('{} | {} {:,} at ${:,}{} | {}'.format(
                     symshort,
                     o['sideStr'],
-                    o['orderQty_fixed'],
+                    o['contracts'],
                     avgpx,
                     ordprice,
                     o['name']))
@@ -599,10 +641,10 @@ def TopLoop(u=None, partial=False, dfall=None):
                 actual = u.getOrders(sym.symbolbitmex, botonly=True)
                 theo = strat.finalOrders(u, weight)
                 
-                matched, missing, notmatched = compareorders(theo, actual)
+                matched, missing, notmatched = compareorders(theo, actual, show=True)
 
                 u.cancelbulk(notmatched)
-                u.amendbulk(checkmatched(matched))
+                u.amendbulk(checkmatched(matched, show=True))
                 u.placebulk(missing)
 
         except:

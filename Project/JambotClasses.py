@@ -5,12 +5,17 @@ from enum import Enum
 from pathlib import Path
 from time import time
 
-from IPython.display import display
 import numpy as np
 import pandas as pd
 
 import Functions as f
 import LiveTrading as live
+
+try:
+    from IPython.display import display
+except ModuleNotFoundError:
+    pass
+
 
 
 # BACKTEST
@@ -606,12 +611,18 @@ class Strat_TrendRev(Strategy):
                 if c.Low < min(pxlow, self.lastlow):
                     t.active = False
 
+            # if c.Timestamp >= date(2020,2,21,19) and c.Timestamp <= date(2020,2,21,20):
+            #     print('pxlow: {}, lastlow: {}, active: {}'.format(pxlow, self.lastlow, t.active))
+
             t.checkorders(c)
             if not t.active: self.exittrade()
 
             # need to make trade active=False if limitclose is filled?
             # order that candle moves is important
-            # need enter > exit > enter all in same candle
+            # TODO: need enter > exit > enter all in same candle
+
+        # if c.Timestamp == date(2020,2,21,20):
+        #     print(c.Timestamp)
 
         # Enter Trade
         if self.trade is None:
@@ -624,10 +635,12 @@ class Strat_TrendRev(Strategy):
 
     def finalOrders(self, u, weight):
         lst = []
-        balance = u.balance() * weight
-        curr_cont = u.getPosition(self.sym.symbolbitmex)['currentQty']
-        c = self.cdl
         symbol = self.sym.symbolbitmex
+        balance = u.balance() * weight
+        curr_cont = u.getPosition(symbol)['currentQty']
+        c = self.cdl
+
+        manualorders = u.getOrders(symbol=symbol, manualonly=True)
         
         # PREV
         # CLOSE - Check if current limitclose is still open with same side
@@ -636,13 +649,14 @@ class Strat_TrendRev(Strategy):
             prevclose_actual = u.getOrderByKey(key=f.key(symbol, 'limitclose', prevclose.side, 3))
             if (not prevclose_actual is None
                 and prevclose_actual['side'] == prevclose.side):
+                    prevclose.contracts = curr_cont * -1
                     prevclose.setname('marketclose')
-                    prevclose.ordtype2 = 'Market'
+                    prevclose.ordtype = 'Market'
                     prevclose.execInst = 'Close'
                     lst.append(prevclose)
                     
                     # subtract from curr_cont when market closing
-                    curr_cont -= prevclose.contracts
+                    curr_cont += prevclose.contracts
         
         # CURRENT
         t_current = self.trades[-1]
@@ -657,23 +671,25 @@ class Strat_TrendRev(Strategy):
             and curr_cont == 0
             and t_current.duration() == 4):
                 limitopen.setname('marketbuy') # need diff name, 2 limitbuys possible
-                limitopen.ordtype2 = 'Market'
+                limitopen.ordtype = 'Market'
+                limitopen.execinst = ''
                 lst.append(limitopen)
                 curr_cont += limitopen.contracts
                 limitopen_actual['orderQty'] = None # will be cancelled
 
         else:
             # Only till max 4 candles into trade
-            lst.append(limitopen) 
+            lst.append(limitopen)
 
         # STOP - depends on either a position OR a limitopen
         stopclose = t_current.stop
-        stopclose.contracts = 0
         if not stopclose.filled:
-            stopclose.contracts += curr_cont * -1
+            stopclose.contracts = curr_cont * -1
+            stopclose.contracts -= f.sum_orders_before(orders=manualorders, checkorder=stopclose)
 
+            # only if limitopen_actual has not been market closed in this period
             if not limitopen_actual['orderQty'] is None:
-                stopclose.contracts += limitopen_actual['orderQty'] * limitopen_actual['side'] * -1
+                stopclose.contracts -= limitopen_actual['orderQty'] * limitopen_actual['side']
 
             lst.append(stopclose)
 
@@ -684,9 +700,11 @@ class Strat_TrendRev(Strategy):
             
             if t_current.timedout:
                 limitclose.setname('marketclose')
-                limitclose.ordtype2 = 'Market'
-                limitclose.execInst = 'Close'
+                limitclose.ordtype = 'Market'
+                limitclose.execinst = 'Close'
                 curr_cont += limitclose.contracts
+            else:
+                limitclose.contracts -= f.sum_orders_before(orders=manualorders, checkorder=limitclose)
 
             lst.append(limitclose)
 
@@ -696,8 +714,10 @@ class Strat_TrendRev(Strategy):
         # NEXT - Init next trade to get next limitopen and stop
         px = c.pxhigh if t_current.side == 1 else c.pxlow
         t_next = self.inittrade(side=t_current.side * -1, entryprice=px, balance=balance, temp=True, trade=Trade_TrendRev())
+        
+        t_next.stop.contracts -= f.sum_orders_before(orders=manualorders, checkorder=t_next.stop)
         lst.append(t_next.limitopen)
-        lst.append(t_next.stop)    
+        lst.append(t_next.stop)
 
         return self.checkfinalorders(lst)
 
@@ -926,13 +946,13 @@ class Strat_Chop(Strategy):
 
     def getNextOrdArrays(self, anchorprice, c, side, trade=None):
 
-        orders = OrdArray(ordtype=1,
+        orders = OrdArray(ordtype_bot=1,
                         anchorprice=anchorprice,
                         orderspread=0.002 * c.norm,
                         trade=trade,
                         activate=True)
         
-        stops = OrdArray(ordtype=2,
+        stops = OrdArray(ordtype_bot=2,
                         anchorprice=f.getPrice(
                             -0.01 * c.norm,
                             orders.maxprice,
@@ -943,7 +963,7 @@ class Strat_Chop(Strategy):
         
         outerprice = c.tp_high if side == 1 else c.tp_low
 
-        takeprofits = OrdArray(ordtype=3,
+        takeprofits = OrdArray(ordtype_bot=3,
                         anchorprice=trade.anchorstart,
                         outerprice=outerprice,
                         orderspread=0,
@@ -1295,7 +1315,8 @@ class Trade():
 
     def chart(self, pre=36, post=None, width=900, fast=50, slow=200):
         dur = self.duration()
-        post = dur if post is None and dur > 36 else 36
+        if post is None:
+            post = dur if dur > 36 else 36
         f.chartorders(self.sym.df, self, pre=pre, post=post, width=width, fast=fast, slow=slow)
 
     def printcandles(self):
@@ -1316,11 +1337,11 @@ class Trade():
         headers = ['IDX', 'Type', 'Side', 'Price', 'Cont', 'Active', 'Cancelled', 'Filled']
 
         for o in orders:
-            ordtype = o.ordarray.letter() if not o.ordarray is None else o.ordtype 
+            ordtype_bot = o.ordarray.letter() if not o.ordarray is None else o.ordtype_bot 
 
             data.append([
                 o.index,
-                ordtype,
+                ordtype_bot,
                 o.side,
                 o.price,
                 o.contracts,
@@ -1363,8 +1384,8 @@ class Trade_TrendRev(Trade):
                     side=self.side,
                     contracts=contracts,
                     activate=True,
-                    ordtype=1,
-                    ordtype2='Limit',
+                    ordtype_bot=1,
+                    ordtype='Limit',
                     name='limitopen',
                     trade=self)
 
@@ -1373,8 +1394,8 @@ class Trade_TrendRev(Trade):
                     side=self.side * -1,
                     contracts=contracts,
                     activate=False,
-                    ordtype=2,
-                    ordtype2='Stop',
+                    ordtype_bot=2,
+                    ordtype='Stop',
                     name='stop',
                     trade=self)
 
@@ -1383,8 +1404,8 @@ class Trade_TrendRev(Trade):
                     side=self.side * -1,
                     contracts=contracts,
                     activate=False,
-                    ordtype=3,
-                    ordtype2='Limit',
+                    ordtype_bot=3,
+                    ordtype='Limit',
                     name='limitclose',
                     execinst='Close',
                     trade=self)
@@ -1412,24 +1433,24 @@ class Trade_TrendRev(Trade):
                 # MARKET OPEN
                 # Don't market fill if trade would have closed on this candle
                 # if order not filled after 4 candles, fill at close price
-                if (o.ordtype == 1
+                if (o.ordtype_bot == 1
                     and self.active
                     and self.duration() == 4
                     and not o.filled):
                         o.fill(c=c, price=c.Close)
 
                 if o.filled:
-                    if o.ordtype == 1:
+                    if o.ordtype_bot == 1:
                         self.filledcontracts = o.contracts
                         delay = 1 if o.marketfilled else 0
                         self.limitclose.activate(c=c, delay=delay)
                         self.stop.activate(c=c, delay=0)
-                    elif o.ordtype == 2:
+                    elif o.ordtype_bot == 2:
                         self.limitclose.cancel() #make limitclose filledtime be end of trade
                         self.stopped = True
                         self.pnlfinal = f.getPnl(self.side, self.entryprice, self.exitprice)
                         self.exitbalance = self.sym.account.getBalance()
-                    elif o.ordtype == 3:
+                    elif o.ordtype_bot == 3:
                         self.stop.cancel()
             
         # adjust limitclose for next candle
@@ -1459,8 +1480,8 @@ class Trade_Trend(Trade):
                     side=self.side,
                     contracts=contracts,
                     activate=True,
-                    ordtype=4,
-                    ordtype2='Stop',
+                    ordtype_bot=4,
+                    ordtype='Stop',
                     name='stopopen',
                     trade=self)
 
@@ -1469,8 +1490,8 @@ class Trade_Trend(Trade):
                     side=self.side * -1,
                     contracts=contracts,
                     activate=False,
-                    ordtype=2,
-                    ordtype2='Stop',
+                    ordtype_bot=2,
+                    ordtype='Stop',
                     name='stopclose',
                     execinst='Close',
                     trade=self)
@@ -1483,7 +1504,7 @@ class Trade_Trend(Trade):
                 o.check(c)
 
                 if o.filled:
-                    if o.ordtype == 4:
+                    if o.ordtype_bot == 4:
                         self.filledcontracts = o.contracts
                         self.stopclose.active = True
         
@@ -1502,8 +1523,8 @@ class Trade_TrendClose(Trade):
                     side=self.side,
                     contracts=contracts,
                     activate=True,
-                    ordtype=5,
-                    ordtype2='Market',
+                    ordtype_bot=5,
+                    ordtype='Market',
                     name='marketopen',
                     trade=self)
 
@@ -1512,8 +1533,8 @@ class Trade_TrendClose(Trade):
                     side=self.side * -1,
                     contracts=contracts,
                     activate=False,
-                    ordtype=6,
-                    ordtype2='Market',
+                    ordtype_bot=6,
+                    ordtype='Market',
                     name='marketclose',
                     execinst='Close',
                     trade=self)
@@ -1604,8 +1625,8 @@ class Trade_SFP(Trade):
                     side=self.side,
                     contracts=self.targetcontracts,
                     activate=True,
-                    ordtype=5,
-                    ordtype2='Market',
+                    ordtype_bot=5,
+                    ordtype='Market',
                     name='marketopen',
                     trade=self)
 
@@ -1614,8 +1635,8 @@ class Trade_SFP(Trade):
                     side=self.side * -1,
                     contracts=self.targetcontracts,
                     activate=True,
-                    ordtype=6,
-                    ordtype2='Market',
+                    ordtype_bot=6,
+                    ordtype='Market',
                     name='marketclose',
                     trade=self)
 
@@ -1624,7 +1645,7 @@ class Trade_SFP(Trade):
 
 # ORDER
 class Order():
-    def __init__(self, price, side, contracts, ordtype, ordarray=None, trade=None, sym=None,  activate=False, index=0, symbol='', name='', execinst='', ordtype2='', manual=False):
+    def __init__(self, price, contracts, ordtype, side=None, ordtype_bot=None, ordarray=None, trade=None, sym=None,  activate=False, index=0, symbol=None, name=None, execinst=[]):
 
         self.ordarray = ordarray
         self.trade = trade
@@ -1633,9 +1654,23 @@ class Order():
         self.symbol = symbol
         self.name = name
         self.orderID = ''
-        self.execInst = execinst
-        self.ordtype2 = ordtype2  
-        self.manual = manual      
+        self.ordtype = ordtype
+
+        self.active = activate
+        self.delaytime = None
+        self.activenext = False # only used in ordarray, superceeded with delaytime
+        self.filled = False
+        self.marketfilled = False
+        self.cancelled = False
+        self.filledtime = None
+        self.index = index # ordarray only  
+        self.livedata = []
+
+        if not isinstance(execinst, list): execinst = [execinst]
+        self.execinst = []
+        self.execinst.extend(execinst)
+        if self.ordtype == 'Limit':
+            self.execinst.append('ParticipateDoNotInitiate')
 
         if not self.ordarray is None:
             self.trade = self.ordarray.trade
@@ -1653,46 +1688,50 @@ class Order():
         else:
             self.decimalfigs = 0
             self.symbolbitmex = self.symbol
-            
-        self.decimaldouble = float('1e-{}'.format(self.decimalfigs))
-        self.index = index
-        self.side = side
-        self.price = self.finalprice(price)
-        self.pxoriginal = self.price
+            if self.symbol is None: raise NameError('Symbol required!')
         
-        self.contracts = abs(contracts) * side
-        self.ordtype = ordtype
-        self.active = activate
-        self.delaytime = None
-        self.activenext = False # only used in ordarray, superceeded with delaytime
-        self.filled = False
-        self.marketfilled = False
-        self.cancelled = False
-        self.filledtime = None
+        self.decimaldouble = float('1e-{}'.format(self.decimalfigs))
 
-        # enterexit: 1/2 happen in same direction, 3/4 opposite (used to check if filled)
-        # addsubtract: 1/4 add contracts to trade, 2/3 remove, relative to side
+        # enterexit: 1,2 happen in same direction, 3,4 opposite (used to check if filled)
+        # addsubtract: 1,4 add contracts to trade, 2,3 remove, relative to side
         # 1 - LimitOpen
         # 2 - StopClose
         # 3 - LimitClose
         # 4 - StopOpen
         # 5 - MarketOpen - only used for addsubtract
         # 6 - MarketClose
-        self.enterexit = -1 if ordtype in (1, 2) else 1
-        self.addsubtract = -1 if ordtype in (2, 3, 6) else 1
-        self.isstop = True if ordtype in (2, 4) else False
-        if not self.trade is None:
-            self.direction = self.trade.side * self.enterexit
-        
-        if self.name == 'stopopen':
-            self.execInst = 'IndexPrice'
-        elif self.name == 'stopclose' or self.name[0] == 'S':
-            self.execInst = 'Close,IndexPrice'
-        elif self.name[0] == 'T':
-            self.execInst = 'Close'
-        
-        self.matched = False
-        self.livedata = []
+        if ordtype_bot:
+            self.ordtype_bot = ordtype_bot
+            self.enterexit = -1 if ordtype_bot in (1, 2) else 1
+            self.addsubtract = -1 if ordtype_bot in (2, 3, 6) else 1
+            self.isstop = True if ordtype_bot in (2, 4) else False
+            self.manual = False
+
+            if not self.trade is None:
+                self.direction = self.trade.side * self.enterexit
+
+            # TODO: this is a bit sketch
+            if self.name == 'stopopen':
+                self.execinst.append('IndexPrice')
+            elif self.name == 'stopclose' or self.name[0] == 'S':
+                self.execinst.extend(['Close', 'IndexPrice'])
+            elif self.name[0] == 'T':
+                self.execinst.append('Close')
+        else:
+            self.isstop = True if self.ordtype == 'Stop' else False
+            self.manual = True
+            self.name = 'manual'
+
+        # If Side is passed explicitly > force it, else get from contracts
+        if not side is None:
+            self.side = side
+            self.contracts = abs(contracts) * side
+        else:
+            self.side = 1 if contracts > 0 else -1
+            self.contracts = contracts
+
+        self.price = self.finalprice(price)
+        self.pxoriginal = self.price
         self.setkey()
 
     def ordtype_str(self):
@@ -1705,7 +1744,9 @@ class Order():
         self.setkey()
 
     def setkey(self):
-        self.key = f.key(self.symbolbitmex, self.name, self.side, self.ordtype)
+        side = self.side if self.trade is None else self.trade.side
+
+        self.key = f.key(self.symbolbitmex, self.name, side, self.ordtype)
         self.clOrdID = '{}-{}'.format(self.key, int(time()))        
 
     def stoppx(self):
@@ -1800,43 +1841,50 @@ class Order():
     def intakelivedata(self, livedata):
         self.livedata = livedata
         self.orderID = livedata['orderID']
-        self.ordType = livedata['ordType']
+        # self.ordType = livedata['ordType']
+
+    def append_execinst(self, m):
+        if self.execinst:
+            m['execInst'] = ','.join(self.execinst)
+        return m
 
     def amendorder(self):
         m = {}
         m['orderID'] = self.orderID
         m['symbol'] = self.sym.symbolbitmex
         m['orderQty'] = self.contracts
+        m = self.append_execinst(m)
 
-        with f.Switch(self.ordtype2) as case:
+        with f.Switch(self.ordtype) as case:
             if case('Limit'):
                 m['price'] = self.price
             elif case('Stop'):
                 m['stopPx'] = self.price
-
-        if not self.execInst == '':
-            m['execInst'] = self.execInst
         
         return m
 
+    def to_dict(self):
+        m = self.neworder()
+        m['contracts'] = self.contracts
+        m['side'] = self.side
+        m['name'] = self.name
+        return m
+    
     def neworder(self):
         m = {}
         m['symbol'] = self.symbolbitmex
         m['orderQty'] = self.contracts
         m['clOrdID'] = self.clOrdID
+        m['ordType'] = self.ordtype
+        m = self.append_execinst(m)
         
-        with f.Switch(self.ordtype2) as case:
+        with f.Switch(self.ordtype) as case:
             if case('Limit'):
                 m['price'] = self.price
             elif case('Stop'):
                 m['stopPx'] = self.price
             elif case('Market'):
-                m['ordType'] = self.ordtype2
-            # elif case('StopLimit'):
-            #     m['price'] = self.finalprice()
-        
-        if not self.execInst == '':
-            m['execInst'] = self.execInst
+                m['ordType'] = self.ordtype
         
         return m
     
@@ -1868,8 +1916,8 @@ class OrdArray():
         
         return round(price, self.decimalfigs)
     
-    def __init__(self, ordtype, anchorprice, orderspread, trade, activate=False, outerprice=None):
-        self.ordtype = ordtype
+    def __init__(self, ordtype_bot, anchorprice, orderspread, trade, activate=False, outerprice=None):
+        self.ordtype_bot = ordtype_bot
         self.anchorprice = anchorprice
         self.orderspread = orderspread
         self.trade = trade
@@ -1883,9 +1931,6 @@ class OrdArray():
 
         self.orders = []
         self.active = True
-        # self.enterexit = -1 if (ordtype == 1 or ordtype == 2) else 1
-        # self.addsubtract = -1 if (ordtype == 2 or ordtype == 3) else 1
-        # self.direction = self.trade.status * self.enterexit
         self.side = self.trade.side * self.addsubtract
 
         self.filled = False
@@ -1899,13 +1944,13 @@ class OrdArray():
         # init and add all orders to self (ordArray)
         modi = 'lwr' if self.trade.side == 1 else 'upr'
 
-        with f.Switch(self.ordtype) as case:
+        with f.Switch(self.ordtype_bot) as case:
             if case(1):
-                ordtype2 = 'Limit'
+                ordtype = 'Limit'
             elif case(2):
-                ordtype2 = 'Stop'
+                ordtype = 'Stop'
             elif case(3):
-                ordtype2 = 'Limit'
+                ordtype = 'Limit'
 
         for i in range(self.numorders):
             price = self.getOrderPrice(i)
@@ -1920,7 +1965,7 @@ class OrdArray():
                         index=i,
                         symbol=self.trade.strat.sym.symbol,
                         name='{}{}{}'.format(self.letter(), i + 1, modi),
-                        ordtype=ordtype2,
+                        ordtype=ordtype,
                         sym=self.trade.strat.sym)
 
             self.orders.append(order)
@@ -1929,7 +1974,7 @@ class OrdArray():
         if not self.active:
             return
         
-        if self.ordtype > 1 and self.trade.contracts == 0:
+        if self.ordtype_bot > 1 and self.trade.contracts == 0:
             return
         
         for i, order in enumerate(self.orders):
@@ -1937,12 +1982,12 @@ class OrdArray():
             if order.active and not order.filled:
                 order.check(c)
                 if order.filled:
-                    if self.ordtype == 1:
+                    if self.ordtype_bot == 1:
                         self.trade.stops.orders[i].active = True
                         self.trade.takeprofits.orders[i].activenext = True
-                    elif self.ordtype == 2:
+                    elif self.ordtype_bot == 2:
                         self.trade.takeprofits.orders[i].cancel()
-                    elif self.ordtype == 3:
+                    elif self.ordtype_bot == 3:
                         self.trade.stops.orders[i].cancel()
 
                     self.filledorders += 1
@@ -1957,7 +2002,7 @@ class OrdArray():
             self.active = False
 
     def letter(self):
-        with f.Switch(self.ordtype) as case:
+        with f.Switch(self.ordtype_bot) as case:
             if case(1):
                 return 'O'
             elif case(2):
@@ -1979,7 +2024,7 @@ class OrdArray():
 
             if not (order.cancelled or order.filled):
                 
-                if self.ordtype == 1:
+                if self.ordtype_bot == 1:
                     # order
                     lst.append(order)
                 else:
@@ -1987,7 +2032,7 @@ class OrdArray():
                     # print(self.trade.orders.orders[i].filled)
                     if not self.trade.orders.orders[i].filled:
                         # good, stops should be active
-                        if self.ordtype == 2:
+                        if self.ordtype_bot == 2:
                             lst.append(order)
                     else:
                         # Order SHOULD be filled, check it
