@@ -420,7 +420,6 @@ def getContracts(xbt, leverage, entryprice, side, isaltcoin=False):
         return int(xbt * leverage * (1 / entryprice) * side)
 
 def side(x):
-    # x = int(x)
     side = lambda x: -1 if x < 0 else (1 if x > 0 else 0)
     return side(x)
 

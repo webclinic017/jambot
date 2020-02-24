@@ -17,7 +17,6 @@ except ModuleNotFoundError:
     pass
 
 
-
 # BACKTEST
 class Account():
     
@@ -84,10 +83,9 @@ class Account():
         return f.percent(change / balance)
 
     def printsummary(self, period='month'):
-        # TODO: replace columnar with dataframe
-        from columnar import columnar
+        # TODO: make this include current month
         data = []
-        headers = ['Period', 'AcctBalance', 'Change', 'PercentChange']
+        cols = ['Period', 'AcctBalance', 'Change', 'PercentChange']
 
         periodnum = self.getPeriodNum(self.txns[0].timestamp, period)
         prevTxn = None
@@ -108,10 +106,10 @@ class Account():
                 change = 0
                 periodnum = self.getPeriodNum(t.timestamp, period)
             
-            change = change + t.amount
+            change += t.amount
 
-        table = columnar(data, headers, no_borders=True, justify='r')
-        print(table)
+        df = pd.DataFrame(data=data, columns=cols)
+        display(df)
 
     def plotbalance(self, logy=False, title=None):
         m = {}
@@ -121,10 +119,8 @@ class Account():
         df.plot(kind='line', x='timestamp', y='balance', logy=logy, linewidth=0.75, color='cyan', title=title)
 
     def printtxns(self):
-        # TODO: remove columnar
-        from columnar import columnar
         data = []
-        headers = ['Date', 'AcctBalance', 'Amount', 'PercentChange']
+        cols = ['Date', 'AcctBalance', 'Amount', 'PercentChange']
         for t in self.txns:
             data.append([
                 '{:%Y-%m-%d %H}'.format(t.timestamp),
@@ -132,8 +128,11 @@ class Account():
                 '{:.{prec}f}'.format(t.amount, prec=2),
                 f.percent(t.percentchange)
             ])
-        table = columnar(data, headers, no_borders=True, justify='r')
-        print(table)
+        
+        pd.options.display.max_rows = len(data)
+        df = pd.DataFrame(data=data, columns=cols)
+        display(df)
+        pd.options.display.max_rows = 100
 
     def getDf(self):
         df = pd.DataFrame(columns=['Timestamp', 'Balance', 'PercentChange'])
@@ -638,80 +637,82 @@ class Strat_TrendRev(Strategy):
         symbol = self.sym.symbolbitmex
         balance = u.balance() * weight
         curr_cont = u.getPosition(symbol)['currentQty']
-        c = self.cdl
-
         manualorders = u.getOrders(symbol=symbol, manualonly=True)
-        
-        # PREV
-        # CLOSE - Check if current limitclose is still open with same side
-        prevclose = self.trades[-2].limitclose
-        if prevclose.marketfilled:
-            prevclose_actual = u.getOrderByKey(key=f.key(symbol, 'limitclose', prevclose.side, 3))
-            if (not prevclose_actual is None
-                and prevclose_actual['side'] == prevclose.side):
-                    prevclose.contracts = curr_cont * -1
-                    prevclose.setname('marketclose')
-                    prevclose.ordtype = 'Market'
-                    prevclose.execInst = 'Close'
-                    lst.append(prevclose)
-                    
-                    # subtract from curr_cont when market closing
-                    curr_cont += prevclose.contracts
-        
-        # CURRENT
+
+        t_prev = self.trades[-2]
         t_current = self.trades[-1]
         t_current.rescaleorders(balance=balance)
 
-        # OPEN
+        prevclose = t_prev.limitclose
         limitopen = t_current.limitopen
         limitopen_actual = u.getOrderByKey(key=f.key(symbol, 'limitopen', limitopen.side, 1))
-        
+        stopclose = t_current.stop
+        limitclose = t_current.limitclose
+
+        # PREVCLOSE - Check if position is still open with correct side/contracts
+        if (prevclose.marketfilled 
+        and prevclose.side == f.side(curr_cont)
+        and t_current.duration() <= 4):
+            marketclose = Order(
+                            contracts=curr_cont * -1,
+                            ordtype='Market',
+                            name='marketclose',
+                            trade=t_prev)
+
+            lst.append(marketclose)
+            curr_cont += marketclose.contracts # add to curr_cont when market closing
+
+        # OPEN
         if limitopen.filled:
             if (limitopen.marketfilled 
             and curr_cont == 0
             and t_current.duration() == 4):
-                limitopen.setname('marketbuy') # need diff name, 2 limitbuys possible
-                limitopen.ordtype = 'Market'
-                limitopen.execinst = ''
-                lst.append(limitopen)
-                curr_cont += limitopen.contracts
+                marketopen = Order(
+                                contracts=limitopen.contracts,
+                                ordtype='Market',
+                                name='marketopen',
+                                trade=t_current)
+
+                lst.append(marketopen)
+                curr_cont += marketopen.contracts
                 limitopen_actual['orderQty'] = None # will be cancelled
 
         else:
-            # Only till max 4 candles into trade
-            lst.append(limitopen)
+            lst.append(limitopen) # Only till max 4 candles into trade
 
         # STOP - depends on either a position OR a limitopen
-        stopclose = t_current.stop
         if not stopclose.filled:
             stopclose.contracts = curr_cont * -1
             stopclose.contracts -= f.sum_orders_before(orders=manualorders, checkorder=stopclose)
 
             # only if limitopen_actual has not been market closed in this period
             if not limitopen_actual['orderQty'] is None:
-                stopclose.contracts -= limitopen_actual['orderQty'] * limitopen_actual['side']
+                stopclose.contracts -= limitopen_actual['contracts']
 
             lst.append(stopclose)
 
         # CLOSE - current
         if not curr_cont == 0:
-            limitclose = t_current.limitclose
             limitclose.contracts = curr_cont * -1
             
             if t_current.timedout:
-                limitclose.setname('marketclose')
-                limitclose.ordtype = 'Market'
-                limitclose.execinst = 'Close'
-                curr_cont += limitclose.contracts
+                marketclose = Order(
+                                contracts=limitclose.contracts,
+                                ordtype='Market',
+                                name='marketclose',
+                                trade=t_current)
+
+                lst.append(marketclose)
+                curr_cont += marketclose.contracts
             else:
                 limitclose.contracts -= f.sum_orders_before(orders=manualorders, checkorder=limitclose)
-
-            lst.append(limitclose)
+                lst.append(limitclose)
 
             if stopclose.contracts == 0 or not stopclose in lst:
                 f.discord(msg='Error: no stop for current position', channel='err')
 
         # NEXT - Init next trade to get next limitopen and stop
+        c = self.cdl
         px = c.pxhigh if t_current.side == 1 else c.pxlow
         t_next = self.inittrade(side=t_current.side * -1, entryprice=px, balance=balance, temp=True, trade=Trade_TrendRev())
         
@@ -1004,9 +1005,8 @@ class Strat_Chop(Strategy):
         return self.checkfinalorders(lstOrders)
 
     def printtrades(self, maxmin=0, maxlines=-1):
-        from columnar import columnar
         data = []
-        headers = ['N', 'Timestamp', 'Sts', 'Dur', 'Anchor', 'Entry', 'Exit', 'Contracts', 'Filled', 'Pnl', 'Balance']
+        cols = ['N', 'Timestamp', 'Sts', 'Dur', 'Anchor', 'Entry', 'Exit', 'Contracts', 'Filled', 'Pnl', 'Balance']
         for i, t in enumerate(self.trades):
             if not maxmin == 0 and maxmin * t.pnlfinal <= 0: continue
 
@@ -1026,8 +1026,8 @@ class Strat_Chop(Strategy):
         
             if i == maxlines: break
 
-        table = columnar(data, headers, no_borders=True, justify='r', min_column_width=2)
-        print(table)
+        df = pd.DataFrame(data=data, columns=cols)
+        display(df)
 
 class Strat_SFP(Strategy):
     def __init__(self, weight=1, lev=5):
@@ -1329,12 +1329,11 @@ class Trade():
                 c.Close)
 
     def printorders(self, orders=None):
-        from columnar import columnar
         if orders is None:
             orders = self.allorders()
 
         data = []
-        headers = ['IDX', 'Type', 'Side', 'Price', 'Cont', 'Active', 'Cancelled', 'Filled']
+        cols = ['IDX', 'Type', 'Side', 'Price', 'Cont', 'Active', 'Cancelled', 'Filled']
 
         for o in orders:
             ordtype_bot = o.ordarray.letter() if not o.ordarray is None else o.ordtype_bot 
@@ -1349,8 +1348,8 @@ class Trade():
                 o.cancelled,
                 o.filled])
 
-        table = columnar(data, headers, no_borders=True, justify='r')
-        print(table)
+        df = pd.DataFrame(data=data, columns=cols)
+        display(df)
 
 class Trade_TrendRev(Trade):
     def __init__(self):
@@ -1645,14 +1644,14 @@ class Trade_SFP(Trade):
 
 # ORDER
 class Order():
-    def __init__(self, price, contracts, ordtype, side=None, ordtype_bot=None, ordarray=None, trade=None, sym=None,  activate=False, index=0, symbol=None, name=None, execinst=[]):
+    def __init__(self, contracts, ordtype, price=None, side=None, ordtype_bot=None, ordarray=None, trade=None, sym=None,  activate=False, index=0, symbol=None, name='', execinst=[]):
 
         self.ordarray = ordarray
         self.trade = trade
         self.sym = sym
 
         self.symbol = symbol
-        self.name = name
+        self.name = name.lower()
         self.orderID = ''
         self.ordtype = ordtype
 
@@ -1666,11 +1665,14 @@ class Order():
         self.index = index # ordarray only  
         self.livedata = []
 
+        # EXEC INST
         if not isinstance(execinst, list): execinst = [execinst]
         self.execinst = []
         self.execinst.extend(execinst)
-        if self.ordtype == 'Limit':
-            self.execinst.append('ParticipateDoNotInitiate')
+
+        if self.ordtype == 'Limit': self.execinst.append('ParticipateDoNotInitiate')
+        if 'stop' in self.name: self.execinst.append('IndexPrice')
+        if 'close' in self.name: self.execinst.append('Close')
 
         if not self.ordarray is None:
             self.trade = self.ordarray.trade
@@ -1704,23 +1706,16 @@ class Order():
             self.ordtype_bot = ordtype_bot
             self.enterexit = -1 if ordtype_bot in (1, 2) else 1
             self.addsubtract = -1 if ordtype_bot in (2, 3, 6) else 1
-            self.isstop = True if ordtype_bot in (2, 4) else False
             self.manual = False
 
             if not self.trade is None:
                 self.direction = self.trade.side * self.enterexit
 
-            # TODO: this is a bit sketch
-            if self.name == 'stopopen':
-                self.execinst.append('IndexPrice')
-            elif self.name == 'stopclose' or self.name[0] == 'S':
-                self.execinst.extend(['Close', 'IndexPrice'])
-            elif self.name[0] == 'T':
-                self.execinst.append('Close')
         else:
-            self.isstop = True if self.ordtype == 'Stop' else False
             self.manual = True
-            self.name = 'manual'
+            if self.name == '': self.name = 'manual'
+        
+        self.isstop = True if self.ordtype == 'Stop' else False
 
         # If Side is passed explicitly > force it, else get from contracts
         if not side is None:
@@ -1730,10 +1725,21 @@ class Order():
             self.side = 1 if contracts > 0 else -1
             self.contracts = contracts
 
+        if price is None and not self.ordtype == 'Market': raise ValueError('Price cannot be None!')
         self.price = self.finalprice(price)
         self.pxoriginal = self.price
         self.setkey()
 
+    def finalprice(self, price=None):
+        if self.ordtype == 'Market':
+            return None
+        elif self.manual:
+            return price
+        else:
+            if price is None:
+                price = self.price
+            return round(round(price, self.decimalfigs) + self.decimaldouble * self.side * -1, self.decimalfigs)
+    
     def ordtype_str(self):
         # v sketch
         ans = 'L' if self.filled and not self.marketfilled else 'M'
@@ -1841,11 +1847,14 @@ class Order():
     def intakelivedata(self, livedata):
         self.livedata = livedata
         self.orderID = livedata['orderID']
-        # self.ordType = livedata['ordType']
 
     def append_execinst(self, m):
         if self.execinst:
-            m['execInst'] = ','.join(self.execinst)
+            if isinstance(self.execinst, list):
+                m['execInst'] = ','.join(self.execinst)
+            else:
+                m['execInst'] = self.execinst
+
         return m
 
     def amendorder(self):
@@ -1887,14 +1896,7 @@ class Order():
                 m['ordType'] = self.ordtype
         
         return m
-    
-    def finalprice(self, price=None):
-        if self.manual:
-            return price
-        else:
-            if price is None:
-                price = self.price
-            return round(round(price, self.decimalfigs) + self.decimaldouble * self.side * -1, self.decimalfigs) #slightly excessive rounding
+
      
 class OrdArray():
     

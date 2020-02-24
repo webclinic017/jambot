@@ -184,7 +184,6 @@ class User():
         
         self.orders = self.addOrderInfo(orders)
 
-
     def setTotalBalance(self):
         div = self.div
         res = self.client.User.User_getMargin(currency='XBt').response().result
@@ -221,7 +220,7 @@ class User():
         display(order.neworder())
         
         o = self.placebulk(placeorders=order)[0]
-        display(o)
+        display(f.usefulkeys(o))
     
     def placebulk(self, placeorders):
         orders = []
@@ -404,11 +403,11 @@ def compareorders(theo=[], actual=[], show=False):
             notmatched.append(o)
 
     if show and not 'linux' in sys.platform:
-        print('Matched: ')
+        print('\nMatched: ')
         for o in matched: display(o.to_dict())
-        print('Missing:')
+        print('\nMissing:')
         for o in missing: display(o.to_dict())
-        print('Not matched:')
+        print('\nNot matched:')
         for o in notmatched: display(o)
     
     return matched, missing, notmatched
@@ -427,7 +426,7 @@ def checkmatched(matched, show=False):
             amend.append(order)
             
             if show and not 'linux' in sys.platform:
-                print('Ammending:')
+                print('\nAmmending:')
                 print(order.name)
                 print(order.price == checkprice, order.price, checkprice)
                 print(order.contracts == ld['contracts'], order.contracts, ld['contracts'])

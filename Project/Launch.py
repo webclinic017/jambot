@@ -38,9 +38,9 @@ if True:
 	symbol = 'XBTUSD'
 	daterange = 365 * 3 
 	# startdate = date(2018, 1, 1)
-	# startdate = date(2019, 1, 1)
+	startdate = date(2019, 1, 1)
 	# startdate = date(2019, 7, 1)
-	startdate = date(2020, 1, 1)
+	# startdate = date(2020, 1, 1)
 	interval = 1
 
 	df = f.getDataFrame(symbol=symbol, startdate=startdate, daterange=daterange, interval=interval)
