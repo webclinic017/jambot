@@ -7,8 +7,8 @@ from datetime import timedelta as delta
 
 import azure.functions as func
 
-import Functions as f
-import LiveTrading as live
+import functions as f
+import livetrading as live
 
 def main(mytimer: func.TimerRequest) -> None:
     try:

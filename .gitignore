@@ -12,20 +12,12 @@ Publish
 *.Cache
 project.lock.json
 
-/packages
-/TestResults
-
-/tools/NuGet.exe
-/ApiKeys
 /App_Data
-/secrets
-/data
+jambot/data/ApiKeys/
 /docs/.exclude
-.secrets
 appsettings.json
 local.settings.json
 host.json
-.gitignore
 .funcignore
 errlog.txt
 
@@ -36,13 +28,6 @@ dist
 .python_packages/
 
 # Python Environments
-.env
-.venv
-env/
-venv/
-ENV/
-env.bak/
-venv.bak/
 Pipfile.lock
 
 # Byte-compiled / optimized / DLL files

@@ -5,8 +5,8 @@ sys.path.append(str(Path(__file__).parents[1] / 'Project'))
 
 import azure.functions as func
 
-import Functions as f
-import LiveTrading as live
+import functions as f
+import livetrading as live
 
 
 def main(req: func.HttpRequest) -> func.HttpResponse:

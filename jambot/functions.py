@@ -10,27 +10,29 @@ from time import time
 from urllib import parse as prse
 
 import pandas as pd
-import pyodbc
 import pypika as pk
 import sqlalchemy as sa
+import yaml
 from dateutil.parser import parse
 from pypika import functions as fn
 
-import LiveTrading as live
+import livetrading as live
+import pyodbc
 
 try:
     from IPython.display import display
 except ModuleNotFoundError:
     pass
 
-
+global topfolder
+topfolder = Path(__file__).parent
 
 # PARALLEL
 def filterdf(dfall, symbol):
     return dfall[dfall.Symbol==symbol].reset_index(drop=True)
 
 def runtrend(symbol, startdate, df, against, wth, row, titles):
-    import JambotClasses as c
+    import jambotclasses as c
     dfTemp = pd.DataFrame(columns=[titles[0], titles[1], 'min', 'max', 'final', 'numtrades'])
 
     # Strat_Trend
@@ -49,7 +51,7 @@ def runtrend(symbol, startdate, df, against, wth, row, titles):
 def run_parallel():
     from joblib import Parallel, delayed
     symbol = 'XBTUSD'
-    p = Path(curdir()) / 'symbols.csv'
+    p = Path(topfolder) / 'data/symbols.csv'
     dfsym = pd.read_csv(p)
     dfsym = dfsym[dfsym.symbol==symbol]
     startdate, daterange = date(2019, 1, 1), 365 * 3
@@ -63,7 +65,7 @@ def run_parallel():
     return syms
 
 def run_single(strattype, startdate, dfall, speed0, speed1, row=None, norm=None, symbol=None):
-    import JambotClasses as c
+    import jambotclasses as c
 
     if not row is None:
         symbol = row.symbol
@@ -87,7 +89,7 @@ def run_single(strattype, startdate, dfall, speed0, speed1, row=None, norm=None,
     return sym
 
 def runtrendrev(symbol, startdate, df, against, wth, row, titles, norm):
-    import JambotClasses as c
+    import jambotclasses as c
     
     # Strat_TrendRev
     strat = c.Strat_TrendRev(speed=(against, wth), norm=norm)
@@ -102,7 +104,7 @@ def runtrendrev(symbol, startdate, df, against, wth, row, titles, norm):
     return dfTemp
 
 def runchop(symbol, startdate, df, against, wth, tpagainst, tpwith, lowernorm, uppernorm, row, titles):
-    import JambotClasses as c
+    import jambotclasses as c
     dfTemp = pd.DataFrame(columns=['against', 'wth', 'tpagainst', 'tpwith', 'lowernorm', 'uppernorm', 'min', 'max', 'final', 'numtrades'])
 
     # lowernorm /= 2
@@ -186,9 +188,6 @@ def readcsv(startdate, daterange, symbol=None):
     mask = ((df['Timestamp'] >= startvalue(startdate)) & (df['Timestamp'] <= enddate(startdate, daterange)))
     df = df.loc[mask].reset_index(drop=True)
     return df
-
-def curdir():
-    return Path(__file__).parents[1]
 
 def plotChart(df, symbol, df2=None):
     import plotly.offline as py
@@ -472,7 +471,7 @@ def discord(msg, channel='jambot'):
     import discord
     from discord import Webhook, RequestsWebhookAdapter, File
 
-    p = Path(curdir()) / 'ApiKeys/discord.csv'
+    p = Path(topfolder) / 'ApiKeys/discord.csv'
     r = pd.read_csv(p, index_col='channel').loc[channel]
     if channel == 'err': msg += '@here' 
 
@@ -505,7 +504,7 @@ def senderror(msg='', prnt=False):
 # DATABASE
 def getGoogleSheet():
     import pygsheets
-    p = Path(curdir()) / 'ApiKeys/gsheets.json'
+    p = Path(topfolder) / 'ApiKeys/gsheets.json'
     c = pygsheets.authorize(service_account_file=p)
     sheet = c.open("Jambot Settings")
     return sheet
@@ -604,12 +603,15 @@ def updateAllSymbols(u=None, db=None, interval=1):
 def qIt(s):
     return "'" + s + "'"
 
-def strConn():
-    with open(Path(curdir()) / 'ApiKeys/db_conn.json') as f:
-        m = json.load(f)
+def get_db():
+    p = Path(topfolder) / 'data/ApiKeys/db.yaml'
+    with open(p) as file:
+        m = yaml.full_load(file)
+    return m
 
-    driver = '{ODBC Driver 17 for SQL Server}'
-    return 'DRIVER={};SERVER={};DATABASE={};UID={};PWD={}'.format(driver, m['server'], m['database'], m['username'], m['password'])
+def strConn():
+    m = get_db()
+    return ';'.join('{}={}'.format(k, v) for k, v in m.items())
 
 def engine():
     print('loading db')

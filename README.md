@@ -24,9 +24,9 @@ In production, this app is hosted as an Azure Functions app running on a timer t
 ``` py
 from datetime import datetime as date
 
-import Functions as f
-import JambotClasses as c
-import LiveTrading as live
+import functions as f
+import jambotclasses as c
+import livetrading as live
 
 symbol = 'XBTUSD'
 daterange = 365
