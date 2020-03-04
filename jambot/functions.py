@@ -10,14 +10,15 @@ from time import time
 from urllib import parse as prse
 
 import pandas as pd
+import pyodbc
 import pypika as pk
 import sqlalchemy as sa
 import yaml
 from dateutil.parser import parse
 from pypika import functions as fn
 
+import jambotclasses as c
 import livetrading as live
-import pyodbc
 
 try:
     from IPython.display import display
@@ -422,26 +423,21 @@ def side(x):
     side = lambda x: -1 if x < 0 else (1 if x > 0 else 0)
     return side(x)
 
-def sum_orders_before(orders, checkorder=None, isstop=False, price=None, side=None):
-    if not checkorder is None:
-        price = checkorder.price
-        side = checkorder.side
-        isstop = checkorder.isstop
-    
-    # stops include orders of opposite side which hit before them
-    # tp include same side, hit before
-    checkside = side * -1 if isstop else side
+def convert_bitmex(o):
+    # Covert Bitmex manual orders to c.Order()
+    # TODO: This doesn't preserve all attributes (eg orderID), but creates a new order from scratch.
+    price = o['stopPx'] if o['ordType'] == 'Stop' else o['price']
 
-    # filter for orders of correct side and less/greater than check order's price
-    orders = list(filter(lambda x: 
-                                x['ordType'] == 'Limit' and 
-                                x['side'] == checkside and 
-                                (x['price'] - price) * side * checkside < 0, orders))
-
-    return sum(x['contracts'] for x in orders)
+    return c.Order(
+        symbol=o['symbol'],
+        price=price,
+        contracts=o['contracts'],
+        ordtype=o['ordType'],
+        name=o['name'])
 
 def usefulkeys(orders):
-    keys = ('symbol', 'clOrdID', 'side', 'price', 'stopPx', 'ordType', 'execInst', 'ordStatus', 'contracts', 'name', 'bot')
+    # return only useful keys from bitmex orders in dict form
+    keys = ('symbol', 'clOrdID', 'side', 'price', 'stopPx', 'ordType', 'execInst', 'ordStatus', 'contracts', 'name', 'manual', 'orderID')
     if not isinstance(orders, list):
         islist = False
         orders = [orders]
@@ -504,7 +500,7 @@ def senderror(msg='', prnt=False):
 # DATABASE
 def getGoogleSheet():
     import pygsheets
-    p = Path(topfolder) / 'ApiKeys/gsheets.json'
+    p = Path(topfolder) / 'Data/ApiKeys/gsheets.json'
     c = pygsheets.authorize(service_account_file=p)
     sheet = c.open("Jambot Settings")
     return sheet
