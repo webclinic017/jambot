@@ -20,9 +20,8 @@ local.settings.json
 host.json
 .funcignore
 errlog.txt
+*.stats
 
-node_modules
-dist
 
 # Local python packages
 .python_packages/

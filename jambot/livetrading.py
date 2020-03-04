@@ -20,7 +20,6 @@ except ModuleNotFoundError:
     pass
 
 
-
 class User():
     def __init__(self, test=False):
         self.name = ''
@@ -139,10 +138,10 @@ class User():
             orders = list(filter(lambda x: x['symbol']==symbol, orders))
 
         if botonly:
-            orders = list(filter(lambda x: x['bot']==True, orders))
+            orders = list(filter(lambda x: x['manual']==False, orders))
 
         if manualonly:
-            orders = list(filter(lambda x: x['bot']==False, orders))
+            orders = list(filter(lambda x: x['manual']==True, orders))
 
         return orders
             
@@ -160,12 +159,12 @@ class User():
                 
                 if not 'manual' in o['clOrdID']:
                     o['key'] = '-'.join(o['clOrdID'].split('-')[:-1])
-                    o['bot'] = True
+                    o['manual'] = False
                 else:
-                    o['bot'] = False
+                    o['manual'] = True
             else:
                 o['name'] = '(manual)'
-                o['bot'] = False
+                o['manual'] = True
 
         return orders
             
@@ -251,9 +250,14 @@ class User():
                 msg += str(order.neworder()).replace(', ', '\n') + '\n\n'
             f.senderror(msg=msg)
     
-    def cancelbulk(self, cancelorders):
+    def cancelmanual(self):
+        orders = self.getOrders(refresh=True, manualonly=True)
+        self.cancelbulk(orders=orders)
+    
+    def cancelbulk(self, orders):
         # only need ordID to cancel
-        orders = [order['orderID'] for order in cancelorders]
+        if not isinstance(orders, list): orders = [orders]
+        orders = [order['orderID'] for order in orders]
         if not orders: return
         return self.checkrequest(self.client.Order.Order_cancel(orderID=json.dumps(orders)))
         

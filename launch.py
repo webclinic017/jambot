@@ -16,7 +16,6 @@ if True:
 	import plotly.offline as py
 	from joblib import Parallel, delayed
 
-	sys.path.append(str(Path(__file__).parent / 'jambot'))
 	import functions as f
 	import livetrading as live
 	import jambotclasses as c
@@ -40,8 +39,8 @@ if True:
 	daterange = 365 * 3 
 	# startdate = date(2018, 1, 1)
 	# startdate = date(2019, 1, 1)
-	startdate = date(2019, 7, 1)
-	# startdate = date(2020, 1, 1)
+	# startdate = date(2019, 7, 1)
+	startdate = date(2020, 1, 1)
 	interval = 1
 
 	df = f.getDataFrame(symbol=symbol, startdate=startdate, daterange=daterange, interval=interval)
