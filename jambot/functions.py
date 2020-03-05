@@ -467,7 +467,7 @@ def discord(msg, channel='jambot'):
     import discord
     from discord import Webhook, RequestsWebhookAdapter, File
 
-    p = Path(topfolder) / 'ApiKeys/discord.csv'
+    p = Path(topfolder) / 'data/ApiKeys/discord.csv'
     r = pd.read_csv(p, index_col='channel').loc[channel]
     if channel == 'err': msg += '@here' 
 
@@ -500,10 +500,8 @@ def senderror(msg='', prnt=False):
 # DATABASE
 def getGoogleSheet():
     import pygsheets
-    p = Path(topfolder) / 'Data/ApiKeys/gsheets.json'
-    c = pygsheets.authorize(service_account_file=p)
-    sheet = c.open("Jambot Settings")
-    return sheet
+    p = Path(topfolder) / 'data/ApiKeys/gsheets.json'
+    return pygsheets.authorize(service_account_file=p).open('Jambot Settings')
 
 def getDataFrame(symbol=None, period=300, startdate=None, enddate=None, daterange=None, interval=1, db=None, offset=-15):
     if db is None: db = DB()

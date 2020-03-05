@@ -443,8 +443,9 @@ class Position():
         if not isinstance(orders, list): orders = [orders]
 
         for i, o in enumerate(orders):
-            if isinstance(o, dict):    
-                orders[i] = f.convert_bitmex(o)
+            if isinstance(o, dict):
+                o = f.convert_bitmex(o)
+                orders[i] = o
             
             if o.ordtype == 'Market':
                 self.contracts += o.contracts
@@ -477,7 +478,7 @@ class Position():
         # Split orders into market and non market, process, then recombine
         ordtype = 'Market'
         orders = [o for o in self.orders if o.ordtype == ordtype]
-        
+
         nonmarket = [o for o in self.orders if o.ordtype != ordtype]
         orders.extend(self.set_contracts(orders=nonmarket))
         
