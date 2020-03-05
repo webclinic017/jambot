@@ -5,6 +5,7 @@ import time
 from collections import defaultdict
 from datetime import datetime as date
 from datetime import timedelta as delta
+from datetime import timezone as tz
 from pathlib import Path
 
 import numpy as np
@@ -182,6 +183,14 @@ class User():
                                 startTime=starttime).response().result
         
         self.orders = self.addOrderInfo(orders)
+
+    def fundingRate(self, symbol='XBTUSD'):
+        result = self.client.Instrument.Instrument_get(symbol='XBTUSD').response().result[0]
+
+        rate = result['fundingRate']
+        hrs = int((result['fundingTimestamp'] - f.timenow().replace(tzinfo=tz.utc)).total_seconds() / 3600)
+
+        return rate, hrs
 
     def setTotalBalance(self):
         div = self.div
@@ -442,7 +451,7 @@ def checkmatched(matched, show=False):
 def refresh_gsheet_balance(u=None):
     sht = f.getGoogleSheet()
     ws = sht.worksheet_by_title('Bitmex')
-    df = ws.get_as_df(start='A1', end='J14')
+    df = ws.get_as_df(start='A1', end='J15')
     lst = list(df['Sym'].dropna())
     syms = []
 
@@ -543,9 +552,9 @@ def writeUserBalanceGoogle(syms, u, sht=None, ws=None, preservedf=False, df=None
 
     if df is None:
         if not preservedf:
-            df = pd.DataFrame(columns=['Sym','Size','Entry','Last',	'Pnl', '%',	'ROE','Value', 'Dur', 'Conf'], index=range(13))
+            df = pd.DataFrame(columns=['Sym','Size','Entry','Last',	'Pnl', '%',	'ROE','Value', 'Dur', 'Conf'], index=range(14))
         else:
-            df = ws.get_as_df(start='A1', end='J14')
+            df = ws.get_as_df(start='A1', end='J15')
 
     u.setPositions()
 
@@ -575,9 +584,15 @@ def writeUserBalanceGoogle(syms, u, sht=None, ws=None, preservedf=False, df=None
     df.at[9, 'Size'] = u.unrealizedpnl
     df.at[9, 'Entry'] = u.totalbalancemargin
 
+    # set funding rate
+    rate, hrs = u.fundingRate()
+    df.at[12, 'Sym'] = 'Funding:'
+    df.at[12, 'Size'] = f.percent(rate)
+    df.at[12, 'Entry'] = hrs
+    
     # set current time
-    df.at[12, 'Sym'] = 'Last:'
-    df.at[12, 'Size'] = date.strftime(date.utcnow(), f.TimeFormat(mins=True))
+    df.at[13, 'Sym'] = 'Last:'
+    df.at[13, 'Size'] = date.strftime(date.utcnow(), f.TimeFormat(mins=True))
 
     # concat last 10 trades for google sheet
     sym = list(filter(lambda x: x.symbol=='XBTUSD', syms))[0]
