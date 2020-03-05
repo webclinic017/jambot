@@ -1,6 +1,6 @@
 import sys
 from pathlib import Path
-sys.path.append(str(Path(__file__).parents[1] / 'Project'))
+sys.path.append(str(Path(__file__).parents[1] / 'jambot'))
 
 from datetime import datetime as date
 from datetime import timedelta as delta

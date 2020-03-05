@@ -1,13 +1,15 @@
 import logging
 import sys
 from pathlib import Path
-sys.path.append(str(Path(__file__).parents[1] / 'Project'))
+sys.path.append(str(Path(__file__).parents[1] / 'jambot'))
 
 import azure.functions as func
 
 import functions as f
 import livetrading as live
 
+def err():
+    return func.HttpResponse('ERROR: Http function not triggered.', status_code=400)
 
 def main(req: func.HttpRequest) -> func.HttpResponse:
     logging.info('Python HTTP trigger function processed a request.')
@@ -17,8 +19,8 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
         if not action:
             try:
                 req_body = req.get_json()
-            except ValueError:
-                return func.HttpResponse('Http function not triggered.', status_code=400)
+            except:
+                return err()
             else:
                 action = req_body.get('action')
 
@@ -29,6 +31,11 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
             live.TopLoop(partial=True)
             return func.HttpResponse('run TopLoop success', status_code=200)
         else:
-            return func.HttpResponse('Http function not triggered.', status_code=400)
+            return err()
     except:
-        f.senderror()
+        try:
+            f.senderror()
+            return err()
+        except:
+            return err()
+        

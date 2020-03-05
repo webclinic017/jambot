@@ -1,6 +1,6 @@
 import sys
 from pathlib import Path
-sys.path.append(str(Path(__file__).parents[1] / 'Project'))
+sys.path.append(str(Path(__file__).parents[1] / 'jambot'))
 
 import azure.functions as func
 
