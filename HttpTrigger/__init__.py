@@ -26,12 +26,18 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
 
         if action == 'refresh_balance':
             live.refresh_gsheet_balance()
-            return func.HttpResponse('refresh balance success', status_code=200)
         elif action == 'run_toploop':
             live.TopLoop(partial=True)
-            return func.HttpResponse('run TopLoop success', status_code=200)
+        elif action == 'close_position':
+            
+            pass
+        elif action == 'cancel_orders':
+            u = live.User()
+            u.cancelmanual()
         else:
             return err()
+        
+        return func.HttpResponse(f'{action} success!', status_code=200)
     except:
         try:
             f.senderror()

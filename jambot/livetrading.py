@@ -200,7 +200,6 @@ class User():
         self.totalbalancewallet = res['walletBalance'] / div # realized
         self.unrealizedpnl = res['unrealisedPnl'] / div
         self.prevpnl = res['prevRealisedPnl'] / div
-        # return res
 
     def amendbulk(self, amendorders):
         # accept list of Jambot.Order() objects, convert and send amend command to bitmex.
@@ -258,6 +257,16 @@ class User():
             for order in placeorders:
                 msg += str(order.neworder()).replace(', ', '\n') + '\n\n'
             f.senderror(msg=msg)
+    
+    def closeposition(self, symbol='XBTUSD'):
+        try:
+            m = dict(symbol='XBTUSD', execInst='Close')
+            self.placebulk(m)
+            self.checkrequest(
+                self.client.Order.Order_newBulk(
+                    orders=json.dumps(m)))
+        except:
+            f.senderror(msg='ERROR: Could not close position!', channel='err')
     
     def cancelmanual(self):
         orders = self.getOrders(refresh=True, manualonly=True)
@@ -525,13 +534,15 @@ def checkfilledorders(minutes=5, refresh=True, u=None):
                     syms.append(c.Backtest(symbol=symbol))       
 
             ordprice = f' ({price})' if not price == avgpx else ''
+            prevpnl = ' | PnL: {}'.format(round(u.prevpnl, 3)) if any(s in o['name'] for s in ('close', 'stop')) else ''
 
-            lst.append('{} | {} {:,} at ${:,}{} | {}'.format(
+            lst.append('{} | {} {:,} at ${:,}{}{} | {}'.format(
                     symshort,
                     o['sideStr'],
                     o['contracts'],
                     avgpx,
                     ordprice,
+                    prevpnl,
                     o['name']))
             
         # write balance to google sheet, EXCEPT on market buys

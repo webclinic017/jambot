@@ -658,9 +658,6 @@ class Strat_TrendRev(Strategy):
                 if c.Low < min(pxlow, self.lastlow):
                     t.active = False
 
-            # if c.Timestamp >= date(2020,2,21,19) and c.Timestamp <= date(2020,2,21,20):
-            #     print('pxlow: {}, lastlow: {}, active: {}'.format(pxlow, self.lastlow, t.active))
-
             t.checkorders(c)
             if not t.active: self.exittrade()
 
@@ -668,15 +665,13 @@ class Strat_TrendRev(Strategy):
             # order that candle moves is important
             # TODO: need enter > exit > enter all in same candle
 
-        # if c.Timestamp == date(2020,2,21,20):
-        #     print(c.Timestamp)
-
         # Enter Trade
+        enterhigh, enterlow = self.lasthigh, self.lastlow
         if self.trade is None:
-            if c.High > pxhigh:
-                self.entertrade(-1, pxhigh)
-            elif c.Low < pxlow:
-                self.entertrade(1, pxlow)
+            if c.High > enterhigh:
+                self.entertrade(-1, enterhigh)
+            elif c.Low < enterlow:
+                self.entertrade(1, enterlow)
 
         self.lasthigh, self.lastlow = pxhigh, pxlow
 
@@ -684,6 +679,7 @@ class Strat_TrendRev(Strategy):
         symbol = self.sym.symbolbitmex
         balance = u.balance() * weight
         pos = Position(contracts=u.getPosition(symbol)['currentQty'])
+        pos.contracts = 5000
         pos.add_order(u.getOrders(symbol=symbol, manualonly=True))
 
         t_prev = self.trades[-2]
@@ -1361,7 +1357,7 @@ class Trade():
             orders = self.allorders()
 
         data = []
-        cols = ['IDX', 'Type', 'Side', 'Price', 'Cont', 'Active', 'Cancelled', 'Filled']
+        cols = ['IDX', 'Type', 'Name', 'Side', 'Price', 'PxOriginal', 'Cont', 'Active', 'Cancelled', 'Filled', 'Filltype']
 
         for o in orders:
             ordtype_bot = o.ordarray.letter() if not o.ordarray is None else o.ordtype_bot 
@@ -1369,12 +1365,15 @@ class Trade():
             data.append([
                 o.index,
                 ordtype_bot,
+                o.name,
                 o.side,
                 o.price,
+                o.pxoriginal,
                 o.contracts,
                 o.active,
                 o.cancelled,
-                o.filled])
+                o.filled,
+                o.ordtype_str()])
 
         df = pd.DataFrame(data=data, columns=cols)
         display(df)
@@ -1709,6 +1708,8 @@ class Order():
             self.index = index
             self.activenext = False # only used in ordarray, superceeded with delaytime
             self.trade = ordarray.trade
+        else:
+            self.index = pd.NA
 
         if not self.trade is None:
             self.manual = False
@@ -1775,7 +1776,11 @@ class Order():
     
     def ordtype_str(self):
         # v sketch
-        ans = 'L' if self.filled and not self.marketfilled else 'M'
+        if self.filled:
+            ans = 'L' if not self.marketfilled else 'M'
+        else:
+            ans = pd.NA
+
         return ans
 
     def setname(self, name):
