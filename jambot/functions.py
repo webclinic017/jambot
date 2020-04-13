@@ -2,8 +2,7 @@
 import json
 import os
 from collections import defaultdict
-from datetime import datetime as date
-from datetime import timedelta as delta
+from datetime import (datetime as date, timedelta as delta)
 from pathlib import Path
 from sys import platform
 from time import time
@@ -17,8 +16,9 @@ import yaml
 from dateutil.parser import parse
 from pypika import functions as fn
 
-import jambotclasses as c
-import livetrading as live
+from . import (
+    jambotclasses as c,
+    livetrading as live)
 
 try:
     from IPython.display import display
@@ -494,7 +494,6 @@ def senderror(msg='', prnt=False):
         print(err)
     else:
         discord(msg=err, channel='err')
-    # return err
 
 
 # DATABASE

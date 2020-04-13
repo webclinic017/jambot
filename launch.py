@@ -1,25 +1,17 @@
 #%% IMPORTS
 if True:
+	import logging
 	import cProfile
-	import json
 	import os
 	import sys
-	from datetime import datetime as date
-	from datetime import timedelta as delta
-	from pathlib import Path
-	from time import time
-	from timeit import Timer
+	from datetime import (datetime as date, timedelta as delta)
 
-	from IPython.display import display
-	import numpy as np
-	import pandas as pd
-	import plotly.offline as py
-	from joblib import Parallel, delayed
+	from jambot import *
+	from jambot import (
+		functions as f,
+		jambotclasses as c,
+		livetrading as live)
 
-	sys.path.append(str(Path(__file__).parent / 'jambot'))
-	import functions as f
-	import livetrading as live
-	import jambotclasses as c
 
 	startdate, daterange = date(2017, 1, 14), 365
 	symbol = 'XBTUSD'
@@ -39,9 +31,9 @@ if True:
 	symbol = 'XBTUSD'
 	daterange = 365 * 3 
 	# startdate = date(2018, 1, 1)
-	startdate = date(2019, 1, 1)
+	# startdate = date(2019, 1, 1)
 	# startdate = date(2019, 7, 1)
-	# startdate = date(2020, 1, 1)
+	startdate = date(2020, 1, 1)
 	interval = 1
 
 	df = f.getDataFrame(symbol=symbol, startdate=startdate, daterange=daterange, interval=interval)

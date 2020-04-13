@@ -1,6 +1,5 @@
 import os
-from datetime import datetime as date
-from datetime import timedelta as delta
+from datetime import (datetime as date, timedelta as delta)
 from enum import Enum
 from pathlib import Path
 from time import time
@@ -8,8 +7,10 @@ from time import time
 import numpy as np
 import pandas as pd
 
-import functions as f
-import livetrading as live
+
+from . import (
+    functions as f,
+    livetrading as live)
 
 try:
     from IPython.display import display
@@ -667,6 +668,7 @@ class Strat_TrendRev(Strategy):
 
         # Enter Trade
         enterhigh, enterlow = self.lasthigh, self.lastlow
+        # enterhigh, enterlow = pxhigh, pxlow
         if self.trade is None:
             if c.High > enterhigh:
                 self.entertrade(-1, enterhigh)
@@ -679,7 +681,6 @@ class Strat_TrendRev(Strategy):
         symbol = self.sym.symbolbitmex
         balance = u.balance() * weight
         pos = Position(contracts=u.getPosition(symbol)['currentQty'])
-        pos.contracts = 5000
         pos.add_order(u.getOrders(symbol=symbol, manualonly=True))
 
         t_prev = self.trades[-2]

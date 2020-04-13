@@ -12,8 +12,9 @@ import numpy as np
 import pandas as pd
 from bitmex import bitmex
 
-import functions as f
-import jambotclasses as c
+from . import (
+    functions as f,
+    jambotclasses as c)
 
 try:
     from IPython.display import display
