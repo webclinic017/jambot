@@ -83,7 +83,7 @@ class DB(object):
 
         # loop query result, add all to dict with maxtime as KEY, symbols as LIST
         m = defaultdict(list)
-        for _, row in get_max_dates(db, interval=interval).iterrows():
+        for _, row in self.get_max_dates(interval=interval).iterrows():
             m[row.Timestamp].append(row.Symbol)
 
         # loop dict and call bitmex for each list of syms in maxdate

@@ -16,6 +16,7 @@ from . import (
     functions as f,
     backtest as bt)
 from .database import db
+from .strategies import trendrev
 
 try:
     from IPython.display import display
@@ -189,7 +190,7 @@ class User():
     def funding_rate(self, symbol='XBTUSD'):
         result = self.client.Instrument.Instrument_get(symbol='XBTUSD').response().result[0]
 
-        rate = result['funding_rate']
+        rate = result['fundingRate']
         hrs = int((result['fundingTimestamp'] - f.timenow().replace(tzinfo=tz.utc)).total_seconds() / 3600)
 
         return rate, hrs
@@ -658,7 +659,7 @@ def run_toploop(u=None, partial=False, dfall=None):
             # TREND_REV
             speed = (16, 6)
             norm = (0.004, 0.024)
-            strat = bt.Strat_TrendRev(speed=speed, norm=norm)
+            strat = trendrev.Strategy(speed=speed, norm=norm)
             strat.stoppercent = -0.03
             strats = [strat]
 
