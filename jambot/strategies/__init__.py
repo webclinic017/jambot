@@ -1,0 +1,1 @@
+# Each module must subclass Strategy() and Trade() from backtest.py
