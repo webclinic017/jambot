@@ -7,6 +7,6 @@ from __app__.jambot import (
 
 def main(mytimer: func.TimerRequest) -> None:
     try:
-        live.checkfilledorders(refresh=True)
+        live.check_filled_orders(refresh=True)
     except:
-        f.senderror()
+        f.send_error()

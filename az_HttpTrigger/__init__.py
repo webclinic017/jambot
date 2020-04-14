@@ -29,20 +29,20 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
         if action == 'refresh_balance':
             live.refresh_gsheet_balance()
         elif action == 'run_toploop':
-            live.TopLoop(partial=True)
+            live.run_toploop(partial=True)
         elif action == 'close_position':
             
             pass
         elif action == 'cancel_orders':
             u = live.User()
-            u.cancelmanual()
+            u.cancel_manual()
         else:
             return err()
         
         return func.HttpResponse(f'{action} success!', status_code=200)
     except:
         try:
-            f.senderror()
+            f.send_error()
         finally:
             return err()
         

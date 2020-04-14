@@ -1,21 +1,22 @@
 
-from datetime import (datetime as date, timedelta as delta)
+from datetime import (datetime as dt, timedelta as delta)
 
 import azure.functions as func
 
 from __app__.jambot import (
     functions as f,
     livetrading as live)
+from __app__.jambot.database import db
 
 def main(mytimer: func.TimerRequest) -> None:
     try:
         u = live.User()
-        f.updateAllSymbols(u=u)
+        db.update_all_symbols(u=u)
 
-        startdate, daterange = date.now().date() + delta(days=-15), 30
-        dfall = f.getDataFrame(symbol='XBTUSD', startdate=startdate, daterange=daterange)
+        startdate, daterange = dt.now().dt() + delta(days=-15), 30
+        dfall = db.get_dataframe(symbol='XBTUSD', startdate=startdate, daterange=daterange)
 
-        live.TopLoop(u=u, dfall=dfall)
-        live.checksfp(df=dfall)
+        live.run_toploop(u=u, dfall=dfall)
+        live.check_sfp(df=dfall)
     except:
-        f.senderror()
+        f.send_error()
