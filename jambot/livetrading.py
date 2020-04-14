@@ -16,7 +16,7 @@ from . import (
     functions as f,
     backtest as bt)
 from .database import db
-from .strategies import trendrev
+from .strategies import (trendrev, sfp)
 
 try:
     from IPython.display import display
@@ -484,11 +484,11 @@ def check_sfp(df):
     # 'Swing High to xxxx', 'swung highs at xxxx', 'tail = xx%'
     # if one candle swings highs and lows, go with... direction of candle? bigger tail?
         
-    sfp = bt.Strat_SFP()
-    sfp.init(df=df)
-    sfps = sfp.is_swingfail()
+    strat = sfp.Strategy()
+    strat.init(df=df)
+    sfps = strat.is_swingfail()
     msg = ''
-    cdl = sfp.cdl
+    cdl = strat.cdl
     stypes = dict(high=1, low=-1)
 
     for k in stypes.keys():
@@ -499,13 +499,12 @@ def check_sfp(df):
             msg += 'Swing {} to {} | tail = {:.0%}\n'.format(k.upper(),
                                                     cdl.getmax(side=side),
                                                     cdl.tailpct(side=side))
-            for sfp in lst:
-                msg += '    {} at: {}\n'.format(sfp['name'], sfp['price'])
+            for s in lst:
+                msg += '    {} at: {}\n'.format(s['name'], s['price'])
     
     if msg: f.discord(msg=msg, channel='sfp')
 
 def check_filled_orders(minutes=5, refresh=True, u=None):
-    
     if u is None: u = User()
     starttime = dt.utcnow() + delta(minutes=minutes * -1)
     orders = u.get_filled_orders(starttime=starttime)

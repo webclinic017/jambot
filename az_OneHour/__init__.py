@@ -13,7 +13,7 @@ def main(mytimer: func.TimerRequest) -> None:
         u = live.User()
         db.update_all_symbols(u=u)
 
-        startdate, daterange = dt.now().dt() + delta(days=-15), 30
+        startdate, daterange = dt.now().date() + delta(days=-15), 30
         dfall = db.get_dataframe(symbol='XBTUSD', startdate=startdate, daterange=daterange)
 
         live.run_toploop(u=u, dfall=dfall)

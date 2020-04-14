@@ -1,6 +1,4 @@
 import logging
-import sys
-from pathlib import Path
 
 import azure.functions as func
 
