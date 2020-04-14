@@ -1,19 +1,34 @@
 #%% IMPORTS
 if True:
 	import logging
-	import cProfile
 	import os
 	import sys
-	from datetime import (datetime as date, timedelta as delta)
+	import json
+	from datetime import (datetime as dt, timedelta as delta)
+	from pathlib import Path
+	from time import time
+	from timeit import Timer
+	import cProfile
 
-	from jambot import *
+	import pandas as pd
+	import numpy as np
+	import pypika as pk
+	import plotly.offline as py
+	from joblib import Parallel, delayed
+	import yaml
+	import sqlalchemy as sa
+	from IPython.display import display
+
 	from jambot import (
 		functions as f,
-		jambotclasses as c,
-		livetrading as live)
-
-
-	startdate, daterange = date(2017, 1, 14), 365
+		livetrading as live,
+		backtest as bt,
+		optimization as op,
+		charts as ch)
+	from jambot.strategies import trendrev
+	from jambot.database import db
+	
+	startdate, daterange = dt(2017, 1, 14), 365
 	symbol = 'XBTUSD'
 
 	# t = Timer(lambda: fldr.readsingle(p))
@@ -21,8 +36,8 @@ if True:
 
 #%% - Save db to csv
 if True:
-	startdate, daterange = date(2017, 1, 1), 365*4
-	df = f.getDataFrame(symbol=None, startdate=startdate, daterange=daterange)
+	startdate, daterange = dt(2017, 1, 1), 365*4
+	df = db.get_dataframe(symbol=None, startdate=startdate, daterange=daterange)
 	df.to_csv('df.csv')
 
 #%% - BACKTEST
@@ -30,19 +45,19 @@ if True:
 	start = time()
 	symbol = 'XBTUSD'
 	daterange = 365 * 3 
-	# startdate = date(2018, 1, 1)
-	# startdate = date(2019, 1, 1)
-	# startdate = date(2019, 7, 1)
-	startdate = date(2020, 1, 1)
+	# startdate = dt(2018, 1, 1)
+	# startdate = dt(2019, 1, 1)
+	# startdate = dt(2019, 7, 1)
+	startdate = dt(2020, 1, 1)
 	interval = 1
 
-	df = f.getDataFrame(symbol=symbol, startdate=startdate, daterange=daterange, interval=interval)
-	# df = f.getDataFrame(symbol='XBTUSD', startdate=startdate, enddate=date(2020,3,18,14))
+	df = db.get_dataframe(symbol=symbol, startdate=startdate, daterange=daterange, interval=interval)
+	# df = db.get_dataframe(symbol='XBTUSD', startdate=startdate, enddate=dt(2020,3,18,14))
 
 	# TREND_REV
 	speed = (16, 6)
-	norm = (0.004, 0.024)
-	strat = c.Strat_TrendRev(speed=speed, norm=norm)
+	norm = (0.004, 0.024) # getattr(st, 'trendrev')
+	strat = trendrev.Strategy(speed=speed, norm=norm)
 	strat.slippage = 0
 	strat.stoppercent = -0.03
 	strat.timeout = 40
@@ -62,11 +77,11 @@ if True:
 	# SFP
 	# strat = Strat_SFP()
 
-	sym = c.Backtest(symbol=symbol, startdate=startdate, strats=strat, df=df, partial=False)
-	sym.decidefull()
-	f.printTime(start)
-	sym.printfinal()
-	sym.account.plotbalance(logy=True)
+	sym = bt.Backtest(symbol=symbol, startdate=startdate, strats=strat, df=df, partial=False)
+	sym.decide_full()
+	f.print_time(start)
+	sym.print_final()
+	sym.account.plot_balance(logy=True)
 	trades = strat.trades
 	t = trades[-1]
 
@@ -76,8 +91,8 @@ if True:
 	import seaborn as sns
 
 	dfsym = pd.read_csv(os.path.join(f.topfolder, '/data/symbols.csv')).query('enabled==True')
-	startdate, daterange = date(2019, 1, 1), 720
-	dfall = f.getDataFrame(startdate=startdate, daterange=daterange)
+	startdate, daterange = dt(2019, 1, 1), 720
+	dfall = db.get_dataframe(startdate=startdate, daterange=daterange)
 
 	start = time()
 	
@@ -91,7 +106,7 @@ if True:
 	# speed = (25, 18)
 	# norm = None
 	
-	syms = Parallel(n_jobs=-1)(delayed(f.run_single)(strattype, startdate, dfall, speed[0], speed[1], row, norm) for row in dfsym.itertuples())
+	syms = Parallel(n_jobs=-1)(delayed(op.run_single)(strattype, startdate, dfall, speed[0], speed[1], row, norm) for row in dfsym.itertuples())
 
 	results = [sym.result() for sym in syms]
 	cmap = sns.diverging_palette(10, 240, sep=80, n=7, as_cmap=True)
@@ -106,20 +121,20 @@ if True:
 	display(style)
 
 	# for sym in syms:
-	# 	sym.account.plotbalance(logy=True, title=sym.symbol)
+	# 	sym.account.plot_balance(logy=True, title=sym.symbol)
 
-	f.printTime(start)
+	f.print_time(start)
 
 #%%
 # PARALLEL OPTIMIZATION
 if True:
 	dfsym = pd.read_csv(Path(f.topfolder) / 'data/symbols.csv')
-	startdate, daterange = date(2019, 1, 1), 365 * 3
-	# dfall = getDataFrame(startdate=startvalue(startdate), enddate=enddate(startdate, daterange))
+	startdate, daterange = dt(2019, 1, 1), 365 * 3
+	# dfall = get_dataframe(startdate=startvalue(startdate), enddate=enddate(startdate, daterange))
 
 	symbol = 'XBTUSD'
 	# update csv from database before running!!
-	dfall = f.readcsv(startdate, daterange, symbol=symbol)
+	dfall = f.read_csv(startdate, daterange, symbol=symbol)
 	start = time()
 
 	titles = ('against', 'wth')
@@ -131,14 +146,14 @@ if True:
 			# TREND_REV
 			strattype = 'trendrev'
 			norm = (0.004, 0.024)
-			syms = Parallel(n_jobs=-1)(delayed(f.run_single)(strattype, startdate, dfall, speed0, speed1, row, norm) for speed0 in range(6, 23, 1) for speed1 in range(6, 19, 1))
+			syms = Parallel(n_jobs=-1)(delayed(op.run_single)(strattype, startdate, dfall, speed0, speed1, row, norm) for speed0 in range(6, 23, 1) for speed1 in range(6, 19, 1))
 		
 		if False:
 			# TREND
 			speed = (1,1)
 			mr = False
 			opposite = False
-			listout = Parallel(n_jobs=-1)(delayed(f.runtrend)(symbol, startdate, mr, df, against, wth, row, titles) for against in range(8, 44, 2) for wth in range(8, 44, 2))
+			listout = Parallel(n_jobs=-1)(delayed(op.run_trend)(symbol, startdate, mr, df, against, wth, row, titles) for against in range(8, 44, 2) for wth in range(8, 44, 2))
 		
 		if False:
 			# CHOP
@@ -150,12 +165,12 @@ if True:
 			
 			# speed
 			# , backend='multiprocessing'
-			listout = Parallel(n_jobs=-1)(delayed(f.runchop)(symbol, startdate, df, speed[0], speed[1], tpagainst, tpwith, norm[0], norm[1], row, titles) for tpagainst in range(14, 45, 2) for tpwith in range(14, 45, 2))
+			listout = Parallel(n_jobs=-1)(delayed(op.run_chop)(symbol, startdate, df, speed[0], speed[1], tpagainst, tpwith, norm[0], norm[1], row, titles) for tpagainst in range(14, 45, 2) for tpwith in range(14, 45, 2))
 
 			# norm
-			# listout = Parallel(n_jobs=-1)(delayed(runchop)(symbol, startdate, df, speed[0], speed[1], speedtp[0], speedtp[1], lowernorm, uppernorm, row, titles) for lowernorm in range(1, 25) for uppernorm in range(1, 25))
+			# listout = Parallel(n_jobs=-1)(delayed(run_chop)(symbol, startdate, df, speed[0], speed[1], speedtp[0], speedtp[1], lowernorm, uppernorm, row, titles) for lowernorm in range(1, 25) for uppernorm in range(1, 25))
 
-		f.printTime(start)
+		f.print_time(start)
 		
 		dfResults = pd.DataFrame(columns=[titles[0], titles[1], 'min', 'max', 'final', 'numtrades'])
 		for i, sym in enumerate(syms):
@@ -171,16 +186,16 @@ if True:
 		d = (int(np.interp(dims[1], dims, (size * (dims[0] / dims[1]), size))),
 			int(np.interp(dims[0], dims, (size * (dims[0] / dims[1]), size))))
 		
-		f.heatmap(dfResults, [titles[0], titles[1], 'max'], title='{} - {} - {} - Max'.format(symbol, speed, startdate), dims=d)
-		f.heatmap(dfResults, [titles[0], titles[1], 'final'], title='{} - {} - {} - Final'.format(symbol, speed, startdate), dims=d)
+		ch.heatmap(dfResults, [titles[0], titles[1], 'max'], title='{} - {} - {} - Max'.format(symbol, speed, startdate), dims=d)
+		ch.heatmap(dfResults, [titles[0], titles[1], 'final'], title='{} - {} - {} - Final'.format(symbol, speed, startdate), dims=d)
 
 
 #%% - MATPLOT
 if True:
 	import matplotlib.pyplot as plt
-	startdate, daterange = date(2019, 5, 1), 365
+	startdate, daterange = dt(2019, 5, 1), 365
 
-	df = f.readcsv(startdate, daterange)
+	df = f.read_csv(startdate, daterange)
 	fig, ax1 = plt.subplots()
 
 	df.plot(kind='line', x='CloseTime', y='Close', ax=ax1)
@@ -195,12 +210,12 @@ if True:
 	import plotly.offline as py
 	
 	symbol = 'XBTUSD'
-	startdate, daterange = date(2019, 11, 1), 720
-	dfall = f.readcsv(startdate, daterange)
-	df = f.filterdf(dfall=dfall, symbol=symbol)
-	# df = getDataFrame(symbol=symbol, startdate=startvalue(startdate), enddate=enddate(startdate, daterange))
+	startdate, daterange = dt(2019, 11, 1), 720
+	dfall = f.read_csv(startdate, daterange)
+	df = f.filter_df(dfall=dfall, symbol=symbol)
+	# df = get_dataframe(symbol=symbol, startdate=startvalue(startdate), enddate=enddate(startdate, daterange))
 	norm=(0.04, 0.24)
-	vty = c.Signal_Volatility(df=df, norm=norm)
+	vty = bt.Volatility(df=df, norm=norm)
 
 	trace1 = go.Scatter(x=df['CloseTime'], y=df['spread'],line=dict(color='salmon', width=1))
 	
@@ -248,8 +263,8 @@ import pstats
 filename = 'profile_stats.stats'
 symbol = 'XBTUSD'
 strattype = 'trendrev'
-startdate, daterange = date(2019, 1, 1), 365
-df = f.readcsv(startdate, daterange, symbol=symbol)
+startdate, daterange = dt(2019, 1, 1), 365
+df = f.read_csv(startdate, daterange, symbol=symbol)
 speed = (16, 6)
 norm = (0.004, 0.024)
 
@@ -276,12 +291,12 @@ py.iplot(fig)
 if True:
 	symbol = 'XBTUSD'
 	daterange = 365 * 3
-	startdate = date(2019, 7, 1)
+	startdate = dt(2019, 7, 1)
 
-	df = f.getDataFrame(symbol=symbol, startdate=startdate, daterange=daterange)
+	df = db.get_dataframe(symbol=symbol, startdate=startdate, daterange=daterange)
 
-	sfp = c.Strat_SFP()
+	sfp = bt.Strat_SFP()
 	sfp.init(df=df)
 
-# Test trigger azure function running on localhost
+# Test run azure function TimerTrigger running on localhost:
 # curl --request POST -H "Content-Type:application/json" --data '{"input":""}' http://localhost:7071/admin/functions/FiveMin

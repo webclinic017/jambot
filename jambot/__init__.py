@@ -7,7 +7,7 @@ azure_env = os.getenv("AZURE_FUNCTIONS_ENVIRONMENT")
 if not (azure_env or 'linux' in sys.platform):
     # when not running from packaged app, import all libraries for easy access in interactive terminal
     import json
-    from datetime import (datetime as date, timedelta as delta)
+    from datetime import (datetime as dt, timedelta as delta)
     from pathlib import Path
     from time import time
     from timeit import Timer
@@ -24,7 +24,5 @@ if not (azure_env or 'linux' in sys.platform):
     from . import (
         functions as f,
         livetrading as live,
-        jambotclasses as c)
-
-    # TODO: break out database into own module
-    # from .database import db
+        backtest as bt)
+    from .database import db
