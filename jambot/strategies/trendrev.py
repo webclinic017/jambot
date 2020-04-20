@@ -2,9 +2,9 @@ from .. import (
     backtest as bt,
     signals as sg,
     functions as f)
-from ..backtest import Order
+from ..backtest import Order, Strategy, Trade
 
-class Strategy(bt.Strategy):
+class Strategy(Strategy):
     def __init__(self, speed=(8,8), weight=1, norm=(0.004, 0.024), lev=5):
         super().__init__(weight, lev)
         self.name = 'trendrev'
@@ -154,7 +154,7 @@ class Strategy(bt.Strategy):
 
         return pos.final_orders()
 
-class Trade(bt.Trade):
+class Trade(Trade):
     def __init__(self):
         super().__init__()
         self.stopped = False
