@@ -516,7 +516,7 @@ def check_filled_orders(minutes=5, refresh=True, u=None):
         nonmarket = False
 
         for o in orders:
-            symbol = o['symbol']
+            symbol, name = o['symbol'], o['name']
             row = df[df['symbolbitmex']==symbol]
             figs = 0
             if len(row) > 0:
@@ -536,15 +536,15 @@ def check_filled_orders(minutes=5, refresh=True, u=None):
                     syms.append(bt.Backtest(symbol=symbol))       
 
             ordprice = f' ({price})' if not price == avgpx else ''
-            stats = ' | Bal: {} | PnL: {}'.format(round(u.totalbalancemargin), round(u.prevpnl, 3)) if any(s in o['name'] for s in ('close', 'stop')) else ''
+            stats = f' | Bal: {u.totalbalancemargin:.3f} | PnL: {u.prevpnl:.3f}' if any(s in name for s in ('close', 'stop')) else ''
 
-            lst.append('{} | {} {:,} at ${:,}{}{} | {}'.format(
+            lst.append('{} | {} {:,} at ${:,}{} | {}{}'.format(
                     symshort,
                     o['sideStr'],
                     o['contracts'],
                     avgpx,
                     ordprice,
-                    o['name'],
+                    name,
                     stats))
             
         # write balance to google sheet, EXCEPT on market buys
