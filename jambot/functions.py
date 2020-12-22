@@ -21,6 +21,22 @@ except ModuleNotFoundError:
 global topfolder
 topfolder = Path(__file__).parent
 
+def set_self(m, prnt=False, exclude=()):
+    """Convenience func to assign an object's func's local vars to self"""
+    if not isinstance(exclude, tuple): exclude = (exclude, )
+    exclude += ('__class__', 'self') # always exclude class/self
+    obj = m.get('self', None) # self must always be in vars dict
+
+    if obj is None:
+        return
+
+    for k, v in m.items():
+        if prnt:
+            print(f'\n\t{k}: {v}')
+
+        if not k in exclude:
+            setattr(obj, k, v)
+
 def filter_df(dfall, symbol):
     return dfall[dfall.Symbol==symbol].reset_index(drop=True)
 
@@ -200,14 +216,6 @@ def round_minutes(dt, resolution):
     new_minute = (dt.minute // resolution) * resolution
     return dt + delta(minutes=new_minute - dt.minute)
 
-
-
-# Column math functions
-def add_ema(df, p, c='Close'):
-    # check if column already exists
-    col = f'ema{p}'
-    if not col in df.columns:
-        df[col] = df[c].ewm(span=p, min_periods=p).mean()
 
 class Switch:
     def __init__(self, value):
