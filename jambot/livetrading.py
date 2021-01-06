@@ -197,7 +197,7 @@ class User():
 
     def set_total_balance(self):
         div = self.div
-        res = self.client.User.User_getMargin(currency='XBt').response().result
+        res = self.check_request(self.client.User.User_getMargin(currency='XBt'))
         self.availablemargin = res['excessMargin'] / div # total available/unused > only used in postOrder
         self.totalbalancemargin = res['marginBalance'] / div # unrealized + realized > don't actually use 
         self.totalbalancewallet = res['walletBalance'] / div # realized
@@ -263,13 +263,14 @@ class User():
     
     def close_position(self, symbol='XBTUSD'):
         try:
-            m = dict(symbol='XBTUSD', execInst='Close')
-            self.place_bulk(m)
+            # m = dict(symbol='XBTUSD', execInst='Close', ordType='Market')
             self.check_request(
-                self.client.Order.Order_newBulk(
-                    orders=json.dumps(m)))
+                self.client.Order.Order_new(symbol='XBTUSD', execInst='Close'))
+            # self.check_request(
+            #     self.client.Order.Order_newBulk(
+            #         orders=json.dumps(m)))
         except:
-            f.send_error(msg='ERROR: Could not close position!', channel='err')
+            f.send_error(msg='ERROR: Could not close position!')
     
     def cancel_manual(self):
         orders = self.get_orders(refresh=True, manualonly=True)
@@ -374,10 +375,15 @@ class User():
 
         if interval == 15:
             df = self.resample(df=df, includepartial=includepartial)
-    
-        df['Interval'] = interval
-        df = df[['Interval', 'Symbol', 'Timestamp', 'Open', 'High', 'Low', 'Close']]
+        
+        cols = ['Interval', 'Symbol', 'Timestamp', 'Open', 'High', 'Low', 'Close', 'VolBTC']
 
+        df = df \
+            .assign(
+                Interval=interval,
+                VolBTC=lambda x: x.Homenotional) \
+            [cols]
+  
         if includepartial:
             self.partialcandle = df.tail(1).copy().reset_index(drop=True) # save last as df
 
@@ -496,9 +502,11 @@ def check_sfp(df):
         side = stypes[k]
         
         if lst:
-            msg += 'Swing {} to {} | tail = {:.0%}\n'.format(k.upper(),
-                                                    cdl.getmax(side=side),
-                                                    cdl.tailpct(side=side))
+            msg += 'Swing {} to {} | tail = {:.0%}\n'.format(
+                k.upper(),
+                cdl.getmax(side=side),
+                cdl.tailpct(side=side))
+                
             for s in lst:
                 msg += '    {} at: {}\n'.format(s['name'], s['price'])
     
