@@ -20,15 +20,15 @@ class Strategy(Strategy):
         df = sym.df
         self.a = self.sym.account
         
-        self.vty = sg.Volatility(df=df, weight=1, norm=self.norm)
+        self.vty = sg.Volatility(weight=1, norm=self.norm)
 
-        macd = sg.MACD(df=df, weight=1)
-        ema = sg.EMA(df=df, weight=1)
-        emaslope = sg.EMASlope(df=df, weight=1, p=50, slope=5)
+        macd = sg.MACD(weight=1)
+        ema = sg.EMA(weight=1)
+        emaslope = sg.EMASlope(weight=1, p=50, slope=5)
         self.conf.add_signal(signals=[macd, ema, emaslope],
                             trendsignals=[ema])
 
-        self.trend = sg.Trend(df=df, signals=[df.ema_trend, df.ema_slope], speed=self.speed)
+        self.trend = sg.Trend(signal_series='ema_trend', speed=self.speed)
 
     def exit_trade(self):
         t = self.trade

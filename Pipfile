@@ -22,6 +22,12 @@ pandas = "*"
 sqlalchemy = "*"
 pyyaml = "*"
 numpy = "*"
+aenum = "*"
+sklearn = "*"
+xgboost = "*"
+lightgbm = "*"
+ta = "*"
+shap = "*" # LLVM_CONFIG=/usr/local/Cellar/llvm@9/9.0.1_2/bin/llvm-config pipenv install shap --skip-lock
 
 [requires]
-python_version = "3.8"
+python_version = "3.9"

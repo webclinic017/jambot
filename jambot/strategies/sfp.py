@@ -8,6 +8,8 @@ class Strategy(bt.Strategy):
     def __init__(self, weight=1, lev=5):
         super().__init__(weight, lev)
         self.name = 'SFP'
+        self.minswing = 0.05
+        self.stypes = dict(high=1, low=-1)
 
     def init(self, sym=None, df=None):
         
@@ -18,9 +20,6 @@ class Strategy(bt.Strategy):
             self.a = self.sym.account
         elif not df is None:
             self.df = df
-
-        self.minswing = 0.05
-        self.stypes = dict(high=1, low=-1)
 
         offset = 6
         period_base = 48 #48, 96, 192
@@ -34,10 +33,7 @@ class Strategy(bt.Strategy):
         ema = sg.EMA(df=df, weight=1)
         
     def check_tail(self, side, cdl):
-        if cdl.tailsize(side=side) / cdl.size() > self.minswing:
-            return True
-        else:
-            return False
+        return True if cdl.tailsize(side=side) / cdl.size() > self.minswing else False
 
     def check_swing(self, side, swingval, cdl):
         c = cdl.row
@@ -56,7 +52,7 @@ class Strategy(bt.Strategy):
 
         cdl = Candle(row=c)
         self.cdl = cdl
-        stypes = dict(high=1, low=-1)
+        stypes = self.stypes
         sfp = []
 
         # Swing High - need to check with multiple periods, largest to smallest?
@@ -83,7 +79,7 @@ class Strategy(bt.Strategy):
         return sfp
 
     def enter_trade(self, side, price, c):
-        self.trade = self.init_trade(trade=Trade_SFP(), side=side, entryprice=price)
+        self.trade = self.init_trade(trade=Trade(), side=side, entryprice=price)
         self.trade.add_candle(c)
 
     def exit_trade(self, price):

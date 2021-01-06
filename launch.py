@@ -24,7 +24,8 @@ if True:
 		livetrading as live,
 		backtest as bt,
 		optimization as op,
-		charts as ch)
+		charts as ch,
+		signals as sg)
 	from jambot.strategies import trendrev
 	from jambot.database import db
 	
@@ -43,15 +44,13 @@ if True:
 #%% - BACKTEST
 if True:
 	start = time()
-	symbol = 'XBTUSD'
-	daterange = 365 * 3 
-	# startdate = dt(2018, 1, 1)
-	# startdate = dt(2019, 1, 1)
-	# startdate = dt(2019, 7, 1)
-	startdate = dt(2020, 1, 1)
-	interval = 1
+	kw = dict(
+		symbol='XBTUSD',
+		daterange=365 * 3,
+		startdate=dt(2019, 1, 1),
+		interval=1)
 
-	df = db.get_dataframe(symbol=symbol, startdate=startdate, daterange=daterange, interval=interval)
+	df = db.get_dataframe(**kw)
 	# df = db.get_dataframe(symbol='XBTUSD', startdate=startdate, enddate=dt(2020,3,18,14))
 
 	# TREND_REV
@@ -77,7 +76,7 @@ if True:
 	# SFP
 	# strat = Strat_SFP()
 
-	sym = bt.Backtest(symbol=symbol, startdate=startdate, strats=strat, df=df, partial=False)
+	sym = bt.Backtest(**kw, strats=strat, df=df, partial=False)
 	sym.decide_full()
 	f.print_time(start)
 	sym.print_final()
@@ -90,7 +89,7 @@ if True:
 if True:
 	import seaborn as sns
 
-	dfsym = pd.read_csv(os.path.join(f.topfolder, '/data/symbols.csv')).query('enabled==True')
+	dfsym = pd.read_csv(f.topfolder / 'data/symbols.csv').query('enabled==True')
 	startdate, daterange = dt(2019, 1, 1), 720
 	dfall = db.get_dataframe(startdate=startdate, daterange=daterange)
 
@@ -201,7 +200,7 @@ if True:
 	df.plot(kind='line', x='CloseTime', y='Close', ax=ax1)
 	ax2=ax1.twinx()
 	df.plot(kind='line', x='CloseTime', y='spread', linewidth=0.5, color='salmon', ax=ax2)
-	df.plot(kind='line', x='CloseTime', y='emaVty', linewidth=0.5, color='cyan', ax=ax2)
+	df.plot(kind='line', x='CloseTime', y='vty_ema', linewidth=0.5, color='cyan', ax=ax2)
 	plt.show()
 
 #%% - PLOTLY
@@ -219,10 +218,10 @@ if True:
 
 	trace1 = go.Scatter(x=df['CloseTime'], y=df['spread'],line=dict(color='salmon', width=1))
 	
-	trace2 = go.Scatter(x=df['CloseTime'], y=df['smavty'], line=dict(color='#f5f55f', width=1))
+	trace2 = go.Scatter(x=df['CloseTime'], y=df['vty_sma'], line=dict(color='#f5f55f', width=1))
 	trace3 = go.Scatter(x=df['CloseTime'], y=df['norm_sma'], line=dict(color='#f5f55f', width=1, dash='dash'))
 	
-	trace4 = go.Scatter(x=df['CloseTime'], y=df['emavty'],line=dict(color='cyan', width=1))
+	trace4 = go.Scatter(x=df['CloseTime'], y=df['vty_ema'],line=dict(color='cyan', width=1))
 	trace5 = go.Scatter(x=df['CloseTime'], y=df['norm_ema'],line=dict(color='cyan', width=1,dash='dash'))
 	
 	candle = go.Candlestick(
