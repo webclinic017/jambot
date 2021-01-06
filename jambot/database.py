@@ -118,7 +118,8 @@ class DB(object):
         if not symbol is None: q = q.where(tbl.Symbol==symbol)
         if not enddate is None: q = q.where(tbl.Timestamp<=enddate)
         
-        df = pd.read_sql_query(sql=q.get_sql(), con=self.conn, parse_dates=['Timestamp'])
+        df = pd.read_sql_query(sql=q.get_sql(), con=self.conn, parse_dates=['Timestamp']) \
+            .set_index('Timestamp', drop=False)
 
         return df
 
