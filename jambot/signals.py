@@ -105,17 +105,22 @@ class MACD(Signal):
         return conf * self.weight        
 
 class RSI(Signal):
-    def __init__(self, window=24, **kw):
+    def __init__(self, window=6, **kw):
         super().__init__(**kw)
         name = 'rsi'
         f.set_self(vars())
     
     def add_signal(self, df):
         rsi = ta.momentum.RSIIndicator(close=df.Close, window=self.window, fillna=True)
+        # rsi_stoch = ta.momentum.StochRSIIndicator(close=df.Close, window=self.window, smooth1=8, smooth2=8, fillna=True)
 
         return df \
             .assign(
-                rsi=rsi.rsi())
+                rsi=rsi.rsi(),
+                # rsi_stoch=rsi_stoch.stochrsi(),
+                # rsi_stoch_k=rsi_stoch.stochrsi_k(),
+                # rsi_stoch_d=rsi_stoch.stochrsi_d()
+                )
 
 class EMA(Signal):
     def __init__(self, fast=50, slow=200, **kw):
@@ -336,8 +341,10 @@ class TargetClass(Signal):
     - same = (within x%, 0.5? > scale this based on daily volatility)
     - calc close price vs current price, x periods in future (rolling method)
     """
-    def __init__(self, n_periods=10, pct_min=0.02, **kw):
+    def __init__(self, p_ema=10, n_periods=10, pct_min=0.02, **kw):
         super().__init__(**kw)
+        ema_col = f'ema{p_ema}' # named so can drop later
+        pct_min = pct_min / 2
 
         f.set_self(vars())
     
@@ -345,9 +352,13 @@ class TargetClass(Signal):
         pct_min = self.pct_min # NOTE this could be a hyperparam
         # TODO ^ definitely needs to be scaled to daily volatility
 
+        predict_col = self.ema_col
+        # predict_col = 'Close'
+
         return df \
+            .pipe(add_ema, p=self.p_ema) \
             .assign(
-                pct_future=lambda x: (x.Close.shift(-1 * self.n_periods) - x.Close) / x.Close,
+                pct_future=lambda x: (x[predict_col].shift(-1 * self.n_periods) - x[predict_col]) / x[predict_col],
                 target=lambda x: np.where(x.pct_future > pct_min, 1, np.where(x.pct_future < pct_min * -1, -1, 0))) \
             .drop(columns=['pct_future'])
 
