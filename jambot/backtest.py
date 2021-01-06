@@ -3,6 +3,7 @@ from datetime import (datetime as dt, timedelta as delta)
 from enum import Enum
 from pathlib import Path
 from time import time
+from collections import defaultdict as dd
 
 import numpy as np
 import pandas as pd
@@ -25,6 +26,7 @@ class Account():
         self.max = 0
         self.min = 1
         self.txns = list()
+        self._df_balance = None
 
     def get_balance(self):
         if self.balance < 0.01:
@@ -111,12 +113,23 @@ class Account():
         df = pd.DataFrame(data=data, columns=cols)
         display(df)
 
+    @property
+    def df_balance(self):
+        if self._df_balance is None:
+            m = dd(list)
+
+            for t in self.txns:
+                m['timestamp'].append(t.timestamp)
+                m['balance'].append(t.acctbalance)
+
+            self._df_balance = pd.DataFrame.from_dict(m) \
+                .set_index('timestamp')
+        
+        return self._df_balance
+
     def plot_balance(self, logy=False, title=None):
-        m = {}
-        m['timestamp'] = [t.timestamp for t in self.txns]
-        m['balance'] = [t.acctbalance for t in self.txns]
-        df = pd.DataFrame.from_dict(m)
-        df.plot(kind='line', x='timestamp', y='balance', logy=logy, linewidth=0.75, color='cyan', title=title)
+        """Show plot of account balance over time"""
+        self.df_balance.plot(kind='line', y='balance', logy=logy, linewidth=0.75, color='cyan', title=title)
 
     def print_txns(self):
         data = []
@@ -141,7 +154,7 @@ class Account():
         return df
 
 class Backtest():
-    def __init__(self, symbol, startdate=None, strats=[], daterange=365, df=None, row=None, account=None, partial=False, u=None):
+    def __init__(self, symbol, startdate=None, strats=[], daterange=365, df=None, row=None, account=None, partial=False, u=None, **kw):
 
         if not isinstance(strats, list): strats = [strats]
 
@@ -180,7 +193,7 @@ class Backtest():
                 if u is None: u = live.User()
                 self.df = u.append_partial(df)
            
-            self.startrow = self.df.loc[self.df['Timestamp'] == pd.Timestamp(self.startdate)].index[0]
+            self.startrow = self.df.index.get_loc(startdate)
 
             for strat in self.strats:
                 strat.init(sym=self)
@@ -190,11 +203,12 @@ class Backtest():
         self.candles.append(c)
 
     def decide_full(self):
-        length = len(self.df)
-        for c in self.df.itertuples():
+        df = self.df
+        length = len(df)
+        for c in df.itertuples():
             self.init_candle(c=c)
             
-            self.i = c.Index
+            self.i = df.index.get_loc(c.Index)
             i = self.i
             if not i < self.startrow:
                 if i == length: return
@@ -266,9 +280,15 @@ class Confidence():
 
         return conf
 
-    def add_signal(self, signals=[], trendsignals=[]):
-        self.signals.extend(signals)
-        self.trendsignals.extend(trendsignals)
+    def add_signal(self, df, signals=None, trendsignals=None):
+        self.signals.extend(signals or [])
+        self.trendsignals.extend(trendsignals or [])
+
+        # loop and add invoke all signals' add_signal method (add them to df)
+        for signal in signals + trendsignals:
+            df = df.pipe(signal.add_signal)
+
+        return df
     
     def trend_changed(self, i, side):
         # check each trend signal
@@ -345,14 +365,14 @@ class Position():
             name=o['name'])
 
 class Strategy():
-    def __init__(self, weight=1, lev=5):
+    def __init__(self, weight=1, lev=5, slippage=0.02, **kw):
         self.i = 1
         self.status = 0
         self.weight = weight
         self.entryprice = 0
         self.exitprice = 0
         self.maxspread = 0.1
-        self.slippage = 0.002
+        self.slippage = slippage
         self.lev = lev
         self.unfilledtrades = 0
         self.timeout = float('inf')
@@ -433,24 +453,25 @@ class Strategy():
     def result(self, first=float('inf'), last=0):
         data = []
         trades = self.trades
-        cols = ['N', 'Timestamp', 'Sts', 'Dur', 'Entry', 'Exit', 'Market', 'Contracts', 'Conf', 'Pnl', 'PnlAcct', 'Bal']
+        cols = ['N', 'Timestamp', 'Sts', 'Dur', 'Entry', 'Exit',  'Contracts', 'Conf', 'Pnl', 'PnlAcct', 'Bal'] #'Market',
 
         for t in trades[last * -1: min(first, len(trades))]:
             data.append([
                 t.tradenum,
-                t.candles[0].Timestamp,
+                t.candles[0].Index,
                 t.status,
                 t.duration(),
                 t.entryprice,
                 t.exitprice,
-                t.exit_order().ordtype_str(),
+                # t.exit_order().ordtype_str(),
                 t.filledcontracts,
                 t.conf,
                 t.pnlfinal,
                 t.pnl_acct(),
                 t.exitbalance])
         
-        return pd.DataFrame.from_records(data=data, columns=cols)
+        return pd.DataFrame.from_records(data=data, columns=cols) \
+            .assign(profitable=lambda x: x.Pnl > 0)
 
 class Trade():
     def __init__(self):
@@ -471,10 +492,11 @@ class Trade():
         self.partial = False
         self.timedout = False
         self.trend_changed = False
+        self.stopped = False
 
-    def init(self, price, targetcontracts, strat, conf=1, entryrow=0, side=None, temp=False):
+    def init(self, price, targetcontracts, strat, entryprice=0, conf=1, entryrow=0, side=None, temp=False):
         self.entrytarget = price
-        self.entryprice = 0
+        self.entryprice = entryprice
         self.targetcontracts = int(targetcontracts)
         self.strat = strat
         self.sym = strat.sym
@@ -498,6 +520,9 @@ class Trade():
         self.enter()
 
     def exit_trade(self):
+        # if not exitprice is None:
+        #     self.exitprice = exitprice
+
         self.strat.status = 0
         self.pnlfinal = f.get_pnl(self.side, self.entryprice, self.exitprice)
         self.exitbalance = self.sym.account.get_balance()
@@ -513,7 +538,7 @@ class Trade():
         if self.entryprice == 0:
             raise ValueError('entry price cant be 0!')
 
-        self.sym.account.modify(f.get_pnl_xbt(contracts * -1, self.entryprice, price, self.sym.altstatus), self.cdl.Timestamp)
+        self.sym.account.modify(f.get_pnl_xbt(contracts * -1, self.entryprice, price, self.sym.altstatus), self.cdl.Index)
         
         self.exitcontracts += contracts
         self.contracts += contracts
@@ -559,6 +584,7 @@ class Trade():
         return ans
 
     def is_stopped(self):
+        # NOTE this might be old/not used now that individual orders are used
         ans = True if self.pnl_maxmin(-1) < self.strat.stoppercent else False
         return ans
 
@@ -731,7 +757,9 @@ class Order():
         
         self.checkside = self.side * -1 if self.isstop else self.side
 
-        if price is None and not self.ordtype == 'Market': raise ValueError('Price cannot be None!')
+        if price is None and not self.ordtype == 'Market':
+            raise ValueError('Price cannot be None!')
+
         self.price = self.final_price(price)
         self.pxoriginal = self.price
         self.set_key()
@@ -782,7 +810,7 @@ class Order():
             self.price = price
                                 
     def check_stop_price(self):
-        # use price if Limit, else use slippage price
+        """Use price if Limit/Market, else use slippage price"""
         price = self.price if not self.isstop else self.stoppx()
         return price
                                 
@@ -806,7 +834,7 @@ class Order():
             
     def fill(self, c, price=None):
         self.filled = True
-        self.filledtime = c.Timestamp
+        self.filledtime = c.Index
 
         # market filling
         if not price is None:
@@ -819,14 +847,14 @@ class Order():
             
     def is_active(self, c):
         if not self.delaytime is None:
-            active = True if self.active and c.Timestamp >= self.delaytime else False
+            active = True if self.active and c.Index >= self.delaytime else False
         else:
             active = self.active
 
         return active        
             
     def activate(self, c, delay=0):
-        self.delaytime = c.Timestamp + delta(hours=delay)
+        self.delaytime = c.Index + delta(hours=delay)
         self.active = True
             
     def print_self(self):
@@ -842,7 +870,7 @@ class Order():
     def cancel(self):
         self.active = False
         self.cancelled = True
-        self.filledtime = self.sym.cdl.Timestamp
+        self.filledtime = self.sym.cdl.Index
         if not self.ordarray is None:
             self.ordarray.openorders -= 1
 
