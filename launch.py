@@ -80,7 +80,7 @@ if True:
 	sym.decide_full()
 	f.print_time(start)
 	sym.print_final()
-	sym.account.plot_balance(logy=True)
+	sym.account.plot_balance(logy=False)
 	trades = strat.trades
 	t = trades[-1]
 

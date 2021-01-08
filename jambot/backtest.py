@@ -41,11 +41,12 @@ class Account():
         txn = Txn()
         txn.amount = xbt
         txn.timestamp = timestamp
-        txn.acctbalance = self.balance
+        txn.balance_pre = self.balance
         txn.percentchange = round((xbt / self.balance), 3)
 
         self.txns.append(txn)
         self.balance = self.balance + xbt
+        txn.balance_post = self.balance
         if self.balance > self.max: self.max = self.balance
         if self.balance < self.min: self.min = self.balance    
 
@@ -62,7 +63,7 @@ class Account():
         max_seen = 1
         txmax_seen = self.txns[0]
         for txn in self.txns:
-            val = txn.acctbalance
+            val = txn.balance_pre
             if val > max_seen:
                 max_seen = val
                 txmax_seen = txn
@@ -74,9 +75,9 @@ class Account():
                 txhigh = txmax_seen
         
         drawdates = '{:.2f} ({}) - {:.2f} ({})'.format(
-            txhigh.acctbalance,
+            txhigh.balance_pre,
             dt.strftime(txhigh.timestamp, f.time_format()),
-            txlow.acctbalance,
+            txlow.balance_pre,
             dt.strftime(txlow.timestamp, f.time_format()))
         
         return drawdown * -1, drawdates
@@ -99,12 +100,12 @@ class Account():
                 if prevTxn is None: prevTxn = t
                 data.append([
                     periodnum,
-                    '{:.{prec}f}'.format(t.acctbalance, prec=3),
+                    '{:.{prec}f}'.format(t.balance_post, prec=3),
                     round(change, 3),
                     self.get_percent_change(prevBalance, change)
                 ])
                 prevTxn = t
-                prevBalance = t.acctbalance
+                prevBalance = t.balance_post
                 change = 0
                 periodnum = self.get_period_num(t.timestamp, period)
             
@@ -120,7 +121,7 @@ class Account():
 
             for t in self.txns:
                 m['timestamp'].append(t.timestamp)
-                m['balance'].append(t.acctbalance)
+                m['balance'].append(t.balance_post)
 
             self._df_balance = pd.DataFrame.from_dict(m) \
                 .set_index('timestamp')
@@ -137,7 +138,7 @@ class Account():
         for t in self.txns:
             data.append([
                 '{:%Y-%m-%d %H}'.format(t.timestamp),
-                '{:.{prec}f}'.format(t.acctbalance, prec=3),
+                '{:.{prec}f}'.format(t.balance_pre, prec=3),
                 '{:.{prec}f}'.format(t.amount, prec=2),
                 f.percent(t.percentchange)
             ])
@@ -150,7 +151,7 @@ class Account():
     def get_df(self):
         df = pd.DataFrame(columns=['Timestamp', 'Balance', 'PercentChange'])
         for i, t in enumerate(self.txns):
-            df.loc[i] = [t.timestamp, t.acctbalance, t.percentchange]
+            df.loc[i] = [t.timestamp, t.balance_pre, t.percentchange]
         return df
 
 class Backtest():
@@ -538,7 +539,9 @@ class Trade():
         if self.entryprice == 0:
             raise ValueError('entry price cant be 0!')
 
-        self.sym.account.modify(f.get_pnl_xbt(contracts * -1, self.entryprice, price, self.sym.altstatus), self.cdl.Index)
+        self.sym.account.modify(
+            xbt=f.get_pnl_xbt(contracts * -1, self.entryprice, price, self.sym.altstatus),
+            timestamp=self.cdl.Index)
         
         self.exitcontracts += contracts
         self.contracts += contracts
@@ -1098,11 +1101,11 @@ class Txn():
     def __init__(self):
         self.amount = 0
         self.timestamp = None
-        self.acctbalance = 0
+        self.balance_pre = 0
+        self.balance_post = 0
         self.percentchange = 0
 
     def printTxn(self):
-        # Debug.Print Format(Me.DateTx, "yyyy-mm-dd HH"), Me.AcctBalance, Me.Amount
         pass
 
 class Candle():

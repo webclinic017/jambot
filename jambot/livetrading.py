@@ -364,7 +364,6 @@ class User():
                                         partial=includepartial).response().result
             
             resultcount = len(result)
-            print(f'page: {start // 1000}, start: {start}, ts: {starttime + delta(hours=start)} results: {resultcount}')
             lst.extend(result)
             start += 1000
 

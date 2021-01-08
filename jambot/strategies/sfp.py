@@ -5,8 +5,8 @@ from .. import (
 from ..backtest import Order, Candle
 
 class Strategy(bt.Strategy):
-    def __init__(self, weight=1, lev=5):
-        super().__init__(weight, lev)
+    def __init__(self, weight=1, lev=5, **kw):
+        super().__init__(weight, lev, **kw)
         self.name = 'SFP'
         self.minswing = 0.05
         self.stypes = dict(high=1, low=-1)
@@ -30,7 +30,10 @@ class Strategy(bt.Strategy):
             df[f'sfp_high{i}'] = df.High.rolling(period).max().shift(offset)
             df[f'sfp_low{i}'] = df.Low.rolling(period).min().shift(offset)
 
-        ema = sg.EMA(df=df, weight=1)
+        ema = sg.EMA(weight=1)
+        df = df.pipe(ema.add_signal)
+        self.df = df
+        # self.sym.df = df
         
     def check_tail(self, side, cdl):
         return True if cdl.tailsize(side=side) / cdl.size() > self.minswing else False

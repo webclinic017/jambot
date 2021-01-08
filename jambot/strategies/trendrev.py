@@ -21,14 +21,20 @@ class Strategy(Strategy):
         self.a = self.sym.account
         
         self.vty = sg.Volatility(weight=1, norm=self.norm)
+        df = df.pipe(self.vty.add_signal)
 
         macd = sg.MACD(weight=1)
         ema = sg.EMA(weight=1)
         emaslope = sg.EMASlope(weight=1, p=50, slope=5)
-        self.conf.add_signal(signals=[macd, ema, emaslope],
+        df = self.conf.add_signal(df=df, signals=[macd, ema, emaslope],
                             trendsignals=[ema])
 
+        # NOTE kinda sketch for now, manually adding signals this way to avoid adding to 'conf' signal
         self.trend = sg.Trend(signal_series='ema_trend', speed=self.speed)
+        df = df.pipe(self.trend.add_signal)
+
+        self.df = df
+        self.sym.df = df
 
     def exit_trade(self):
         t = self.trade

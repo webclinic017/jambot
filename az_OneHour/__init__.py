@@ -11,7 +11,7 @@ from __app__.jambot.database import db
 def main(mytimer: func.TimerRequest) -> None:
     try:
         u = live.User()
-        db.update_all_symbols(u=u)
+        db.update_all_symbols(u=u, interval=1)
 
         startdate, daterange = dt.now().date() + delta(days=-15), 30
         dfall = db.get_dataframe(symbol='XBTUSD', startdate=startdate, daterange=daterange)
