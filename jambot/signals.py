@@ -1,9 +1,41 @@
+import re
 import sys
+import inspect
 
 import numpy as np
 import ta
 
 from . import functions as f
+
+from ta.volume import (
+    AccDistIndexIndicator,
+    EaseOfMovementIndicator,
+    ForceIndexIndicator,
+    MFIIndicator,
+    ChaikinMoneyFlowIndicator)
+
+from ta.momentum import (
+    RSIIndicator,
+    StochRSIIndicator,
+    PercentageVolumeOscillator,
+    ROCIndicator,
+    StochasticOscillator,
+    TSIIndicator,
+    UltimateOscillator,
+
+)
+
+from ta.volatility import (
+    UlcerIndex,)
+
+from ta.trend import (
+    ADXIndicator,
+    AroonIndicator,
+    CCIIndicator,
+    MassIndex,
+    STCIndicator
+)
+
 
 """
 target classification
@@ -49,11 +81,15 @@ Potential ideas
     - this simplifies everything, could lead to better convergence
     - long term up/down trend may bias results otherwise, would be bad if long term trend switched
 
+ta lib
+- ta.volatility.UlcerIndex
+
 drop
 - Open, High, Low, Close > don't care about absolute values
 - timestamp, just keep as index
 - drop anything still NA at beginning of series
 """
+
 
 
 def add_signals(df, signals=None):
@@ -66,7 +102,14 @@ def add_signals(df, signals=None):
         if isinstance(signal, str):
             signal = getattr(sys.modules[__name__], signal)()
 
+        # custom signal from this module
+        signal.df = df # NOTE kinda sketch
         df = df.pipe(signal.add_signal)
+
+        # ta indicators don't have an 'add_default' type method..
+        # if issubclass(signal.__class__, Signal):
+        # elif issubclass(signal.__class__, ta.utils.IndicatorMixin):
+        #     pass
 
     return df
 
@@ -104,23 +147,85 @@ class MACD(Signal):
         conf = 1.25 if side * c.macd_trend == 1 else 0.5
         return conf * self.weight        
 
-class RSI(Signal):
+class TASignal(Signal):
+    """Base class for ta indicators"""
+    def __init__(self, df=None, **kw):
+        super().__init__(**kw)
+
+        # Default OHLCV cols for df, used to pass to ta signals during init
+        m_default = dict(
+            open='Open',
+            high='High',
+            low='Low',
+            close='Close',
+            volume='VolBTC')
+        
+        f.set_self(vars())
+    
+    @property
+    def default_cols(self):
+        """Convert default dict of strings to pd.Series for default cols"""
+        df = self.df
+        if df is None:
+            raise AttributeError('Need to set df first!')
+
+        return {name: df[col] for name, col in self.m_default.items()}
+
+    def check_defaults(self, cls):
+        """Check default args of __init__, return only correct cols"""
+        signature = inspect.signature(cls.__init__)
+        return {name: col for name, col in self.default_cols.items() if name in signature.parameters.keys()}
+    
+    def init_signal(self, cls, **kw):
+        """Helper func to init signal with correct OHLCV columns
+        
+        Parameters
+        ---------
+        cls : ta
+            class defn of ta indicator to be init
+        """
+        default_cols = self.check_defaults(cls=cls)
+        kw['fillna'] = True
+        return cls(**default_cols, **kw)
+
+class Momentum(TASignal):
     def __init__(self, window=6, **kw):
         super().__init__(**kw)
         name = 'rsi'
         f.set_self(vars())
     
     def add_signal(self, df):
-        rsi = ta.momentum.RSIIndicator(close=df.Close, window=self.window, fillna=True)
         # rsi_stoch = ta.momentum.StochRSIIndicator(close=df.Close, window=self.window, smooth1=8, smooth2=8, fillna=True)
 
         return df \
             .assign(
-                rsi=rsi.rsi(),
+                mnt_rsi=self.init_signal(RSIIndicator, window=self.window).rsi(),
+                mnt_pvo=self.init_signal(PercentageVolumeOscillator).pvo(),
+                mnt_roc=self.init_signal(ROCIndicator, window=self.window).roc(),
+                mnt_stoch=self.init_signal(StochasticOscillator, window=24).stoch(),
+                mnt_tsi=self.init_signal(TSIIndicator).tsi(),
+                mnt_ultimate=self.init_signal(UltimateOscillator).ultimate_oscillator(),
                 # rsi_stoch=rsi_stoch.stochrsi(),
                 # rsi_stoch_k=rsi_stoch.stochrsi_k(),
                 # rsi_stoch_d=rsi_stoch.stochrsi_d()
                 )
+
+class Volume(TASignal):
+    def __init__(self, **kw):
+        super().__init__(**kw)
+        f.set_self(vars())
+    
+    def add_signal(self, df):
+        
+        return df \
+            .assign(
+                vol_relative=lambda x: x.VolBTC / x.VolBTC.shift(6).rolling(24).mean(),
+                vol_chaik=self.init_signal(ChaikinMoneyFlowIndicator).chaikin_money_flow(),
+                vol_mfi=self.init_signal(MFIIndicator, window=14).money_flow_index(),
+                # vol_adi=self.init_signal(AccDistIndexIndicator).acc_dist_index(),
+                # vol_eom=self.init_signal(EaseOfMovementIndicator, window=14).ease_of_movement(),
+                # vol_force=self.init_signal(ForceIndexIndicator, window=14).force_index(),
+            )
 
 class EMA(Signal):
     def __init__(self, fast=50, slow=200, **kw):
@@ -193,7 +298,7 @@ class EMASlope(Signal):
         conf = 1.5 if side * c.ema_slope == 1 else 0.5
         return conf * self.weight     
 
-class Volatility(Signal):
+class Volatility(TASignal):
     def __init__(self, norm=(0.004, 0.024), **kw):
         super().__init__(**kw)
         name = 'volatility'
@@ -210,14 +315,16 @@ class Volatility(Signal):
                 vty_ema=lambda x: x.vty_spread.ewm(span=60, min_periods=60).mean(),
                 vty_sma=lambda x: x.vty_spread.rolling(300).mean(),
                 norm_ema=lambda x: np.interp(x.vty_ema, (0, 0.25), (norm[0], norm[1])),
-                norm_sma=lambda x: np.interp(x.vty_sma, (0, 0.25), (norm[0], norm[1]))) \
+                norm_sma=lambda x: np.interp(x.vty_sma, (0, 0.25), (norm[0], norm[1])),
+                vtt_ulcer=self.init_signal(UlcerIndex, window=24).ulcer_index(),
+                ) \
             .drop(columns=['maxhigh', 'minlow'])
 
     def final(self, c):
         # return self.df.norm_ema[i]
         return c.norm_ema
 
-class Trend(Signal):
+class Trend(TASignal):
     """Add pxhigh, pxlow for rolling period, depending if ema_trend is positive or neg
     
     w = with, a = agains, n = neutral (neutral not used)
@@ -245,7 +352,13 @@ class Trend(Signal):
                 mlw=lambda x: x.Low.rolling(against).min().shift(offset),
                 mln=lambda x: x.Low.rolling(neutral).min().shift(offset),
                 pxhigh=lambda x: np.where(x.trend == 0, x.mhn, np.where(x.trend == 1, x.mha, x.mhw)),
-                pxlow=lambda x: np.where(x.trend == 0, x.mln, np.where(x.trend == -1, x.mlw, x.mla)),) \
+                pxlow=lambda x: np.where(x.trend == 0, x.mln, np.where(x.trend == -1, x.mlw, x.mla)),
+                trend_adx=self.init_signal(ADXIndicator).adx(),
+                trend_aroon=self.init_signal(AroonIndicator).aroon_indicator(),
+                trend_cci=self.init_signal(CCIIndicator).cci(),
+                trend_mass=self.init_signal(MassIndex).mass_index(),
+                trend_stc=self.init_signal(STCIndicator).stc()
+                ) \
             .drop(columns=['mha', 'mhw', 'mla', 'mlw', 'mhn', 'mln'])
         
     def final(self, c):
@@ -330,6 +443,8 @@ class Candle(Signal):
                 close_above_prevhigh=lambda x: np.where(x.Close > x.pxhigh, 1, 0),
                 low_below_prevlow=lambda x: np.where(x.Low < x.pxlow, 1, 0),
                 close_below_prevlow=lambda x: np.where(x.Close < x.pxlow, 1, 0),
+                buy_pressure=lambda x: (x.Close - x.Low.rolling(2).min().shift(1)) / x.Close,
+                sell_pressure=lambda x: (x.Close - x.High.rolling(2).max().shift(1)) / x.Close,
             ) \
             .drop(columns=['min_n', 'range_n'])
 
@@ -361,6 +476,28 @@ class TargetClass(Signal):
                 pct_future=lambda x: (x[predict_col].shift(-1 * self.n_periods) - x[predict_col]) / x[predict_col],
                 target=lambda x: np.where(x.pct_future > pct_min, 1, np.where(x.pct_future < pct_min * -1, -1, 0))) \
             .drop(columns=['pct_future'])
+
+class TargetMean(TargetClass):
+    """
+    Calc avg price of next n close prices
+    - maybe - bin into % ranges
+    """
+    def __init__(self, **kw):
+        super().__init__(**kw)
+
+        f.set_self(vars())
+    
+    def add_signal(self, df):
+        pct_min = self.pct_min
+
+        return df \
+            .pipe(add_ema, p=self.p_ema) \
+            .assign(
+                pct_future=lambda x: (x.Close.shift(-1 * self.n_periods).rolling(self.n_periods).mean() - x.Close) / x.Close,
+                target=lambda x: np.where(x.pct_future > pct_min, 1, np.where(x.pct_future < pct_min * -1, -1, 0))) \
+            .drop(columns=['pct_future'])
+                # target=lambda x: np.where(x.mean_close_n > x.Close, 1, -1)
+                # ) \
 
 def add_both_emas(df):
     """Convenience func to add both 50 and 200 emas"""
