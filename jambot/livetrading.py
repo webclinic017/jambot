@@ -363,8 +363,8 @@ class User():
                                         reverse=False,
                                         partial=includepartial).response().result
             
-            # print(start // 1000)
             resultcount = len(result)
+            print(f'page: {start // 1000}, start: {start}, ts: {starttime + delta(hours=start)} results: {resultcount}')
             lst.extend(result)
             start += 1000
 
@@ -376,12 +376,14 @@ class User():
         if interval == 15:
             df = self.resample(df=df, includepartial=includepartial)
         
+
+        # keep all volume in terms of BTC
         cols = ['Interval', 'Symbol', 'Timestamp', 'Open', 'High', 'Low', 'Close', 'VolBTC']
 
         df = df \
             .assign(
                 Interval=interval,
-                VolBTC=lambda x: x.Homenotional) \
+                VolBTC=lambda x: np.where(x.Symbol=='XBTUSD', x.Homenotional, x.Foreignnotional)) \
             [cols]
   
         if includepartial:
@@ -661,7 +663,8 @@ def run_toploop(u=None, partial=False, dfall=None):
             pos['percentbalance'] = weight
 
             symbol = row.symbol
-            df = dfall[dfall.Symbol==symbol].reset_index(drop=True)
+            # NOTE may need to set Timestamp/Symbol index when using more than just XBTUSD
+            df = dfall[dfall.Symbol==symbol] #.reset_index(drop=True)
             
             # TREND_REV
             speed = (16, 6)
