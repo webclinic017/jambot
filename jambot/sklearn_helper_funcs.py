@@ -261,6 +261,9 @@ def show_prop(df, target_col='target'):
             num='{:,.0f}',
             prop='{:.2%}'))
 
+def format_cell(bg, t='black'):
+    return f'background-color: {bg};color: {t};'
+
 def bg(style, subset=None, rev=True):
     """Show style with highlights per column"""
     if subset is None:
@@ -270,6 +273,12 @@ def bg(style, subset=None, rev=True):
 
     return style \
         .background_gradient(cmap=cmap, subset=subset, axis=0)
+
+def highlight_val(df, m : dict):
+
+    m_replace = {k: format_cell(bg=v[0], t=v[1]) for k, v in m.items()}
+
+    return df.replace(m_replace)
 
 def get_style(df):
     return df.style \
@@ -309,7 +318,7 @@ def append_mean_std_score(df=None, scores=None, name=None, show=False):
     
     df.loc[name, df_scores.index] = df_scores
     if show:
-        display(style(df))
+        display(get_style(df))
 
     return df
 
