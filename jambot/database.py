@@ -110,7 +110,7 @@ class DB(object):
 
         tbl = pk.Table('Bitmex')
         q = (pk.Query.from_(tbl)
-            .select('Symbol', 'Timestamp', 'Open', 'High', 'Low', 'Close')
+            .select('Symbol', 'Timestamp', 'Open', 'High', 'Low', 'Close', 'VolBTC')
             .where(tbl.Interval==interval)
             .where(tbl.Timestamp>=startdate)
             .orderby('Symbol', 'Timestamp'))
