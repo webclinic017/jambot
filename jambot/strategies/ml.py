@@ -29,6 +29,7 @@ class Strategy(Strategy):
 
     def enter_trade(self, side, entry_price):
         self.trade = self.init_trade(trade=Trade(), side=side, entryprice=entry_price, conf=1)
+        self.trade.check_orders(c=self.cdl)
 
     def decide(self, c):
         self.cdl = c
