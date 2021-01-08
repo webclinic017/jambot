@@ -60,7 +60,7 @@ if True:
 # load df
 kw = dict(
     symbol='XBTUSD',
-    daterange=365 * 3,
+    daterange=365 * 5,
     startdate=dt(2018, 1, 1),
     interval=1)
 
@@ -76,34 +76,38 @@ if not p.exists() or dt.fromtimestamp(p.stat().st_mtime) < dt.now() + delta(days
 else:
     df = pd.read_csv(p, parse_dates=['Timestamp'], index_col='Timestamp')
 
-print(f'Start Date: {df.index.min()}')
+print(f'DateRange: {df.index.min()} - {df.index.max()}')
 
 # %%
 # Add features to df
-n_periods = 6
-target_signal = sg.TargetClass(p_ema=10, n_periods=n_periods, pct_min=0.000000005)
+n_periods = 2
+# Target = sg.TargetClass
+Target = sg.TargetMean
+target_signal = Target(p_ema=10, n_periods=n_periods, pct_min=0.000000005)
 
 signals = [
     'EMA',
     'EMASlope',
     'Volatility',
+    'Momentum',
+    'Volume',
     'MACD',
-    'RSI',
     sg.Trend(speed=(24, 18)),
     'Candle',
-    'SFP',
+    # 'SFP',
     target_signal
     ]
 
+# drop last rows which we cant set proper target
 df = df.pipe(sg.add_signals, signals) \
+    .iloc[:-1 * n_periods, :] \
     .dropna() \
-    .iloc[:-1 * n_periods, :] # drop last rows which we cant set proper target
 
 sf.show_prop(df=df)
 
 #%%
 
-drop_feats = ['Open', 'High', 'Low', 'Close', target_signal.ema_col, 'ema50', 'ema200', 'pxhigh', 'pxlow']
+drop_feats = ['Open', 'High', 'Low', 'Close', target_signal.ema_col, 'ema50', 'ema200', 'pxhigh', 'pxlow', 'VolBTC']
 
 features = dict(
     target=['target'],
@@ -112,6 +116,9 @@ features = dict(
 
 features['passthrough'] = features['passthrough'] + [col for col in df.columns if any(item in col for item in ('sfp', 'prevhigh', 'prevlow'))]
 features['numeric'] = [col for col in df.columns if not any(col in lst for lst in features.values())]
+
+# remove any cols not in df
+features = {name: [col for col in cols if col in df.columns] for name, cols in features.items()}
 
 sf.pretty_dict(features)
 
@@ -136,6 +143,7 @@ X_train, y_train, X_test, y_test = mm.make_train_test(df=df, target=features['ta
 
 #%% - COLUMN TRANSFORMED
 run = False
+# run = True
 if run:
     data = ct.fit_transform(X_train)
     df_trans = sf.df_transformed(data=data, ct=ct)
@@ -161,7 +169,7 @@ mm.cross_val(models)
 #%% - GRID - LGBMClassifier
 params = dict(
     boosting_type=['gbdt', 'dart', 'goss', 'rf'],
-    n_estimators=[25, 50, 100, 200],
+    n_estimators=[25, 50, 100],
     max_depth=[-1, 5, 10, 20, 30],
     num_leaves=[5, 10, 20, 40, 100],
     )
@@ -220,7 +228,14 @@ shap.force_plot(
     explainer.expected_value[0], shap_values[0][n, :], X_enc.iloc[n, :])
 
 #%% - RUN STRAT
-strat = ml.Strategy(lev=5, min_proba=0.5, min_agree=6, slippage=0, stoppercent=-0.025)
+strat = ml.Strategy(
+    min_agree=1,
+    lev=5,
+    min_proba=0.5,
+    slippage=0,
+    stoppercent=-0.025,
+    # use_stops=True
+    )
 idx = mm.df_test.index
 
 kw = dict(
@@ -241,16 +256,66 @@ t = trades[-1]
 
 #%% - PLOT
 
-periods = 600
-# periods = 200
+periods = 720
+# periods = 400
 startdate = dt(2020, 9, 20)
+startdate = None
+
+df_chart = df_pred[df_pred.index >= X_test.index[0]]
+# df_chart = df.copy()
+
+traces = [
+    # dict(name='buy_pressure', func=ch.bar, color=ch.colors['lightblue']),
+    # dict(name='sell_pressure', func=ch.bar, color=ch.colors['lightred']),
+    # dict(name='probas', func=ch.probas),
+    # dict(name='vol_relative', func=ch.scatter),
+    # dict(name='VolBTC', func=ch.bar),
+    # dict(name='vol_eom', func=ch.scatter),
+    # dict(name='vol_force', func=ch.scatter),
+    # dict(name='vol_mfi', func=ch.scatter),
+    # dict(name='vol_chaik', func=ch.scatter)
+]
+
+df_balance = strat.a.df_balance
+# df_balance = None
+
+if not df_balance is None:
+    traces.append(dict(name='balance', func=ch.scatter, color='#91ffff', stepped=True))
+    
+    df_chart = df_chart.merge(right=df_balance, how='left', left_index=True, right_index=True) \
+        .assign(balance=lambda x: x.balance.fillna(method='ffill'))
+
+
+# Add trade_side for trade entry indicators in chart
+df_trades = strat.result()
+# df_trades = None
+
+if not df_trades is None:
+    traces.append(dict(name='trades', func=ch.trades, row=1))
+
+    rename_cols = dict(
+        Sts='trade_side',
+        PnlAcct='trade_pnl',
+        Entry='trade_entry',
+        Exit='trade_exit')
+
+    df_trades = df_trades.set_index('Timestamp') \
+        .rename(columns=rename_cols) \
+        [rename_cols.values()]
+
+    df_chart = df_chart.merge(right=df_trades, how='left', left_index=True, right_index=True)
+        
+# enumerate row numbers
+traces = [{**m, **dict(row=m.get('row', i+2))} for i, m in enumerate(traces)]
+# traces = None
 
 fig = ch.chart(
-    df=df_pred[df_pred.index >= X_test.index[0]],
+    df=df_chart,
     periods=periods,
     last=True,
     startdate=startdate,
-    df_balance=strat.a.df_balance)
+    df_balance=strat.a.df_balance,
+    traces=traces)
 fig.show()
 
 #%% - RIDGE
@@ -260,12 +325,18 @@ models = dict(
 extra_steps = (1, ('rfecv', RFECV(Ridge()))) # must insert rfecv BEFORE other model
 mm.cross_val(models, steps=extra_steps)
 
-#%%
+#%% - RFECV SHOW FEATURES
+data = ct.fit_transform(X_train)
+df_trans = sf.df_transformed(data=data, ct=ct).describe().T
 
 pipe_rfe = mm.pipes['lgbm_rfecv']
 pipe_rfe.fit(X_train, y_train) # need fit pipe again outside of cross_validate
 rfecv = pipe_rfe.named_steps['rfecv']
 rfecv.n_features_
+
+pd.DataFrame(data=rfecv.support_, columns=['Included'], index=df_trans.index) \
+    .style \
+    .apply(sf.highlight_val, subset=['Included'], m={True: (ch.colors['lightblue'], 'black')})
 
 #%%
 # POLY
