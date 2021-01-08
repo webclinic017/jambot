@@ -3,9 +3,11 @@ import sys
 import inspect
 
 import numpy as np
+import pandas as pd
 import ta
 
 from . import functions as f
+from . import charts as ch
 
 from ta.volume import (
     AccDistIndexIndicator,
@@ -90,28 +92,61 @@ drop
 - drop anything still NA at beginning of series
 """
 
+class SignalManager():
+    def __init__(self, df):
+        df_orig = df.copy()
+        signals = {}
+        f.set_self(vars())
 
+    def add_signals(self, signals : list=None) -> pd.DataFrame:
+        """Add multiple initialized signals to dataframe"""
+        df = self.df
+        if isinstance(signals, dict): signals = list(signals.values())
+        if isinstance(signals, str): signals = [signals]
 
-def add_signals(df, signals=None):
-    """Add multiple initialized signals to dataframe"""
-    if isinstance(signals, dict): signals = signals.values()
+        for signal in signals or []:
 
-    for signal in signals or []:
+            # if str, init obj with defauls args
+            if isinstance(signal, str):
+                signal = getattr(sys.modules[__name__], signal)()
+            
+            self.signals[signal.__class__.__name__.lower()] = signal
 
-        # if str, init obj with defauls args
-        if isinstance(signal, str):
-            signal = getattr(sys.modules[__name__], signal)()
+            # custom signal from this module
+            signal.df = df # NOTE kinda sketch
+            df = df.pipe(signal.add_signal)
 
-        # custom signal from this module
-        signal.df = df # NOTE kinda sketch
-        df = df.pipe(signal.add_signal)
+            # ta indicators don't have an 'add_default' type method..
+            # if issubclass(signal.__class__, Signal):
+            # elif issubclass(signal.__class__, ta.utils.IndicatorMixin):
+            #     pass
 
-        # ta indicators don't have an 'add_default' type method..
-        # if issubclass(signal.__class__, Signal):
-        # elif issubclass(signal.__class__, ta.utils.IndicatorMixin):
-        #     pass
+        self.df = df
 
-    return df
+        return df
+    
+    def make_plot_traces(self, name) -> list:
+        """Create list of dicts for plot traces"""
+        signal_group = self.signals[name].signals
+
+        traces = [dict(name=name, func=m['plot']) for name, m in signal_group.items()]
+
+        # enumerate row numbers, 2 > end
+        traces = [{**m, **dict(row=m.get('row', i+2))} for i, m in enumerate(traces)]
+
+        return traces
+    
+    def plot_signal_group(self, name, periods=400, startdate=None, **kw):
+
+        fig = ch.chart(
+            df=self.df,
+            periods=periods,
+            last=True,
+            startdate=startdate,
+            traces=self.make_plot_traces(name=name))
+
+        fig.show()
+        
 
 class Signal():
     def __init__(self, weight=1):
@@ -149,21 +184,66 @@ class MACD(Signal):
 
 class TASignal(Signal):
     """Base class for ta indicators"""
-    def __init__(self, df=None, **kw):
+    m_default = dict(
+        open='Open',
+        high='High',
+        low='Low',
+        close='Close',
+        volume='VolBTC')
+
+    def __init__(self, df=None, signals=None, fillna=True, **kw):
         super().__init__(**kw)
 
         # Default OHLCV cols for df, used to pass to ta signals during init
-        m_default = dict(
-            open='Open',
-            high='High',
-            low='Low',
-            close='Close',
-            volume='VolBTC')
+        
+        signals = self.init_signals(signals)
         
         f.set_self(vars())
+
+    def init_signals(self, signals):
+        """Extra default processing to signals, eg add plot func"""
+        for name, m in signals.items():
+            
+            if not isinstance(m, dict):
+                if callable(m):
+                    m = dict(func=m) # signal was just created as single func
+                else:
+                    raise AttributeError('signal must be init with a dict or callable func!')
+
+            m['name'] = name
+
+            # assign scatter as default plot
+            if m.get('plot', None) is None:
+                m['plot'] = ch.scatter
+
+            signals[name] = m
+
+        return signals
+    
+    def add_signal(self, df):
+        """Convenience base wrapper to work with ta/non-ta signals"""
+        return df.pipe(self.assign_signals)
+    
+    def assign_signals(self, df) -> pd.DataFrame:
+        
+        final_signals = {}
+
+        # loop signals, init, call correct func
+        for name, m in self.signals.items():
+            
+            if 'cls' in m:
+                # init ta signal
+                final_signals[name] = self.make_signal(**m)
+            elif 'func' in m:
+                final_signals[name]
+            else:
+                raise AttributeError('No func to assign from signal!')
+
+        return df \
+            .assign(**final_signals)
     
     @property
-    def default_cols(self):
+    def default_cols(self) -> dict:
         """Convert default dict of strings to pd.Series for default cols"""
         df = self.df
         if df is None:
@@ -171,44 +251,43 @@ class TASignal(Signal):
 
         return {name: df[col] for name, col in self.m_default.items()}
 
-    def check_defaults(self, cls):
-        """Check default args of __init__, return only correct cols"""
+    def filter_valid_kws(self, cls, **kw) -> dict:
+        """Check default args of __init__ + merge with extra kws, return dict of valid kws"""
         signature = inspect.signature(cls.__init__)
-        return {name: col for name, col in self.default_cols.items() if name in signature.parameters.keys()}
+
+        # merge extra_kws with default OHLC cols
+        m_all_kw = {**self.default_cols, **(kw or {})}
+
+        return {name: col for name, col in m_all_kw.items() if name in signature.parameters.keys()}
     
-    def init_signal(self, cls, **kw):
-        """Helper func to init signal with correct OHLCV columns
+    def make_signal(self, cls, ta_func : str, **kw):
+        """Helper func to init TA signal with correct OHLCV columns
         
         Parameters
         ---------
         cls : ta
             class defn of ta indicator to be init
+        ta_func : str
+            func to call on ta obj to create final signal
         """
-        default_cols = self.check_defaults(cls=cls)
-        kw['fillna'] = True
-        return cls(**default_cols, **kw)
+        kw['fillna'] = self.fillna
+        good_kw = self.filter_valid_kws(cls=cls, **kw)
+
+        return getattr(cls(**good_kw), ta_func)()
 
 class Momentum(TASignal):
     def __init__(self, window=6, **kw):
-        super().__init__(**kw)
-        name = 'rsi'
-        f.set_self(vars())
-    
-    def add_signal(self, df):
-        # rsi_stoch = ta.momentum.StochRSIIndicator(close=df.Close, window=self.window, smooth1=8, smooth2=8, fillna=True)
+        kw['signals'] = dict(
+            mnt_rsi=dict(cls=RSIIndicator, ta_func='rsi', window=window),
+            mnt_pvo=dict(cls=PercentageVolumeOscillator, ta_func='pvo'),
+            mnt_roc=dict(cls=ROCIndicator, ta_func='roc', window=window),
+            mnt_stoch=dict(cls=StochasticOscillator, ta_func='stoch', window=24, smooth_window=12),
+            mnt_tsi=dict(cls=TSIIndicator, ta_func='tsi'),
+            mnt_ultimate=dict(cls=UltimateOscillator, ta_func='ultimate_oscillator'),
+        )
 
-        return df \
-            .assign(
-                mnt_rsi=self.init_signal(RSIIndicator, window=self.window).rsi(),
-                mnt_pvo=self.init_signal(PercentageVolumeOscillator).pvo(),
-                mnt_roc=self.init_signal(ROCIndicator, window=self.window).roc(),
-                mnt_stoch=self.init_signal(StochasticOscillator, window=24).stoch(),
-                mnt_tsi=self.init_signal(TSIIndicator).tsi(),
-                mnt_ultimate=self.init_signal(UltimateOscillator).ultimate_oscillator(),
-                # rsi_stoch=rsi_stoch.stochrsi(),
-                # rsi_stoch_k=rsi_stoch.stochrsi_k(),
-                # rsi_stoch_d=rsi_stoch.stochrsi_d()
-                )
+        super().__init__(**kw)
+        f.set_self(vars())
 
 class Volume(TASignal):
     def __init__(self, **kw):
@@ -220,11 +299,11 @@ class Volume(TASignal):
         return df \
             .assign(
                 vol_relative=lambda x: x.VolBTC / x.VolBTC.shift(6).rolling(24).mean(),
-                vol_chaik=self.init_signal(ChaikinMoneyFlowIndicator).chaikin_money_flow(),
-                vol_mfi=self.init_signal(MFIIndicator, window=14).money_flow_index(),
-                # vol_adi=self.init_signal(AccDistIndexIndicator).acc_dist_index(),
-                # vol_eom=self.init_signal(EaseOfMovementIndicator, window=14).ease_of_movement(),
-                # vol_force=self.init_signal(ForceIndexIndicator, window=14).force_index(),
+                vol_chaik=self.make_signal(ChaikinMoneyFlowIndicator).chaikin_money_flow(),
+                vol_mfi=self.make_signal(MFIIndicator, window=14).money_flow_index(),
+                # vol_adi=self.make_signal(AccDistIndexIndicator).acc_dist_index(),
+                # vol_eom=self.make_signal(EaseOfMovementIndicator, window=14).ease_of_movement(),
+                # vol_force=self.make_signal(ForceIndexIndicator, window=14).force_index(),
             )
 
 class EMA(Signal):
@@ -316,7 +395,7 @@ class Volatility(TASignal):
                 vty_sma=lambda x: x.vty_spread.rolling(300).mean(),
                 norm_ema=lambda x: np.interp(x.vty_ema, (0, 0.25), (norm[0], norm[1])),
                 norm_sma=lambda x: np.interp(x.vty_sma, (0, 0.25), (norm[0], norm[1])),
-                vtt_ulcer=self.init_signal(UlcerIndex, window=24).ulcer_index(),
+                vty_ulcer=self.make_signal(UlcerIndex, window=24).ulcer_index(),
                 ) \
             .drop(columns=['maxhigh', 'minlow'])
 
@@ -353,11 +432,11 @@ class Trend(TASignal):
                 mln=lambda x: x.Low.rolling(neutral).min().shift(offset),
                 pxhigh=lambda x: np.where(x.trend == 0, x.mhn, np.where(x.trend == 1, x.mha, x.mhw)),
                 pxlow=lambda x: np.where(x.trend == 0, x.mln, np.where(x.trend == -1, x.mlw, x.mla)),
-                trend_adx=self.init_signal(ADXIndicator).adx(),
-                trend_aroon=self.init_signal(AroonIndicator).aroon_indicator(),
-                trend_cci=self.init_signal(CCIIndicator).cci(),
-                trend_mass=self.init_signal(MassIndex).mass_index(),
-                trend_stc=self.init_signal(STCIndicator).stc()
+                trend_adx=self.make_signal(ADXIndicator).adx(),
+                trend_aroon=self.make_signal(AroonIndicator).aroon_indicator(),
+                trend_cci=self.make_signal(CCIIndicator).cci(),
+                trend_mass=self.make_signal(MassIndex).mass_index(),
+                trend_stc=self.make_signal(STCIndicator).stc()
                 ) \
             .drop(columns=['mha', 'mhw', 'mla', 'mlw', 'mhn', 'mln'])
         
@@ -480,7 +559,7 @@ class TargetClass(Signal):
 class TargetMean(TargetClass):
     """
     Calc avg price of next n close prices
-    - maybe - bin into % ranges
+    - maybe - bin into % ranges?
     """
     def __init__(self, **kw):
         super().__init__(**kw)
@@ -496,8 +575,6 @@ class TargetMean(TargetClass):
                 pct_future=lambda x: (x.Close.shift(-1 * self.n_periods).rolling(self.n_periods).mean() - x.Close) / x.Close,
                 target=lambda x: np.where(x.pct_future > pct_min, 1, np.where(x.pct_future < pct_min * -1, -1, 0))) \
             .drop(columns=['pct_future'])
-                # target=lambda x: np.where(x.mean_close_n > x.Close, 1, -1)
-                # ) \
 
 def add_both_emas(df):
     """Convenience func to add both 50 and 200 emas"""
