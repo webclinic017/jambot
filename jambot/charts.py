@@ -329,30 +329,33 @@ def probas(df, **kw):
 
     return traces
 
-def chart(df, symbol='XBTUSD', periods=200, last=True, startdate=None, df_balance=None, traces=None):
+def clean_traces(cols, traces):
+    """Remove cols not in df"""
+    traces = traces or []
+    include = ('candle', 'probas', 'trades')
+    return [m for m in traces if m['name'] in cols or any(m['name'] == item for item in include)]
 
-    # py.init_notebook_mode(connected=False)
-    if traces is None:
-        traces = []
+def enum_traces(traces, base_num=2):
+    return [{**m, **dict(row=m.get('row', i + base_num))} for i, m in enumerate(traces)]
 
-    traces = traces + [
+def chart(df, symbol='XBTUSD', periods=200, last=True, startdate=None, df_balance=None, traces=None, default_range=None):
+    """Main plotting func for showing main candlesticks with supporting subplots of features"""
+    bgcolor = '#000B15'
+    gridcolor='#182633'
+
+    base_traces = [
         dict(name='ema10', func=scatter, color='orange', hoverinfo='skip'),
         dict(name='ema50', func=scatter, color='#18f27d', hoverinfo='skip'),
         dict(name='ema200', func=scatter, color='#9d19fc', hoverinfo='skip'),
         dict(name='y_pred', func=predictions),
         dict(name='candle', func=candlestick),
-        # dict(name='probas', func=probas, row=2),
-        # dict(name='vty_ema', func=scatter, color='green', row=2),
-        # dict(name='vty_sma', func=scatter, color='yellow', row=2),
-        # dict(name='rsi', func=scatter, color='purple', row=2),
-        # dict(name='rsi_stoch', func=scatter, color='red', row=2),
-        # dict(name='rsi_stoch_k', func=scatter, color='blue', row=2),
-        # dict(name='rsi_stoch_d', func=scatter, color='green', row=2),
         ]
     
-    # remove cols not in df
-    include = ('candle', 'probas', 'trades')
-    traces = [m for m in traces if m['name'] in df.columns or any(m['name'] == item for item in include)]
+    # clean and combine base with extra traces
+    base_traces = clean_traces(cols=df.columns, traces=base_traces)
+    traces = clean_traces(cols=df.columns, traces=traces)
+    traces = enum_traces(traces)
+    traces = base_traces + traces
 
     if startdate:
         df = df[df.index >= startdate] \
@@ -363,15 +366,26 @@ def chart(df, symbol='XBTUSD', periods=200, last=True, startdate=None, df_balanc
         df = df.iloc[:periods, :]
     
     rows = max([m.get('row', 1) for m in traces])
-    row_widths = ([0.2] * (rows - 1) + [0.4])[rows * -1:]
+    row_widths = ([0.12] * (rows - 1) + [0.4])[rows * -1:]
     height = 1000 * sum(row_widths)
+
+    # Set subplot titles
+    subplot_titles = {}
+    for m in traces:
+        subplot_titles[m.get('row', 1)] = m.get('name', '')
+    
+    subplot_titles[1] = '' # main chart doesn't need title
+    subplot_titles = [subplot_titles[k] for k in sorted(subplot_titles)]
 
     fig = make_subplots(
         rows=rows,
         cols=1,
         shared_xaxes=True,
         row_width=row_widths,
-        vertical_spacing=0.01)
+        vertical_spacing=0.03,
+        subplot_titles=subplot_titles,
+        # specs=specs
+        )
 
     fig = go.FigureWidget(fig)
 
@@ -379,26 +393,32 @@ def chart(df, symbol='XBTUSD', periods=200, last=True, startdate=None, df_balanc
 
     rangeselector = dict(
         font=dict(color='black'),
+        activecolor='red',
         buttons=[
             dict(count=1, label='1m', step='month', stepmode='backward'),
             dict(count=14, label='14d', step='day', stepmode='backward'),
             dict(count=6, label='6d', step='day', stepmode='backward'),
             dict(count=2, label='2d', step='day', stepmode='backward'),
-        ]
+        ],
     )
 
-    rng = [df.index[-14 * 24].to_pydatetime(), df.index[-2].to_pydatetime()]
+    rng = [] if default_range is None else [df.index[-1 * default_range * 24].to_pydatetime(), df.index[-1].to_pydatetime()]
 
     xaxis = dict(
+        type='date',
         dtick='6h',
         tickformat=f.time_format(hrs=True),
         tickangle=315,
+        rangeslider=dict(
+            bgcolor=bgcolor,
+            visible=True,
+            thickness=0.0125,
+            # range=rng
+            ),
         rangeselector=rangeselector,
-        rangeslider_visible=True,
-        rangeslider_thickness=0.05,
         side='top',
         showticklabels=True,
-        range=rng
+        range=rng,
         )
     
     xaxis2 = dict(
@@ -407,21 +427,21 @@ def chart(df, symbol='XBTUSD', periods=200, last=True, startdate=None, df_balanc
         side='top',
         showgrid=False,
         showticklabels=False,
-        range=rng
     )
 
     # update all axes in subplots
     fig.update_xaxes(
-        range=rng,
-        gridcolor='#182633',
-        autorange=True,
+        gridcolor=gridcolor,
+        # autorange=True,
         fixedrange=False,
         showspikes=True,
         spikemode='across',
         spikethickness=1,
         showticklabels=True)
     fig.update_yaxes(
-        gridcolor='#182633',
+        zerolinewidth=0.25,
+        zerolinecolor=gridcolor,
+        gridcolor=gridcolor,
         side='right',
         autorange=True,
         fixedrange=False)
@@ -429,47 +449,21 @@ def chart(df, symbol='XBTUSD', periods=200, last=True, startdate=None, df_balanc
     fig.update_layout(
         xaxis=xaxis,
         xaxis2=xaxis2,
-        xaxis_range=rng,
-        xaxis2_range=rng,
         height=height,
         # width=1000,
         margin=dict(l=0, r=0, t=40, b=0),
-        paper_bgcolor='#000B15',
-        plot_bgcolor='#000B15',
+        paper_bgcolor='#021629',
+        plot_bgcolor=bgcolor,
         font_color='white',
         showlegend=False,
         dragmode='pan',
         # title=symbol
         )
     
-    # fig['layout']['xaxis'].update(range=rng)
+    # update subplot title size/position
+    for i in fig['layout']['annotations']:
+        i['font'] = dict(size=9)
+        i['x'] = 0.05
 
     return fig
  
-    # def _zoom(layout, xrange, *args, **kw):
-    #     print('changing')
-    #     in_view = df.loc[fig.layout.xaxis.range[0]: fig.layout.xaxis.range[1]]
-    #     fig.layout.yaxis.range = [in_view.Low.min() - 10, in_view.High.max() + 10]
-    
-    # fig.layout.on_change(_zoom, 'xaxis.range')
-
-
-    # if not df2 is None:
-    #     df3 = df2.loc[df2['PercentChange'] < 0]
-    #     percentTrace = go.Bar(x=df3['Timestamp'], 
-    #             y=df3['PercentChange'], 
-    #             marker=dict(line=dict(width=2, color='#ff7a7a')))
-    #     fig.append_trace(percentTrace, row=2, col=1)
-        
-    #     df3 = df2.loc[df2['PercentChange'] >= 0]
-    #     percentTrace = go.Bar(x=df3['Timestamp'], 
-    #             y=df3['PercentChange'], 
-    #             marker=dict(line=dict(width=2, color='#91ffff')))
-    #     fig.append_trace(percentTrace, row=2, col=1)
-
-    #     balanceTrace = go.Scatter(
-    #                     x=df2['Timestamp'],
-    #                     y=df2['Balance'],
-    #                     mode='lines',
-    #                     line=dict(color='#91ffff', width=1))
-    #     fig.append_trace(balanceTrace, row=3, col=1)
