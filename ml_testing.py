@@ -18,6 +18,10 @@ if True:
     # import sklearn_helper_funcs as sf
     # from lightgbm.sklearn import LGBMClassifier
     # data
+
+    # from sklearn import set_config
+    # set_config(display='diagram')
+
     from sklearn.compose import ColumnTransformer, make_column_transformer
     # Classifiers
     from sklearn.dummy import DummyClassifier
@@ -34,7 +38,7 @@ if True:
     from sklearn.model_selection import (GridSearchCV, RandomizedSearchCV,
                                         cross_val_score, cross_validate,
                                         train_test_split)
-    from sklearn.pipeline import Pipeline, make_pipeline
+    from sklearn.pipeline import Pipeline, make_pipeline, FeatureUnion
     from sklearn.preprocessing import (MinMaxScaler, OneHotEncoder, OrdinalEncoder,
                                     PolynomialFeatures, RobustScaler,
                                     StandardScaler)
@@ -78,162 +82,149 @@ else:
 
 print(f'DateRange: {df.index.min()} - {df.index.max()}')
 
-# %%
-# Add features to df
+# %% - ADD SIGNALS
+
+sm = sg.SignalManager()
+
 n_periods = 2
 # Target = sg.TargetClass
 Target = sg.TargetMean
 target_signal = Target(p_ema=10, n_periods=n_periods, pct_min=0.000000005)
+# sm_target = sg.SignalManager()
+# df = df.pipe(sm_target.add_signals, signals=[target_signal])
 
 signals = [
     'EMA',
-    'EMASlope',
-    'Volatility',
+    # 'EMASlope',
+    # 'Volatility',
     'Momentum',
-    'Volume',
-    'MACD',
-    sg.Trend(speed=(24, 18)),
+    # 'Volume',
+    # 'MACD',
+    'Trend',
     'Candle',
     # 'SFP',
     target_signal
     ]
 
 # drop last rows which we cant set proper target
-df = df.pipe(sg.add_signals, signals) \
+df = sm.add_signals(df=df, signals=signals) \
     .iloc[:-1 * n_periods, :] \
-    .dropna() \
+    .dropna()
 
 sf.show_prop(df=df)
 
-#%%
+#%% - FEATURES
+if True:
+    cols_ohlcv = ['Open', 'High', 'Low', 'Close', 'VolBTC']
+    drop_feats = cols_ohlcv + ['ema10', 'ema50', 'ema200', 'pxhigh', 'pxlow']
 
-drop_feats = ['Open', 'High', 'Low', 'Close', target_signal.ema_col, 'ema50', 'ema200', 'pxhigh', 'pxlow', 'VolBTC']
+    features = dict(
+        # signalmanager=cols_ohlcv,
+        target=['target'],
+        drop=drop_feats,
+        passthrough=['ema_trend', 'ema_slope', 'cdl_side', 'macd_trend']
+        )
 
-features = dict(
-    target=['target'],
-    drop=drop_feats,
-    passthrough=['ema_trend', 'ema_slope', 'cdl_side', 'macd_trend'])
+    features['passthrough'] = features['passthrough'] + [col for col in df.columns if any(item in col for item in ('sfp', 'prevhigh', 'prevlow'))]
+    features['numeric'] = [col for col in df.columns if not any(col in lst for lst in features.values())]
 
-features['passthrough'] = features['passthrough'] + [col for col in df.columns if any(item in col for item in ('sfp', 'prevhigh', 'prevlow'))]
-features['numeric'] = [col for col in df.columns if not any(col in lst for lst in features.values())]
+    # remove any cols not in df
+    features = {name: [col for col in cols if col in df.columns] for name, cols in features.items()}
 
-# remove any cols not in df
-features = {name: [col for col in cols if col in df.columns] for name, cols in features.items()}
+    sf.pretty_dict(features)
+    
+    encoders = dict(
+        drop='drop',
+        passthrough='passthrough',
+        numeric=MinMaxScaler(),
+        )
 
-sf.pretty_dict(features)
+    ct = ColumnTransformer(
+        transformers=[(name, model, features[name]) for name, model in encoders.items()]
+    )
 
-#%%
-encoders = dict(
-    drop='drop',
-    passthrough='passthrough',
-    # binary=OneHotEncoder(),
-    # categorical=OneHotEncoder(),
-    numeric=MinMaxScaler())
+    scoring = dict(acc='accuracy') #, f1=f1_score, average='macro')
+    cv_args = dict(cv=5, n_jobs=-2, return_train_score=True, scoring=scoring)
+    mm = sf.ModelManager(ct=ct, scoring=scoring, cv_args=cv_args)
 
-ct = ColumnTransformer(
-    transformers=[(name, model, features[name]) for name, model in encoders.items()])
-# ct
+    # TRAIN TEST SPLIT
+    X_train, y_train, X_test, y_test = mm.make_train_test(
+        df=df,
+        target=features['target'],
+        train_size=0.9,
+        shuffle=False)
 
-scoring = dict(acc='accuracy') #, f1=f1_score, average='macro')
-cv_args = dict(cv=5, n_jobs=-2, return_train_score=True, scoring=scoring)
-mm = sf.ModelManager(ct=ct, scoring=scoring, cv_args=cv_args)
-
-#%% - TRAIN TEST SPLIT
-X_train, y_train, X_test, y_test = mm.make_train_test(df=df, target=features['target'], train_size=0.9, shuffle=False)
-
-#%% - COLUMN TRANSFORMED
+#%% - SHOW COLUMN TRANSFORMS
+run = True
 run = False
-# run = True
 if run:
     data = ct.fit_transform(X_train)
     df_trans = sf.df_transformed(data=data, ct=ct)
     print(df_trans.shape)
     display(df_trans.describe().T)
 
-#%%
-models = dict(
-    dummy=DummyClassifier(strategy='most_frequent'))
-    
-mm.cross_val(models)
-
 #%% - MODELS
 models = dict(
+    # dummy=DummyClassifier(strategy='most_frequent'),
     # rnd_forest=RandomForestClassifier,
     # xgb=XGBClassifier,
     # ada=AdaBoostClassifier(),
-    lgbm=LGBMClassifier() #num_leaves=30, n_estimators=100, max_depth=30)
+    lgbm=LGBMClassifier(num_leaves=5, n_estimators=50, max_depth=30, boosting_type='dart')
     )
     
 mm.cross_val(models)
 
 #%% - GRID - LGBMClassifier
-params = dict(
-    boosting_type=['gbdt', 'dart', 'goss', 'rf'],
-    n_estimators=[25, 50, 100],
-    max_depth=[-1, 5, 10, 20, 30],
-    num_leaves=[5, 10, 20, 40, 100],
-    )
 
-grid = mm.search(
-    name='lgbm',
-    params=params,
-    search_type='random',
-    refit='acc')
+# transformer__signalmanager__mnt_rsi__window
+# 
+best_est = True
+if best_est:
+    params = dict(
+        boosting_type=['gbdt', 'dart', 'goss', 'rf'],
+        n_estimators=[25, 50, 100],
+        max_depth=[-1, 5, 10, 20, 30],
+        num_leaves=[5, 10, 20, 40, 100],
+        )
 
-#%% - SAVE MODEL
-mm.save_model('lgbm', best_est=True)
+    grid = mm.search(
+        name='lgbm',
+        params=params,
+        search_type='random',
+        refit='acc')
 
 #%% - ADD PREDICTIONS
+mm.save_model('lgbm', best_est=best_est)
 name = 'lgbm'
 # name = 'ada'
 # model = mm.load_model(name)
-# df_pred = mm.add_predict(df=df, model=model)
-df_pred = mm.add_predict(df=df, name=name, best_est=True)
+# df_pred = mm.add_predict(df=df, name=name)
+df_pred = mm.add_predict(df=df, name=name, best_est=best_est)
 
 #%% - CLASSIFICATION REPORT
-mm.class_rep('lgbm', best_est=True)
+mm.class_rep('lgbm', best_est=best_est)
 
 #%% GRID - AdaBoostClassifier
-params = dict(
-    algorithm=['SAMME', 'SAMME.R'],
-    n_estimators=[50, 100, 200, 400],
-    learning_rate=[0.0125, 0.25, 0.5, 1, 2])
+run_ada = False
+if run_ada:
+    params = dict(
+        algorithm=['SAMME', 'SAMME.R'],
+        n_estimators=[50, 100, 200, 400],
+        learning_rate=[0.0125, 0.25, 0.5, 1, 2])
 
-grid = mm.search(
-    name='ada',
-    params=params,
-    search_type='random',
-    refit='acc')
-
-#%% - SHAP PLOT
-# model = mm.get_model(name='lgbm', best_est=True)
-model = mm.models['lgbm']
-# model.fit_transform
-explainer, shap_values, X_sample, X_enc = sf.shap_explainer_values(X=X_train, y=y_train, ct=ct, model=model)
-
-# show shap plot
-shap.summary_plot(
-    shap_values=shap_values[0],
-    features=X_sample, # X_train_sample
-    plot_type='violin',
-    axis_color='white')
-
-#%% - SHAP FORCE PLOT
-shap.initjs()
-
-explainer, shap_values, X_sample, X_enc = sf.shap_explainer_values(X=X_test, y=y_test, ct=ct, model=model)
-
-n = 0
-shap.force_plot(
-    explainer.expected_value[0], shap_values[0][n, :], X_enc.iloc[n, :])
+    grid = mm.search(
+        name='ada',
+        params=params,
+        search_type='random',
+        refit='acc')
 
 #%% - RUN STRAT
 strat = ml.Strategy(
-    min_agree=1,
+    min_agree=2,
     lev=5,
     min_proba=0.5,
     slippage=0,
-    stoppercent=-0.025,
+    # stoppercent=-0.025,
     # use_stops=True
     )
 idx = mm.df_test.index
@@ -267,13 +258,17 @@ df_chart = df_pred[df_pred.index >= X_test.index[0]]
 traces = [
     # dict(name='buy_pressure', func=ch.bar, color=ch.colors['lightblue']),
     # dict(name='sell_pressure', func=ch.bar, color=ch.colors['lightred']),
-    # dict(name='probas', func=ch.probas),
+    dict(name='probas', func=ch.probas),
     # dict(name='vol_relative', func=ch.scatter),
     # dict(name='VolBTC', func=ch.bar),
     # dict(name='vol_eom', func=ch.scatter),
     # dict(name='vol_force', func=ch.scatter),
     # dict(name='vol_mfi', func=ch.scatter),
-    # dict(name='vol_chaik', func=ch.scatter)
+    dict(name='vol_chaik', func=ch.scatter),
+    dict(name='vty_ulcer', func=ch.scatter),
+    dict(name='trend_adx', func=ch.scatter),
+    dict(name='trend_cci', func=ch.scatter),
+    dict(name='trend_mass', func=ch.scatter),
 ]
 
 df_balance = strat.a.df_balance
@@ -306,7 +301,7 @@ if not df_trades is None:
     df_chart = df_chart.merge(right=df_trades, how='left', left_index=True, right_index=True)
         
 # enumerate row numbers
-traces = [{**m, **dict(row=m.get('row', i+2))} for i, m in enumerate(traces)]
+# traces = [{**m, **dict(row=m.get('row', i+2))} for i, m in enumerate(traces)]
 # traces = None
 
 fig = ch.chart(
@@ -317,6 +312,28 @@ fig = ch.chart(
     df_balance=strat.a.df_balance,
     traces=traces)
 fig.show()
+
+#%% - SHAP PLOT
+# model = mm.get_model(name='lgbm', best_est=True)
+model = mm.models['lgbm']
+# model.fit_transform
+explainer, shap_values, X_sample, X_enc = sf.shap_explainer_values(X=X_train, y=y_train, ct=ct, model=model)
+
+# show shap plot
+shap.summary_plot(
+    shap_values=shap_values[0],
+    features=X_sample, # X_train_sample
+    plot_type='violin',
+    axis_color='white')
+
+#%% - SHAP FORCE PLOT
+shap.initjs()
+
+explainer, shap_values, X_sample, X_enc = sf.shap_explainer_values(X=X_test, y=y_test, ct=ct, model=model)
+
+n = 0
+shap.force_plot(
+    explainer.expected_value[0], shap_values[0][n, :], X_enc.iloc[n, :])
 
 #%% - RIDGE
 models = dict(

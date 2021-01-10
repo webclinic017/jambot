@@ -1,5 +1,6 @@
 import json
 import pickle
+from pathlib import Path
 
 import numpy as np
 import pandas as pd
@@ -20,6 +21,8 @@ from sklearn.pipeline import Pipeline
 
 from . import functions as f
 
+# p_tmp = Path.home() / 'Desktop/sklearn_temp'
+# print(p_tmp.exists())
 _cmap = diverging_palette(240, 10, sep=10, n=21, as_cmap=True)
 
 class ModelManager(object):
@@ -53,7 +56,7 @@ class ModelManager(object):
             show dataframe of results, default True
         steps : list, optional
             list of tuples of [(step_pos, (name, model)), ]
-        """        
+        """
         for name, model in models.items():
 
             # allow passing model definition, or instantiated model
@@ -62,9 +65,12 @@ class ModelManager(object):
 
             model.random_state = self.random_state
 
-            pipe = Pipeline(steps=[
-                ('transformer', self.ct),
-                (name, model)])
+            pipe = Pipeline(
+                steps=[
+                    ('ct', self.ct),
+                    (name, model)],
+                # memory=str(p_tmp)
+                )
             
             # insert extra steps in pipe, eg RFECV
             if not steps is None:
@@ -125,7 +131,7 @@ class ModelManager(object):
             df = self.X_test
         
         if model is None:
-            model = self.get_model(**kw)
+            model = self.fit(**kw)
             
         arr = model.predict_proba(df)
         m = {-1: 'short', 0: 'neutral', 1: 'long'}
@@ -169,7 +175,8 @@ class ModelManager(object):
         RandomSearchCV | GridSearchCV
             sklearn model_selection object
         """
-
+        # TODO need to enable NO renaming
+        
         # rename params to include 'name__parameter'
         params = {f'{name}__{k}': v for k, v in params.items()}
 
@@ -224,7 +231,7 @@ class ModelManager(object):
         target : list   
             target column to remove for y_
         """
-        df_train, df_test = train_test_split(df, train_size=train_size, random_state=0, **kw)
+        df_train, df_test = train_test_split(df, train_size=train_size, random_state=self.random_state, **kw)
 
         def split(df):
             return df.drop(columns=target), df[target]

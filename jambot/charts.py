@@ -336,7 +336,7 @@ def clean_traces(cols, traces):
     return [m for m in traces if m['name'] in cols or any(m['name'] == item for item in include)]
 
 def enum_traces(traces, base_num=2):
-    return [{**m, **dict(row=m.get('row', i + base_num))} for i, m in enumerate(traces)]
+    return [{**m, **dict(row=m.get('row', None) or i + base_num)} for i, m in enumerate(traces)]
 
 def chart(df, symbol='XBTUSD', periods=200, last=True, startdate=None, df_balance=None, traces=None, default_range=None):
     """Main plotting func for showing main candlesticks with supporting subplots of features"""
@@ -402,7 +402,7 @@ def chart(df, symbol='XBTUSD', periods=200, last=True, startdate=None, df_balanc
         ],
     )
 
-    rng = [] if default_range is None else [df.index[-1 * default_range * 24].to_pydatetime(), df.index[-1].to_pydatetime()]
+    rng = None if default_range is None else [df.index[-1 * default_range * 24].to_pydatetime(), df.index[-1].to_pydatetime()]
 
     xaxis = dict(
         type='date',
