@@ -2,18 +2,23 @@ import inspect
 import re
 import sys
 from collections import defaultdict as dd
+import operator as opr
 
 import numpy as np
 import pandas as pd
+import peakutils
 import ta
-from sklearn.base import TransformerMixin, BaseEstimator
+import talib as tb
+from findiff import FinDiff
+from sklearn.base import BaseEstimator, TransformerMixin
 from sklearn.preprocessing import MinMaxScaler
 from ta.momentum import (AwesomeOscillatorIndicator, KAMAIndicator,
                          PercentageVolumeOscillator, ROCIndicator,
                          RSIIndicator, StochasticOscillator, StochRSIIndicator,
                          TSIIndicator, UltimateOscillator)
-from ta.trend import (ADXIndicator, AroonIndicator, CCIIndicator, MassIndex,
-                      STCIndicator, EMAIndicator)
+from ta.trend import (ADXIndicator, AroonIndicator, CCIIndicator, DPOIndicator,
+                      EMAIndicator, KSTIndicator, MassIndex, STCIndicator,
+                      TRIXIndicator)
 from ta.volatility import UlcerIndex
 from ta.volume import (AccDistIndexIndicator, ChaikinMoneyFlowIndicator,
                        EaseOfMovementIndicator, ForceIndexIndicator,
@@ -110,8 +115,7 @@ class SignalManager(BaseEstimator, TransformerMixin):
     
     def get_signal_group(self, feature_name : str):
         """Return signal_group object from feature_name"""
-
-        return list(filter(lambda x: feature_name in x, self.signal_groups.values().signals))[0]
+        return list(filter(lambda x: feature_name in x.signals, self.signal_groups.values()))[0]
 
     def print_signal_params(self, **kw):
         m = self.get_signal_params(**kw)
@@ -159,19 +163,17 @@ class SignalManager(BaseEstimator, TransformerMixin):
 
         return df
 
-    def replace_single_feature(self, df, params : dict) -> pd.DataFrame:
+    def replace_single_feature(self, df, feature_params : dict, **kw) -> pd.DataFrame:
         """Generator to replace single feature at a time with new values from params dict"""
 
-        for feature_name, m in params.items():
-
-            # need to link feature name with signal group
+        for feature_name, m in feature_params.items():
+            # get signal group from feature_name
             signal_group = self.get_signal_group(feature_name=feature_name)
 
-            for param, vals in m.items():
-                
+            for param, vals in m.items():              
                 for val in vals:
                     param_single = {feature_name: {param: val}} # eg {'mnt_rsi': {'window': 12}}
-                    yield df.pipe(signal_group.assign_signals, params=param_single)
+                    yield df.pipe(signal_group.assign_signals, params=param_single), f'{feature_name}_{param}_{val}'
 
     
     def make_plot_traces(self, name) -> list:
@@ -310,12 +312,14 @@ class SignalGroup():
         return not tnow == side and not tnow == tprev
 
 class Momentum(SignalGroup):
-    def __init__(self, window=6, **kw):
+    def __init__(self, window=2, **kw):
         kw['signals'] = dict(
-            mnt_rsi=dict(cls=RSIIndicator, ta_func='rsi', window=window, params=dict(window=[6, 12])),
+            mnt_rsi_2=dict(cls=RSIIndicator, ta_func='rsi', window=window, params=dict(window=[2, 6, 12, 18, 24, 36])),
+            mnt_rsi_6=dict(cls=RSIIndicator, ta_func='rsi', window=6),
+            mnt_rsi_24=dict(cls=RSIIndicator, ta_func='rsi', window=24),
             mnt_pvo=dict(cls=PercentageVolumeOscillator, ta_func='pvo'),
             mnt_roc=dict(cls=ROCIndicator, ta_func='roc', window=window),
-            mnt_stoch=dict(cls=StochasticOscillator, ta_func='stoch', window=24, smooth_window=12),
+            mnt_stoch=dict(cls=StochasticOscillator, ta_func='stoch', window=12, smooth_window=12),
             mnt_tsi=dict(cls=TSIIndicator, ta_func='tsi'),
             mnt_ultimate=dict(cls=UltimateOscillator, ta_func='ultimate_oscillator'),
             mnt_awesome=dict(cls=AwesomeOscillatorIndicator, ta_func='awesome_oscillator', window1=10, window2=50, params=dict(window1=[6, 12, 18], window2=[36, 50, 200])),
@@ -365,11 +369,15 @@ class Volatility(SignalGroup):
 class Trend(SignalGroup):
     def __init__(self, **kw):
         kw['signals'] = dict(
-                trend_adx=dict(cls=ADXIndicator, ta_func='adx'),
-                trend_aroon=dict(cls=AroonIndicator, ta_func='aroon_indicator'),
-                trend_cci=dict(cls=CCIIndicator, ta_func='cci'),
-                trend_mass=dict(cls=MassIndex, ta_func='mass_index'),
-                trend_stc=dict(cls=STCIndicator, ta_func='stc')
+                trend_adx=dict(cls=ADXIndicator, ta_func='adx', window=36),
+                trend_aroon=dict(cls=AroonIndicator, ta_func='aroon_indicator', window=25),
+                trend_cci=dict(cls=CCIIndicator, ta_func='cci', window=20, constant=0.015),
+                trend_mass=dict(cls=MassIndex, ta_func='mass_index', window_fast=9, window_slow=25),
+                trend_stc=dict(cls=STCIndicator, ta_func='stc'),
+                # trend_dpo=dict(cls=DPOIndicator, ta_func='dpo'),
+                trend_kst=dict(cls=KSTIndicator, ta_func='kst'),
+                trend_trix=dict(cls=TRIXIndicator, ta_func='trix', window=48),
+                
         )
         
         super().__init__(**kw)
@@ -561,9 +569,9 @@ class Candle(SignalGroup):
             ema200_v_high=lambda x: np.abs(x.High - x.ema200) / x.Open,
             ema200_v_low=lambda x: np.abs(x.Low - x.ema200) / x.Open,
             # ema50_v_close=lambda x: (x.Close - x.ema50) / x.Close,
-            min_n=lambda x: x.Low.rolling(n_periods).min(),
-            range_n=lambda x: (x.High.rolling(n_periods).max() - x.min_n),
-            close_v_range=lambda x: (x.Close - x.min_n) / x.range_n,
+            # min_n=lambda x: x.Low.rolling(n_periods).min(),
+            # range_n=lambda x: (x.High.rolling(n_periods).max() - x.min_n),
+            # close_v_range=lambda x: (x.Close - x.min_n) / x.range_n,
             high_above_prevhigh=lambda x: np.where(x.High > x.pxhigh, 1, 0),
             close_above_prevhigh=lambda x: np.where(x.Close > x.pxhigh, 1, 0),
             low_below_prevlow=lambda x: np.where(x.Low < x.pxlow, 1, 0),
@@ -572,9 +580,18 @@ class Candle(SignalGroup):
             sell_pressure=lambda x: (x.Close - x.High.rolling(2).max().shift(1)) / x.Close,
         )
 
+
         super().__init__(**kw)
         drop_cols = ['min_n', 'range_n', 'pxhigh', 'pxlow']
         f.set_self(vars())
+
+    def close_v_range(self, df, n_periods=24):
+        col = f'close_v_range_{n_periods}'
+        min_n = df.Low.rolling(n_periods).min()
+        range_n = (df.High.rolling(n_periods).max() - min_n)
+        df[col] = (df.Close - min_n) / range_n
+        df[col] = df[col].fillna(df[col].mean())
+        return df
 
     def add_all_signals(self, df):
         # NOTE could be kinda wrong div by Open, possibly try div by SMA?
@@ -586,7 +603,25 @@ class Candle(SignalGroup):
             .pipe(lambda df: df.fillna(value=dict(
                 buy_pressure=0,
                 sell_pressure=0,
-                close_v_range=df.close_v_range.mean())))
+                # close_v_range=df.close_v_range.mean()
+                ))) \
+            .pipe(self.close_v_range, n_periods=96) \
+            # .pipe(self.close_v_range, n_periods=24) \
+            # .pipe(self.close_v_range, n_periods=384) \
+
+class CandlePatterns(SignalGroup):
+    def __init__(self, **kw):
+
+        super().__init__()
+
+    def add_all_signals(self, df):
+        candle_names = tb.get_function_groups()['Pattern Recognition']
+
+        for candle_name in candle_names:
+            df[candle_name] = getattr(tb, candle_name)(df.Open, df.High, df.Low, df.Close)
+
+        return df
+        # return super().add_all_signals(df)
 
 class TargetClass(SignalGroup):
     """
@@ -595,12 +630,18 @@ class TargetClass(SignalGroup):
     - higher, lower, or same in x periods into future (10?)
     - same = (within x%, 0.5? > scale this based on daily volatility)
     - calc close price vs current price, x periods in future (rolling method)
+    # NOTE doesn't work currently need to redo with kw['signals]
     """
     def __init__(self, p_ema=10, n_periods=10, pct_min=0.02, **kw):
         super().__init__(**kw)
         ema_col = f'ema{p_ema}' # named so can drop later
         pct_min = pct_min / 2
 
+        f.set_self(vars())
+
+class TargetMeanEMA(TargetClass):
+    def __init__(self, **kw):
+        super().__init__(**kw)
         f.set_self(vars())
     
     def add_all_signals(self, df):
@@ -623,23 +664,18 @@ class TargetMean(TargetClass):
     - maybe - bin into % ranges?
     """
     def __init__(self, **kw):
+        n_periods, pct_min = kw['n_periods'], kw['pct_min']
+
+        kw['signals'] = dict(
+            pct_future=lambda x: (x.Close.shift(-1 * n_periods).rolling(n_periods).mean() - x.Close),
+            target=lambda x: np.where(x.pct_future > pct_min, 1, -1),
+        )
+
         super().__init__(**kw)
 
-        f.set_self(vars())
-    
-    def add_all_signals(self, df):
-        pct_min = self.pct_min
+        drop_cols = ['pct_future']
+        f.set_self(vars())   
 
-            # .pipe(add_ema, p=self.p_ema) \
-                # pct_future=lambda x: (x.Close.shift(-1 * self.n_periods).rolling(self.n_periods).mean() - x.Close) / x.Close,
-                # target=lambda x: np.where(x.pct_future > pct_min, 1, np.where(x.pct_future < pct_min * -1, -1, 0))
-                
-        return df \
-            .assign(
-                pct_future=lambda x: (x.Close.shift(-1 * self.n_periods).rolling(self.n_periods).mean() - x.Close),
-                target=lambda x: np.where(x.pct_future > pct_min, 1, -1),
-                ) \
-            .drop(columns=['pct_future'])
 
 def add_emas(df, emas : list=None):
     """Convenience func to add both 50 and 200 emas"""
@@ -659,3 +695,116 @@ def add_ema(df, p, c='Close'):
         df[col] = EMAIndicator(close=df.Close, window=p, fillna=True).ema_indicator()
     
     return df
+
+def get_mom_acc(s: pd.Series, size: int=1):
+
+    d_dx = FinDiff(0, size, 1)
+    d2_dx2 = FinDiff(0, size, 2)
+    arr = np.asarray(s)
+    mom = d_dx(arr)
+    momacc = d2_dx2(arr)
+    return mom, momacc
+
+def get_extrema(is_min, mom, momacc, s, window: int=1):
+
+    if not isinstance(s, list):
+        s = s.tolist()
+
+    return [x for x in range(len(mom))
+        if (momacc[x] > 0 if is_min else momacc[x] < 0) and
+        (mom[x] == 0 or #slope is 0
+            (x != len(mom) - 1 and #check next day
+                (mom[x] > 0 and mom[x + 1] < 0 and
+                s[x] >= s[x + 1] or
+                mom[x] < 0 and mom[x + 1] > 0 and
+                s[x] <= s[x + 1]) or
+            x != 0 and #check prior day
+                (mom[x - 1] > 0 and mom[x] < 0 and
+                s[x - 1] < s[x] or
+                mom[x - 1] < 0 and mom[x] > 0 and
+                s[x - 1] > s[x])))]
+
+    # momentum greater than zero, momentum next less than zero
+    # AND price greater than next price
+    #  OR 
+    # momentum less than zero and momentum next gt zero
+    # ABD price less than next price
+    # 
+
+def add_extrema(df, side):
+
+    if side == 1:
+        name = 'maxima'
+        col = 'High'
+        func = 'max'
+        op = opr.gt
+        is_min = False
+    else:
+        name = 'minima'
+        col = 'Low'
+        func = 'min'
+        op = opr.lt
+        is_min = True
+
+    s = df[col]
+    if side == -1:
+        s = 1 / s
+    # mom, momacc = get_mom_acc(s=s, size=1)
+    # df_mom = pd.DataFrame(data={f'mom_{func}': mom, f'mom_acc_{func}': momacc}, index=df.index)
+    # idxs = get_extrema(is_min, mom, momacc, s)
+    idxs = peakutils.indexes(s, thres=0.2, min_dist=24, thres_abs=False)
+    df_extrema = df.iloc[idxs][col].rename(name)
+    
+    df = df.join(df_extrema) \
+        .assign(
+            **{
+                f'rolling_{func}': lambda x: getattr(x[col].rolling(6), func)().shift(1),
+                name: lambda x: np.where(op(x[name], x[f'rolling_{func}']), x[name], np.NaN),
+                f'{name}_fwd': lambda x: x[name].ffill()}) \
+        # .join(df_mom)
+
+    return df
+
+def _get_extrema(is_min, mom, momacc, h, window: int=1):
+
+    length = len(mom)
+    op = opr.gt
+    op = {True: opr.gt, False: opr.lt}.get(is_min)
+    lst = []
+
+    # for x in range(window, length - window):
+    #     if op(momacc[x], 0) and (
+    #         mom[x] == 0 or x != length - 1 
+
+
+    #     )
+
+    return lst
+
+# find peaks
+# is peak max of rolling previous n candles
+# filter on momentum value too?
+# check current price's proximity to
+# weight x previous peaks based on momentum?
+
+def test_peaks():
+    periods = 500
+    start = -1000
+    df2 = df.iloc[start: start + periods] \
+        .pipe(sg.add_extrema, side=1) \
+        .pipe(sg.add_extrema, side=-1)
+    
+    df2
+
+    traces = [
+        dict(name='maxima', func=ch.trace_extrema, row=1),
+        dict(name='minima', func=ch.trace_extrema, row=1),
+        # dict(name='mom_max', func=ch.scatter, row=2),
+        # dict(name='mom_acc_max', func=ch.scatter, row=2),
+        # dict(name='mom_min', func=ch.scatter, row=3),
+        # dict(name='mom_acc_min', func=ch.scatter, row=3)
+        ]
+
+
+    fig = ch.chart(df=df2, periods=periods, traces=traces, secondary_row_width=0.3)
+    fig.show()
