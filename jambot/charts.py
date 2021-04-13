@@ -13,6 +13,9 @@ from plotly.subplots import make_subplots
 from . import functions as f
 from . import sklearn_helper_funcs as sf
 
+from icecream import ic
+ic.configureOutput(prefix='')
+
 colors = dict(
     lightblue='#6df7ff',
     lightred='#ff6d6d'
@@ -145,7 +148,8 @@ def chart_orders(t, pre=36, post=None, width=900, fast=50, slow=200):
     fig.show()
 
 def add_traces(df, fig, traces):
-    """Create traces from list of dicts and add to fig"""
+    """Create traces from list of dicts and add to fig
+    - trace must be created with a function"""
     def _append_trace(trace, m):
         fig.append_trace(
             trace=trace,
@@ -304,6 +308,22 @@ def trades(df, name, **kw):
 
     return traces
 
+def trace_extrema(df, name, **kw):
+    """Add trace of indicators for high/low peaks"""
+    m = dict(
+        maxima=dict(symbol='triangle-down-open', color=colors['lightred']),
+        minima=dict(symbol='triangle-up-open', color=colors['lightblue'])) \
+        .get(name)
+
+    trace = go.Scatter(
+        name=name,
+        x=df.index,
+        y=df[name],
+        mode='markers',
+        marker=dict(size=5, symbol=m['symbol'], color=m['color'])
+    )
+    return [trace]
+
 def probas(df, **kw):
     df = df.copy()
     df.proba_short = df.proba_short * -1
@@ -336,9 +356,10 @@ def clean_traces(cols, traces):
     return [m for m in traces if m['name'] in cols or any(m['name'] == item for item in include)]
 
 def enum_traces(traces, base_num=2):
+    """Give traces a row number?"""
     return [{**m, **dict(row=m.get('row', None) or i + base_num)} for i, m in enumerate(traces)]
 
-def chart(df, symbol='XBTUSD', periods=200, last=True, startdate=None, df_balance=None, traces=None, default_range=None):
+def chart(df, symbol='XBTUSD', periods=200, last=True, startdate=None, df_balance=None, traces=None, default_range=None, secondary_row_width: float=0.12):
     """Main plotting func for showing main candlesticks with supporting subplots of features"""
     bgcolor = '#000B15'
     gridcolor='#182633'
@@ -366,7 +387,7 @@ def chart(df, symbol='XBTUSD', periods=200, last=True, startdate=None, df_balanc
         df = df.iloc[:periods, :]
     
     rows = max([m.get('row', 1) for m in traces])
-    row_widths = ([0.12] * (rows - 1) + [0.4])[rows * -1:]
+    row_widths = ([secondary_row_width] * (rows - 1) + [0.4])[rows * -1:]
     height = 1000 * sum(row_widths)
 
     # Set subplot titles

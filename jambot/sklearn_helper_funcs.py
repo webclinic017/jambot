@@ -9,6 +9,7 @@ from IPython.display import display
 from matplotlib.colors import LinearSegmentedColormap, ListedColormap
 from seaborn import diverging_palette
 from sklearn.compose import ColumnTransformer
+from sklearn.decomposition import PCA
 from sklearn.feature_extraction.text import CountVectorizer, _VectorizerMixin
 from sklearn.feature_selection import SelectKBest
 from sklearn.feature_selection._base import SelectorMixin
@@ -28,7 +29,7 @@ _cmap = diverging_palette(240, 10, sep=10, n=21, as_cmap=True)
 class ModelManager(object):
     """Manager class to perform cross val etc on multiple models with same underlying column transformer + data
     """    
-    def __init__(self, ct, scoring=None, cv_args=None):
+    def __init__(self, ct=None, scoring=None, cv_args=None, **kw):
         random_state = 0
         cv_args = cv_args if not cv_args is None else {}
         df_results = pd.DataFrame()
@@ -37,13 +38,64 @@ class ModelManager(object):
         models = {}
         grids = {}
         df_preds = {}
-        f.set_self(vars())
+        set_self(vars())
+
+        if any(item in kw for item in ('features', 'encoders')):
+            self.ct = self.make_column_transformer(**kw)
+    
+    def make_column_transformer(self, features : dict, encoders : dict, **kw) -> ColumnTransformer:
+        """Create ColumnTransformer from dicts of features and encoders
+
+        Parameters
+        ----------
+        features : dict
+            feature group names matched to columns
+        encoders : dict
+            feature group names matched to encoders, eg MinMaxScaler
+
+        Returns
+        -------
+        ColumnTransformer
+        """
+        ct = ColumnTransformer(
+            transformers=[(name, model, features[name]) for name, model in encoders.items()])
+
+        set_self(vars())
+        return ct
+    
+    def show_ct(self, X_train : pd.DataFrame=None):
+        X_train = X_train or getattr(self, 'X_train', None)
+        
+        if X_train is None:
+            raise AttributeError('X_train not set!')
+        
+        data = self.ct.fit_transform(X_train)
+        df_trans = df_transformed(data=data, ct=self.ct)
+        print(df_trans.shape)
+        display(df_trans.describe().T)
 
     def get_model(self, name : str, best_est=False):
         if best_est:
             return self.best_est(name=name)
         else:
             return self.models[name]
+
+    def cross_val_feature_params(self, signal_manager, name, model, feature_params: dict):
+        """Run full cross val pipe with single replacement of each feature in feature_params"""
+
+        for df, param_name in signal_manager.replace_single_feature(df=self.df, feature_params=feature_params):
+            
+            # need to remake train/test splits every time
+            X_train, y_train, X_test, y_test = self.make_train_test(
+                df=df,
+                target=['target'],
+                train_size=0.9,
+                shuffle=False)
+            
+            models = {f'{name}_{param_name}': model} # just remake models dict with modified param name as key
+            self.cross_val(models=models, show=False)
+
+        self.show()
 
     def cross_val(self, models : dict, show : bool=True, steps : list=None):
         """Perform cross validation on multiple classifiers
@@ -57,6 +109,9 @@ class ModelManager(object):
         steps : list, optional
             list of tuples of [(step_pos, (name, model)), ]
         """
+        if self.ct is None:
+            raise AttributeError('ColumnTransformer not init!')
+
         for name, model in models.items():
 
             # allow passing model definition, or instantiated model
@@ -68,6 +123,7 @@ class ModelManager(object):
             pipe = Pipeline(
                 steps=[
                     ('ct', self.ct),
+                    ('pca', PCA(n_components=10)),
                     (name, model)],
                 # memory=str(p_tmp)
                 )
@@ -100,7 +156,7 @@ class ModelManager(object):
         if model is None:
             model = self.pipes[name]
 
-        model.fit(self.X_train, self.y_train)
+        model.fit(self.X_train, self.y_train.values.ravel())
         return model
     
     def y_pred(self, X, model=None, **kw):
@@ -199,7 +255,7 @@ class ModelManager(object):
                 estimator=estimator,
                 **kw,
                 **self.cv_args) \
-            .fit(self.X_train, self.y_train)
+            .fit(self.X_train, self.y_train.values.ravel())
         
         self.grids[name] = grid
 
@@ -239,7 +295,7 @@ class ModelManager(object):
         X_train, y_train = split(df_train)
         X_test, y_test = split(df_test)
 
-        f.set_self(vars())
+        set_self(vars())
 
         return X_train, y_train, X_test, y_test
 
@@ -248,7 +304,7 @@ def shap_explainer_values(X, y, ct, model, n_sample=2000):
     """Create shap values/explainer to be used with summary or force plot"""
     data = ct.fit_transform(X)
     X_enc = df_transformed(data=data, ct=ct)
-    model.fit(X_enc, y)
+    model.fit(X_enc, y.values.ravel())
 
     # use smaller sample to speed up plot
     X_sample = X_enc.sample(n_sample, random_state=0)
@@ -459,3 +515,19 @@ def pretty_dict(m : dict, html=False, prnt=True) -> str:
         print(s)
     else:
         return s
+
+def set_self(m, prnt=False, exclude=()):
+    """Convenience func to assign an object's func's local vars to self"""
+    if not isinstance(exclude, tuple): exclude = (exclude, )
+    exclude += ('__class__', 'self') # always exclude class/self
+    obj = m.get('self', None) # self must always be in vars dict
+
+    if obj is None:
+        return
+
+    for k, v in m.items():
+        if prnt:
+            print(f'\n\t{k}: {v}')
+
+        if not k in exclude:
+            setattr(obj, k, v)

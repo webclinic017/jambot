@@ -130,7 +130,8 @@ class Account():
 
     def plot_balance(self, logy=False, title=None):
         """Show plot of account balance over time"""
-        self.df_balance.plot(kind='line', y='balance', logy=logy, linewidth=0.75, color='cyan', title=title)
+        # fig, axs = plt.subplots(figsize=(12, 6))
+        self.df_balance.plot(kind='line', y='balance', logy=logy, linewidth=1, title=title, figsize=(12, 4))
 
     def print_txns(self):
         data = []
