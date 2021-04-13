@@ -1,3 +1,7 @@
+# PCA
+# try to idenfity areas with high probability of a large move?
+# weight more recent values higher
+
 #%%
 # Imports
 if True:
@@ -8,7 +12,10 @@ if True:
     from datetime import timedelta as delta
     from pathlib import Path
 
+    import matplotlib as mpl
     import matplotlib.pyplot as plt
+    plt.style.use('dark_background')
+    plt.rcParams.update({"font.size": 14})
     import numpy as np
     import pandas as pd
     import seaborn as sns
@@ -37,7 +44,7 @@ if True:
                                 make_scorer, recall_score)
     from sklearn.model_selection import (GridSearchCV, RandomizedSearchCV,
                                         cross_val_score, cross_validate,
-                                        train_test_split)
+                                        train_test_split, TimeSeriesSplit)
     from sklearn.pipeline import Pipeline, make_pipeline, FeatureUnion
     from sklearn.preprocessing import (MinMaxScaler, OneHotEncoder, OrdinalEncoder,
                                     PolynomialFeatures, RobustScaler,
@@ -66,6 +73,7 @@ kw = dict(
     symbol='XBTUSD',
     daterange=365 * 5,
     startdate=dt(2018, 1, 1),
+    # startdate=dt(2017, 1, 1),
     interval=1)
 
 p = Path('df.csv')
@@ -86,10 +94,12 @@ print(f'DateRange: {df.index.min()} - {df.index.max()}')
 
 sm = sg.SignalManager()
 
-n_periods = 2
-# Target = sg.TargetClass
-Target = sg.TargetMean
-target_signal = Target(p_ema=10, n_periods=n_periods, pct_min=0.000000005)
+n_periods = 6
+Target = sg.TargetMeanEMA
+# Target = sg.TargetMean
+# pct_min = 0.01
+pct_min = 0.000000005 # long or short, no neutral
+target_signal = Target(p_ema=10, n_periods=n_periods, pct_min=pct_min)
 # sm_target = sg.SignalManager()
 # df = df.pipe(sm_target.add_signals, signals=[target_signal])
 
@@ -103,6 +113,7 @@ signals = [
     'Trend',
     'Candle',
     # 'SFP',
+    # 'CandlePatterns',
     target_signal
     ]
 
@@ -131,37 +142,34 @@ if True:
     # remove any cols not in df
     features = {name: [col for col in cols if col in df.columns] for name, cols in features.items()}
 
-    sf.pretty_dict(features)
+    # sf.pretty_dict(features)
     
     encoders = dict(
         drop='drop',
         passthrough='passthrough',
-        numeric=MinMaxScaler(),
+        numeric=MinMaxScaler(feature_range=(0,1)),
         )
 
-    ct = ColumnTransformer(
-        transformers=[(name, model, features[name]) for name, model in encoders.items()]
-    )
-
+    # cv = 5
+    n_splits = 3
+    train_size = 0.9
+    max_train_size = df.shape[0] * train_size / n_splits
+    cv = TimeSeriesSplit(n_splits=n_splits, max_train_size=int(max_train_size))
     scoring = dict(acc='accuracy') #, f1=f1_score, average='macro')
-    cv_args = dict(cv=5, n_jobs=-2, return_train_score=True, scoring=scoring)
-    mm = sf.ModelManager(ct=ct, scoring=scoring, cv_args=cv_args)
+    cv_args = dict(cv=cv, n_jobs=-2, return_train_score=True, scoring=scoring)
+
+    mm = sf.ModelManager(scoring=scoring, cv_args=cv_args)
+    ct = mm.make_column_transformer(features=features, encoders=encoders)
 
     # TRAIN TEST SPLIT
     X_train, y_train, X_test, y_test = mm.make_train_test(
         df=df,
         target=features['target'],
-        train_size=0.9,
+        train_size=train_size,
         shuffle=False)
 
 #%% - SHOW COLUMN TRANSFORMS
-run = True
-run = False
-if run:
-    data = ct.fit_transform(X_train)
-    df_trans = sf.df_transformed(data=data, ct=ct)
-    print(df_trans.shape)
-    display(df_trans.describe().T)
+# mm.show_ct()
 
 #%% - MODELS
 models = dict(
@@ -169,16 +177,30 @@ models = dict(
     # rnd_forest=RandomForestClassifier,
     # xgb=XGBClassifier,
     # ada=AdaBoostClassifier(),
-    lgbm=LGBMClassifier(num_leaves=5, n_estimators=50, max_depth=30, boosting_type='dart')
+    # lgbm=LGBMClassifier(),
+    lgbm=LGBMClassifier(num_leaves=50, n_estimators=50, max_depth=10, boosting_type='dart')
     )
     
 mm.cross_val(models)
 
-#%% - GRID - LGBMClassifier
+#%% - OPTIMIZE FEATURES
+if False:
+    feature_names = 'mnt_awesome'
+    params = sm.get_signal_params(feature_names=feature_names)
 
+    windows = [2, 6, 12, 18, 24, 36, 48]
+    windows = [96]
+    params = dict(trend_trix=dict(window=windows)) #, window_slow=windows, cycle=windows))
+    # params = dict(trend_cci=dict(constant=[0.05, 0.01, 0.015, 0.02, 0.04, 0.05, 0.06]))
+    sf.pretty_dict(params)
+
+    name='lgbm'
+    mm.cross_val_feature_params(signal_manager=sm, name=name, model=models[name], feature_params=params)
+
+#%% - GRID - LGBMClassifier
 # transformer__signalmanager__mnt_rsi__window
 # 
-best_est = True
+best_est = False
 if best_est:
     params = dict(
         boosting_type=['gbdt', 'dart', 'goss', 'rf'],
@@ -190,7 +212,7 @@ if best_est:
     grid = mm.search(
         name='lgbm',
         params=params,
-        search_type='random',
+        search_type='grid',
         refit='acc')
 
 #%% - ADD PREDICTIONS
@@ -202,7 +224,7 @@ name = 'lgbm'
 df_pred = mm.add_predict(df=df, name=name, best_est=best_est)
 
 #%% - CLASSIFICATION REPORT
-mm.class_rep('lgbm', best_est=best_est)
+# mm.class_rep('lgbm', best_est=best_est)
 
 #%% GRID - AdaBoostClassifier
 run_ada = False
@@ -220,7 +242,7 @@ if run_ada:
 
 #%% - RUN STRAT
 strat = ml.Strategy(
-    min_agree=2,
+    min_agree=6,
     lev=5,
     min_proba=0.5,
     slippage=0,
@@ -264,11 +286,11 @@ traces = [
     # dict(name='vol_eom', func=ch.scatter),
     # dict(name='vol_force', func=ch.scatter),
     # dict(name='vol_mfi', func=ch.scatter),
-    dict(name='vol_chaik', func=ch.scatter),
-    dict(name='vty_ulcer', func=ch.scatter),
-    dict(name='trend_adx', func=ch.scatter),
-    dict(name='trend_cci', func=ch.scatter),
-    dict(name='trend_mass', func=ch.scatter),
+    # dict(name='vol_chaik', func=ch.scatter),
+    # dict(name='vty_ulcer', func=ch.scatter),
+    # dict(name='trend_adx', func=ch.scatter),
+    # dict(name='trend_cci', func=ch.scatter),
+    # dict(name='trend_mass', func=ch.scatter),
 ]
 
 df_balance = strat.a.df_balance
