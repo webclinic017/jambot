@@ -1,9 +1,11 @@
 # PCA
 # try to idenfity areas with high probability of a large move?
 # weight more recent values higher
+# try min_agree cumulative % threshold instead of number
+# need to test constantly retraining model every x hours (24?)
+# additive interactions?
 
-#%%
-# Imports
+#%% - IMPORTS
 if True:
     import json
     import os
@@ -21,13 +23,7 @@ if True:
     import seaborn as sns
     import shap
     from IPython.display import display
-    from lightgbm.sklearn import LGBMClassifier
-    # import sklearn_helper_funcs as sf
-    # from lightgbm.sklearn import LGBMClassifier
-    # data
-
-    # from sklearn import set_config
-    # set_config(display='diagram')
+    from lightgbm.sklearn import LGBMClassifier, LGBMRegressor
 
     from sklearn.compose import ColumnTransformer, make_column_transformer
     # Classifiers
@@ -41,7 +37,7 @@ if True:
     from sklearn.linear_model import (LinearRegression, LogisticRegression, Ridge,
                                     RidgeCV)
     from sklearn.metrics import (accuracy_score, classification_report, f1_score,
-                                make_scorer, recall_score)
+                                make_scorer, recall_score, mean_squared_error)
     from sklearn.model_selection import (GridSearchCV, RandomizedSearchCV,
                                         cross_val_score, cross_validate,
                                         train_test_split, TimeSeriesSplit)
@@ -67,52 +63,56 @@ if True:
 
     # from mlxtend.feature_selection import SequentialFeatureSelector
 
-#%%
-# load df
-kw = dict(
-    symbol='XBTUSD',
-    daterange=365 * 5,
-    startdate=dt(2018, 1, 1),
-    # startdate=dt(2017, 1, 1),
-    interval=1)
+#%% - LOAD DF
+if True:
+    kw = dict(
+        symbol='XBTUSD',
+        daterange=365 * 5,
+        startdate=dt(2018, 1, 1),
+        # startdate=dt(2017, 1, 1),
+        interval=1)
 
-p = Path('df.csv')
-# if p.exists(): p.unlink()
+    p = Path('df.csv')
+    # if p.exists(): p.unlink()
 
-# read from db or csv
-if not p.exists() or dt.fromtimestamp(p.stat().st_mtime) < dt.now() + delta(days=-1):
-    df = db.get_dataframe(**kw) \
-        .drop(columns=['Timestamp', 'Symbol'])
-        
-    df.to_csv(p)
-else:
-    df = pd.read_csv(p, parse_dates=['Timestamp'], index_col='Timestamp')
+    # read from db or csv
+    if not p.exists() or dt.fromtimestamp(p.stat().st_mtime) < dt.now() + delta(days=-1):
+        df = db.get_dataframe(**kw) \
+            .drop(columns=['Timestamp', 'Symbol'])
+            
+        df.to_csv(p)
+    else:
+        df = pd.read_csv(p, parse_dates=['Timestamp'], index_col='Timestamp')
 
-print(f'DateRange: {df.index.min()} - {df.index.max()}')
+    print(f'DateRange: {df.index.min()} - {df.index.max()}')
 
 # %% - ADD SIGNALS
 
 sm = sg.SignalManager()
 
 n_periods = 6
-Target = sg.TargetMeanEMA
-# Target = sg.TargetMean
+p_ema = None # 6
+# Target = sg.TargetMeanEMA
+Target = sg.TargetMean
+# regression = True
+regression = False
 # pct_min = 0.01
-pct_min = 0.000000005 # long or short, no neutral
-target_signal = Target(p_ema=10, n_periods=n_periods, pct_min=pct_min)
+# pct_min = 0.000000005 # long or short, no neutral
+pct_min = 0
+target_signal = Target(p_ema=p_ema, n_periods=n_periods, pct_min=pct_min, regression=regression)
 # sm_target = sg.SignalManager()
 # df = df.pipe(sm_target.add_signals, signals=[target_signal])
 
 signals = [
     'EMA',
-    # 'EMASlope',
-    # 'Volatility',
     'Momentum',
-    # 'Volume',
-    # 'MACD',
     'Trend',
     'Candle',
-    # 'SFP',
+    'EMASlope',
+    'Volatility',
+    'Volume',
+    # 'MACD',
+    'SFP',
     # 'CandlePatterns',
     target_signal
     ]
@@ -122,7 +122,8 @@ df = sm.add_signals(df=df, signals=signals) \
     .iloc[:-1 * n_periods, :] \
     .dropna()
 
-sf.show_prop(df=df)
+if not regression:
+    sf.show_prop(df=df)
 
 #%% - FEATURES
 if True:
@@ -141,13 +142,11 @@ if True:
 
     # remove any cols not in df
     features = {name: [col for col in cols if col in df.columns] for name, cols in features.items()}
-
-    # sf.pretty_dict(features)
     
     encoders = dict(
         drop='drop',
         passthrough='passthrough',
-        numeric=MinMaxScaler(feature_range=(0,1)),
+        numeric=MinMaxScaler(feature_range=(0.5, 1)),
         )
 
     # cv = 5
@@ -155,14 +154,17 @@ if True:
     train_size = 0.9
     max_train_size = df.shape[0] * train_size / n_splits
     cv = TimeSeriesSplit(n_splits=n_splits, max_train_size=int(max_train_size))
-    scoring = dict(acc='accuracy') #, f1=f1_score, average='macro')
-    cv_args = dict(cv=cv, n_jobs=-2, return_train_score=True, scoring=scoring)
 
+    if not regression:
+        scoring = dict(acc='accuracy')
+    else:
+        scoring = dict(rmse='neg_root_mean_squared_error')
+
+    cv_args = dict(cv=cv, n_jobs=-2, return_train_score=True, scoring=scoring)
     mm = sf.ModelManager(scoring=scoring, cv_args=cv_args)
     ct = mm.make_column_transformer(features=features, encoders=encoders)
 
-    # TRAIN TEST SPLIT
-    X_train, y_train, X_test, y_test = mm.make_train_test(
+    x_train, y_train, x_test, y_test = mm.make_train_test(
         df=df,
         target=features['target'],
         train_size=train_size,
@@ -172,13 +174,13 @@ if True:
 # mm.show_ct()
 
 #%% - MODELS
+LGBM = LGBMRegressor if regression else LGBMClassifier
+
 models = dict(
-    # dummy=DummyClassifier(strategy='most_frequent'),
     # rnd_forest=RandomForestClassifier,
     # xgb=XGBClassifier,
     # ada=AdaBoostClassifier(),
-    # lgbm=LGBMClassifier(),
-    lgbm=LGBMClassifier(num_leaves=50, n_estimators=50, max_depth=10, boosting_type='dart')
+    lgbm=LGBM(num_leaves=50, n_estimators=50, max_depth=10, boosting_type='dart')
     )
     
 mm.cross_val(models)
@@ -198,8 +200,7 @@ if False:
     mm.cross_val_feature_params(signal_manager=sm, name=name, model=models[name], feature_params=params)
 
 #%% - GRID - LGBMClassifier
-# transformer__signalmanager__mnt_rsi__window
-# 
+
 best_est = False
 if best_est:
     params = dict(
@@ -214,14 +215,6 @@ if best_est:
         params=params,
         search_type='grid',
         refit='acc')
-
-#%% - ADD PREDICTIONS
-mm.save_model('lgbm', best_est=best_est)
-name = 'lgbm'
-# name = 'ada'
-# model = mm.load_model(name)
-# df_pred = mm.add_predict(df=df, name=name)
-df_pred = mm.add_predict(df=df, name=name, best_est=best_est)
 
 #%% - CLASSIFICATION REPORT
 # mm.class_rep('lgbm', best_est=best_est)
@@ -240,25 +233,45 @@ if run_ada:
         search_type='random',
         refit='acc')
 
+#%% - ADD PREDICT
+name = 'lgbm'
+model = models[name]
+# df2 = df[df.index > '2020-06-01'].copy()
+
+n_smooth = 6
+rolling_col = 'proba_long' if not regression else 'y_pred'
+
+# df_pred = mm.add_predict_iter(df=df, name=name, model=models[name], batch_size=24, max_train_size=None, regression=regression) \
+# df_pred = df_pred \
+#     .pipe(sg.add_ema, p=n_smooth, c=rolling_col, col='rolling_proba')
+    # .assign(rolling_proba=lambda x: x[rolling_col].rolling(n_smooth).mean())
+# df_pred_iter = df_pred.copy()
+# df_pred = df_pred_iter.copy()
+
 #%% - RUN STRAT
+# name = 'lgbm_poly'
+df_pred = mm.add_predict(df=df, name=name, best_est=False, proba=not regression) \
+    .pipe(sg.add_ema, p=n_smooth, c=rolling_col, col='rolling_proba')
+    # .assign(rolling_proba=lambda x: x[rolling_col].rolling(n_smooth).mean())
+
 strat = ml.Strategy(
-    min_agree=6,
-    lev=5,
+    min_agree=10,
+    lev=3,
     min_proba=0.5,
     slippage=0,
+    regression=regression,
     # stoppercent=-0.025,
-    # use_stops=True
     )
 idx = mm.df_test.index
 
 kw = dict(
     symbol='XBTUSD',
     # daterange=365 * 3,
+    # startdate=dt(2020, 8, 1),
     startdate=idx[0],
     # interval=1
     )
 
-print(f'Test range: {idx[0]} - {idx[-1]}')
 sym = bt.Backtest(**kw, strats=strat, df=df_pred)
 sym.decide_full()
 # f.print_time(start)
@@ -271,26 +284,21 @@ t = trades[-1]
 
 periods = 720
 # periods = 400
-startdate = dt(2020, 9, 20)
+# startdate = dt(2020, 8, 1)
 startdate = None
+split_val = 0.5 if not regression else 0
 
-df_chart = df_pred[df_pred.index >= X_test.index[0]]
+df_chart = df_pred[df_pred.index >= x_test.index[0]]
 # df_chart = df.copy()
 
 traces = [
     # dict(name='buy_pressure', func=ch.bar, color=ch.colors['lightblue']),
     # dict(name='sell_pressure', func=ch.bar, color=ch.colors['lightred']),
-    dict(name='probas', func=ch.probas),
+    # dict(name='probas', func=ch.probas),
+    dict(name=rolling_col, func=ch.split_trace, split_val=split_val),
+    dict(name='rolling_proba', func=ch.split_trace, split_val=split_val),
     # dict(name='vol_relative', func=ch.scatter),
     # dict(name='VolBTC', func=ch.bar),
-    # dict(name='vol_eom', func=ch.scatter),
-    # dict(name='vol_force', func=ch.scatter),
-    # dict(name='vol_mfi', func=ch.scatter),
-    # dict(name='vol_chaik', func=ch.scatter),
-    # dict(name='vty_ulcer', func=ch.scatter),
-    # dict(name='trend_adx', func=ch.scatter),
-    # dict(name='trend_cci', func=ch.scatter),
-    # dict(name='trend_mass', func=ch.scatter),
 ]
 
 df_balance = strat.a.df_balance
@@ -332,30 +340,12 @@ fig = ch.chart(
     last=True,
     startdate=startdate,
     df_balance=strat.a.df_balance,
-    traces=traces)
+    traces=traces,
+    regression=regression)
 fig.show()
 
 #%% - SHAP PLOT
-# model = mm.get_model(name='lgbm', best_est=True)
-model = mm.models['lgbm']
-# model.fit_transform
-explainer, shap_values, X_sample, X_enc = sf.shap_explainer_values(X=X_train, y=y_train, ct=ct, model=model)
-
-# show shap plot
-shap.summary_plot(
-    shap_values=shap_values[0],
-    features=X_sample, # X_train_sample
-    plot_type='violin',
-    axis_color='white')
-
-#%% - SHAP FORCE PLOT
-shap.initjs()
-
-explainer, shap_values, X_sample, X_enc = sf.shap_explainer_values(X=X_test, y=y_test, ct=ct, model=model)
-
-n = 0
-shap.force_plot(
-    explainer.expected_value[0], shap_values[0][n, :], X_enc.iloc[n, :])
+mm.shap_plot(name=name)
 
 #%% - RIDGE
 models = dict(
@@ -365,11 +355,11 @@ extra_steps = (1, ('rfecv', RFECV(Ridge()))) # must insert rfecv BEFORE other mo
 mm.cross_val(models, steps=extra_steps)
 
 #%% - RFECV SHOW FEATURES
-data = ct.fit_transform(X_train)
+data = ct.fit_transform(x_train)
 df_trans = sf.df_transformed(data=data, ct=ct).describe().T
 
 pipe_rfe = mm.pipes['lgbm_rfecv']
-pipe_rfe.fit(X_train, y_train) # need fit pipe again outside of cross_validate
+pipe_rfe.fit(x_train, y_train) # need fit pipe again outside of cross_validate
 rfecv = pipe_rfe.named_steps['rfecv']
 rfecv.n_features_
 
@@ -391,6 +381,6 @@ mm.cross_val(models, steps=extra_steps)
 
 #%%
 pipe_rfe = mm.pipes['lgbm_poly']
-pipe_rfe.fit(X_train, y_train)
+pipe_rfe.fit(x_train, y_train)
 rfecv = pipe_rfe.named_steps['rfecv']
 rfecv.n_features_
