@@ -198,6 +198,62 @@ class ModelManager(object):
         """Concat df of predict_proba"""
         return pd.concat([df, self.df_proba(**kw)], axis=1) if do else df
 
+    def add_predict_iter(self, df, name, model, batch_size: int=96, min_size: int=180*24, max_train_size=None, regression=True):
+        """Retrain model every x periods and add predictions for next batch_size"""
+        df_train = df.copy()
+        df = df.copy()
+
+        df['y_pred'] = np.NaN
+        if not regression:
+            df['proba_long'] = np.NaN
+            
+        nrows = df.shape[0]
+        num_batches = ((nrows - min_size) // batch_size) + 1
+
+        pipe = self.make_pipe(name=name, model=model)
+        
+        # return num_batches
+        for i in tqdm(range(num_batches)):
+
+            i_lower = min_size + i * batch_size
+            i_upper = min(i_lower + batch_size, nrows + 1)
+            idx = df.index[i_lower: i_upper]
+
+            # max number of rows to train on
+            # if max_train_size is None:
+            #     max_train_size = i_lower
+            
+            # train model up to current position
+            x_train, y_train = split(
+                df_train.iloc[0: i_lower],
+                target=self.target)
+
+            pipe.fit(
+                x_train,
+                y_train.values.ravel(),
+                lgbm__sample_weight=np.linspace(0.5, 1, x_train.shape[0]))
+
+            # add preds to model
+            x_test, _ = split(df_train.loc[idx], target=self.target)
+            y_pred = pipe.predict(x_test)
+            y_true = df.loc[idx, self.target]
+
+            if not regression:
+                df.loc[idx, 'proba_long'] = self.df_proba(df=x_test, model=pipe)['proba_long'].values
+
+            # rmse = mean_squared_error(y_true=y_true, y_pred=y_pred, squared=False)
+
+            df.loc[idx, 'y_pred'] = y_pred
+
+        df_final = df[[self.target, 'y_pred']].dropna()
+        # rmse_final = mean_squared_error(
+        #     y_true=df_final[self.target].values,
+        #     y_pred=df_final['y_pred'].values,
+        #     squared=False)
+        # print(f'\nrmse_final: {rmse_final:.4f}')
+
+        return df
+
     def add_predict(self, df, proba=True, **kw):
         """Add predicted vals to df"""
         df = df \
