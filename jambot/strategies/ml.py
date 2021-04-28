@@ -5,8 +5,12 @@ from .. import (
 from ..backtest import Order, Strategy, Trade
 
 class Strategy(Strategy):
-    def __init__(self, min_proba=0.5, min_agree=0, stoppercent=-0.03, min_proba_enter=0.8, num_disagree=0, min_agree_pct=0.8, use_stops=False, **kw):
+    def __init__(self, min_proba=0.5, min_agree=0, stoppercent=None, min_proba_enter=0.8, num_disagree=0, min_agree_pct=0.8, regression=False, **kw):
         super().__init__(**kw)
+
+        use_stops = True if not stoppercent is None else False
+        split_val = 0 if regression else 0.5
+
         f.set_self(vars())
 
     def init(self, sym):
@@ -37,7 +41,11 @@ class Strategy(Strategy):
         t = self.trade
         # self.i = c.Index
         
-        cur_side = c.y_pred
+        # cur_side = c.y_pred
+        # assign current side based on rolling proba
+        
+        cur_side = 1 if c.rolling_proba > self.split_val else -1
+
         cur_price = c.Close
         if not t is None:
             side = t.side
@@ -48,21 +56,27 @@ class Strategy(Strategy):
         # track current trade side
         # check if side changed (y_pred)
         if not cur_side == 0 and not side == cur_side:
+            self.exit_trade(exit_price=cur_price)
+            self.enter_trade(side=cur_side, entry_price=cur_price)
 
-            proba = {
-                -1: c.proba_short,
-                1: c.proba_long}.get(cur_side)
+            # proba = {
+            #     -1: c.proba_short,
+            #     1: c.proba_long}.get(cur_side)
             
-            # check if prev predictions agree to minimize excessive switching
-            i = df.index.get_loc(c.Index)
-            s = df.iloc[i - self.min_agree: i, self.icol_y_pred] \
-                .pipe(lambda s: s[s != 0])
+            # # check if prev predictions agree to minimize excessive switching
+            # i = df.index.get_loc(c.Index)
+            # s = df.iloc[i - self.min_agree: i, self.icol_y_pred] \
+            #     .pipe(lambda s: s[s != 0])
 
-            if all(s == cur_side): # or proba > self.min_proba_enter:
+            # if all(s == cur_side): # or proba > self.min_proba_enter:
 
-                if proba > self.min_proba:
-                    self.exit_trade(exit_price=cur_price)
-                    self.enter_trade(side=cur_side, entry_price=cur_price)
+            #     if proba > self.min_proba:
+            #         self.exit_trade(exit_price=cur_price)
+            #         self.enter_trade(side=cur_side, entry_price=cur_price)
+        
+        # close final trade at last candle to see pnl
+        if c.Index == df.index[-1]:
+            self.exit_trade(exit_price=cur_price)
     
 class Trade(Trade):
     def __init__(self):
