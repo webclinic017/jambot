@@ -185,6 +185,7 @@ class Backtest():
 
             self.i = 1
             self.candles = []
+            df = df[df.index >= self.startdate]
             
             if df is None:
                 self.df = db.get_dataframe(symbol=symbol, startdate=startdate, daterange=daterange)
@@ -206,7 +207,10 @@ class Backtest():
 
     def decide_full(self):
         df = self.df
+        idx = df.index
+        print(f'Test range: {idx[0]} - {idx[-1]}')
         length = len(df)
+
         for c in df.itertuples():
             self.init_candle(c=c)
             
