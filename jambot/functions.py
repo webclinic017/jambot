@@ -5,6 +5,7 @@ from datetime import (datetime as dt, timedelta as delta)
 from pathlib import Path
 from sys import platform
 from time import time
+import yaml
 
 import pandas as pd
 import pyodbc
@@ -158,6 +159,12 @@ def key(symbol, name, side, ordtype):
 
 def col(df, col):
     return df.columns.get_loc(col)
+
+def binance_creds():
+    p = topfolder / 'data/ApiKeys/binance.yaml'
+    with open(p) as file:
+        m = yaml.full_load(file)
+    return m
 
 def discord(msg, channel='jambot'):
     import requests
