@@ -83,7 +83,7 @@ drop
 """
 
 class SignalManager(BaseEstimator, TransformerMixin):
-    def __init__(self, signals_list : list=None):
+    def __init__(self, signals_list : list=None, target: str=None, prefix: str=None):
         # df_orig = df.copy()
         signal_groups = {}
         features = {} # map of {feature_name: signal_group}
@@ -138,9 +138,11 @@ class SignalManager(BaseEstimator, TransformerMixin):
         return self.cols
         # return self.df.columns.to_list()
 
-    def add_signals(self, df, signals : list=None, signal_params : dict=None) -> pd.DataFrame:
+    def add_signals(self, df, signals : list=None, signal_params : dict=None, **kw) -> pd.DataFrame:
         """Add multiple initialized signals to dataframe"""
         # df = self.df
+        if signals is None:
+            signals = self.signals_list
 
         # convert input dict/single str to list
         if isinstance(signals, dict): signals = list(signals.values())
@@ -152,16 +154,28 @@ class SignalManager(BaseEstimator, TransformerMixin):
 
             # if str, init obj with defauls args
             if isinstance(signal_group, str):
-                signal_group = getattr(sys.modules[__name__], signal_group)()
+                signal_group = getattr(sys.modules[__name__], signal_group)(target=self.target)
             
             self.signal_groups[signal_group.__class__.__name__.lower()] = signal_group
 
             signal_group.df = df # NOTE kinda sketch
-            df = df.pipe(signal_group.add_all_signals)
+            df = df.pipe(signal_group.add_all_signals, **kw)
 
         self.df = df
 
         return df
+    
+    def show_signals(self):
+        m = dd(dict)
+        for name, signal_group in self.signal_groups.items():
+            
+            for sig_name, params in signal_group.signals.items():
+                if 'cls' in params:
+                    m[name].update({sig_name: params['cls'].__name__})
+                else:
+                    m[name].update({sig_name: ''})
+
+        sf.pretty_dict(m)
 
     def replace_single_feature(self, df, feature_params : dict, **kw) -> pd.DataFrame:
         """Generator to replace single feature at a time with new values from params dict"""
@@ -170,12 +184,11 @@ class SignalManager(BaseEstimator, TransformerMixin):
             # get signal group from feature_name
             signal_group = self.get_signal_group(feature_name=feature_name)
 
-            for param, vals in m.items():              
+            for param, vals in m.items():
                 for val in vals:
                     param_single = {feature_name: {param: val}} # eg {'mnt_rsi': {'window': 12}}
                     yield df.pipe(signal_group.assign_signals, params=param_single), f'{feature_name}_{param}_{val}'
 
-    
     def make_plot_traces(self, name) -> list:
         """Create list of dicts for plot traces"""
         name = name.lower()
@@ -204,7 +217,7 @@ class SignalGroup():
         close='Close',
         volume='VolBTC')
 
-    def __init__(self, df=None, signals=None, fillna=True, **kw):
+    def __init__(self, target=None, df=None, signals=None, fillna=True, prefix: str=None, **kw):
         drop_cols = []
         signals = self.init_signals(signals)
         f.set_self(vars())
@@ -232,9 +245,9 @@ class SignalGroup():
 
         return signals
     
-    def add_all_signals(self, df):
+    def add_all_signals(self, df, **kw):
         """Convenience base wrapper to work with ta/non-ta signals"""
-        df = df.pipe(self.assign_signals)
+        df = df.pipe(self.assign_signals, **kw)
 
         drop_cols = [col for col in self.drop_cols if col in df.columns]
 
@@ -267,6 +280,10 @@ class SignalGroup():
                 final_signals[feature_name] = m['func']
             else:
                 raise AttributeError('No func to assign from signal!')
+
+        # rename cols with prefix_
+        if self.prefix:
+            final_signals = {f'{self.prefix}_{k}': v for k, v in final_signals.items()}
 
         return df \
             .assign(**final_signals)
@@ -310,6 +327,31 @@ class SignalGroup():
         tnow = tseries.iloc[i]
         tprev = tseries.iloc[i - 1]
         return not tnow == side and not tnow == tprev
+
+class FeatureInteraction(SignalGroup):
+    """Calc differenc btwn two columns"""
+    def __init__(self, cols, int_type='sub', **kw):
+        kw['signals'] = dict()
+
+        super().__init__(**kw)
+
+        op = dict(
+            sub=np.subtract,
+            add=np.add,
+            mul=np.multiply,
+            div=np.divide) \
+        .get(int_type)
+
+        f.set_self(vars())
+    
+    def add_all_signals(self, df, **kw):
+        cols = self.cols
+        scaler = MinMaxScaler()
+        cols_scaled = scaler.fit_transform(df[cols])
+        cols_int = self.op(cols_scaled.T[0], cols_scaled.T[1])
+
+        # name = f'{cols[0]}_{cols[1]}_diff'
+        return df.assign(**{self.int_type: cols_int})
 
 class Momentum(SignalGroup):
     def __init__(self, window=2, **kw):
@@ -663,18 +705,23 @@ class TargetMean(TargetClass):
     Calc avg price of next n close prices
     - maybe - bin into % ranges?
     """
-    def __init__(self, **kw):
-        n_periods, pct_min = kw['n_periods'], kw['pct_min']
+    def __init__(self, n_periods, regression=False, pct_min=0, **kw):
 
-        kw['signals'] = dict(
-            pct_future=lambda x: (x.Close.shift(-1 * n_periods).rolling(n_periods).mean() - x.Close),
-            target=lambda x: np.where(x.pct_future > pct_min, 1, -1),
-        )
+        if not regression:
+            kw['signals'] = dict(
+                pct_future=lambda x: (x.Close.shift(-1 * n_periods).rolling(n_periods).mean() - x.Close),
+                target=lambda x: np.where(x.pct_future > pct_min, 1, -1),
+            )
+            drop_cols = ['pct_future']
+        
+        else:
+            # just use % diff for regression instead of -1/1 classification
+            kw['signals'] = dict(
+                target=lambda x: (x.Close.shift(-1 * n_periods).rolling(n_periods).mean() - x.Close) / x.Close)
 
         super().__init__(**kw)
 
-        drop_cols = ['pct_future']
-        f.set_self(vars())   
+        f.set_self(vars())
 
 
 def add_emas(df, emas : list=None):
@@ -687,12 +734,14 @@ def add_emas(df, emas : list=None):
     
     return df
 
-def add_ema(df, p, c='Close'):
+def add_ema(df, p, c='Close', col=None, overwrite=True):
     """Add ema from Close price to df if column doesn't already exist (more than one signal may add an ema"""
-    col = f'ema{p}'
-    if not col in df.columns:
+    if col is None:
+        col = f'ema{p}'
+
+    if not col in df.columns or overwrite:
         # df[col] = df[c].ewm(span=p, min_periods=p).mean()
-        df[col] = EMAIndicator(close=df.Close, window=p, fillna=True).ema_indicator()
+        df[col] = EMAIndicator(close=df[c], window=p, fillna=True).ema_indicator()
     
     return df
 
@@ -787,24 +836,24 @@ def _get_extrema(is_min, mom, momacc, h, window: int=1):
 # check current price's proximity to
 # weight x previous peaks based on momentum?
 
-def test_peaks():
-    periods = 500
-    start = -1000
-    df2 = df.iloc[start: start + periods] \
-        .pipe(sg.add_extrema, side=1) \
-        .pipe(sg.add_extrema, side=-1)
+# def test_peaks():
+#     periods = 500
+#     start = -1000
+#     df2 = df.iloc[start: start + periods] \
+#         .pipe(sg.add_extrema, side=1) \
+#         .pipe(sg.add_extrema, side=-1)
     
-    df2
+#     df2
 
-    traces = [
-        dict(name='maxima', func=ch.trace_extrema, row=1),
-        dict(name='minima', func=ch.trace_extrema, row=1),
-        # dict(name='mom_max', func=ch.scatter, row=2),
-        # dict(name='mom_acc_max', func=ch.scatter, row=2),
-        # dict(name='mom_min', func=ch.scatter, row=3),
-        # dict(name='mom_acc_min', func=ch.scatter, row=3)
-        ]
+#     traces = [
+#         dict(name='maxima', func=ch.trace_extrema, row=1),
+#         dict(name='minima', func=ch.trace_extrema, row=1),
+#         # dict(name='mom_max', func=ch.scatter, row=2),
+#         # dict(name='mom_acc_max', func=ch.scatter, row=2),
+#         # dict(name='mom_min', func=ch.scatter, row=3),
+#         # dict(name='mom_acc_min', func=ch.scatter, row=3)
+#         ]
 
 
-    fig = ch.chart(df=df2, periods=periods, traces=traces, secondary_row_width=0.3)
-    fig.show()
+#     fig = ch.chart(df=df2, periods=periods, traces=traces, secondary_row_width=0.3)
+#     fig.show()
