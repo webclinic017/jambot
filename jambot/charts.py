@@ -7,6 +7,7 @@ from datetime import timedelta as delta
 import plotly.graph_objs as go
 import plotly.offline as py
 import seaborn as sns
+import numpy as np
 from matplotlib import pyplot
 from plotly.subplots import make_subplots
 
@@ -225,7 +226,7 @@ def add_pred_trace(df, offset=2):
     # df['sma_low'] = df[['sma_low', 'Low']].min(axis=1) - s_offset
     return df
 
-def predictions(df, name, **kw):
+def predictions(df, name, regression=False, **kw):
     """Add traces of predicted 1, 0, -1 vals as shapes"""
     df = df.copy() \
         .pipe(add_pred_trace)
@@ -237,19 +238,29 @@ def predictions(df, name, **kw):
         
     traces = []
 
-    for name, v in m.items():
-        df2 = df[df.y_pred == v[0]]
+    for name, (side, color) in m.items():
+        
+        # convert pred pcts to 1/-1 for counting as 'correct' or not
+        if regression:
+            df.y_pred = np.where(df.y_pred > 0, 1, -1)
+            df.target = np.where(df.target > 0, 1, -1)
+
+        df2 = df[df.y_pred == side]
 
         # filter to prediction correct/incorrect
         m3 = {'': opr.eq, '-open': opr.ne}
         for shape_suff, op in m3.items():
+
             df3 = df2[op(df2.y_pred, df2.target)]
 
             # set hover label to proba % text
             fmt = lambda x, y: f'{y}: {x:.1%}'
-            text = df3.index.strftime('%Y-%m-%d %H') + '<br>' + \
-                df3.proba_long.apply(fmt, y='long') + '<br>' + \
-                df3.proba_short.apply(fmt, y='short')
+            text = df3.index.strftime('%Y-%m-%d %H') + '<br>'
+
+            if all(col in df.columns for col in ('proba_long', 'proba_short')):
+                text = text + \
+                    df3.proba_long.apply(fmt, y='long') + '<br>' + \
+                    df3.proba_short.apply(fmt, y='short')
 
             trace = go.Scatter(
                 name='preds',
@@ -258,7 +269,7 @@ def predictions(df, name, **kw):
                 mode='markers',
                 marker=dict(
                     size=4,
-                    color=v[1],
+                    color=color,
                     symbol=f'{name}{shape_suff}'),
                 text=text,
                 hoverinfo='text')
@@ -278,8 +289,8 @@ def trades(df, name, **kw):
     
     traces = []
 
-    for name, v in m.items():
-        df2 = df[df.trade_side == v[0]]
+    for name, (side, color) in m.items():
+        df2 = df[df.trade_side == side]
         m2 = {'': opr.gt, '-open': opr.lt}
 
         for shape_suff, op in m2.items():
@@ -299,7 +310,7 @@ def trades(df, name, **kw):
                 mode='markers',
                 marker=dict(
                     size=8,
-                    color=v[1],
+                    color=color,
                     symbol=f'{name}{shape_suff}'),
                 text=text,
                 hoverinfo='text')
@@ -323,6 +334,26 @@ def trace_extrema(df, name, **kw):
         marker=dict(size=5, symbol=m['symbol'], color=m['color'])
     )
     return [trace]
+
+def split_trace(df, name, split_val=0.5, **kw):
+    """Split trace into two at value, eg 0.5 for long/short traces"""
+    df = df.copy()
+    traces = []
+    oprs = [opr.lt, opr.gt]
+    clrs = [colors['lightblue'], colors['lightred']]
+
+    for color, op in zip(clrs, oprs):
+        df2 = df.copy()
+        df2.loc[op(df[name], split_val)] = split_val # set lower/higher values to 0.5
+
+        trace = scatter(
+            df=df2,
+            name=name,
+            color=color,
+            # fill='tonexty'
+            )
+        traces.append(trace)
+    return traces
 
 def probas(df, **kw):
     df = df.copy()
@@ -359,7 +390,7 @@ def enum_traces(traces, base_num=2):
     """Give traces a row number?"""
     return [{**m, **dict(row=m.get('row', None) or i + base_num)} for i, m in enumerate(traces)]
 
-def chart(df, symbol='XBTUSD', periods=200, last=True, startdate=None, df_balance=None, traces=None, default_range=None, secondary_row_width: float=0.12):
+def chart(df, symbol='XBTUSD', periods=200, last=True, startdate=None, df_balance=None, traces=None, default_range=None, secondary_row_width: float=0.12, **kw):
     """Main plotting func for showing main candlesticks with supporting subplots of features"""
     bgcolor = '#000B15'
     gridcolor='#182633'
@@ -368,7 +399,7 @@ def chart(df, symbol='XBTUSD', periods=200, last=True, startdate=None, df_balanc
         dict(name='ema10', func=scatter, color='orange', hoverinfo='skip'),
         dict(name='ema50', func=scatter, color='#18f27d', hoverinfo='skip'),
         dict(name='ema200', func=scatter, color='#9d19fc', hoverinfo='skip'),
-        dict(name='y_pred', func=predictions),
+        dict(name='y_pred', func=predictions, **kw),
         dict(name='candle', func=candlestick),
         ]
     
