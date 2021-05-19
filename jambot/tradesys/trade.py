@@ -13,8 +13,6 @@ class Trade(Observer):
     """Trade represents a sequence of orders
     - Must begin and end with 0 quantity
     """
-    opened = SignalEvent()
-    closed = SignalEvent()
 
     def __init__(
         self,
@@ -27,6 +25,9 @@ class Trade(Observer):
             **kw):
 
         super().__init__(**kw)
+
+        opened = SignalEvent()
+        closed = SignalEvent()
 
         orders = []
         status = TradeStatus.PENDING
@@ -68,8 +69,21 @@ class Trade(Observer):
     def is_open(self):
         return self.status == TradeStatus.OPEN
 
-    def step(self, c):
+    @property
+    def is_closed(self):
+        return self.status == TradeStatus.CLOSED
+
+    def step(self):
         pass
+
+    def add_orders(self, orders: list):
+        """Add multiple orders"""
+        for order in orders:
+            self.add_order(order)
+
+    @property
+    def num_orders(self):
+        return len(self.orders)
 
     def add_order(self, order: 'Order'):
         """Add order and connect filled method
@@ -84,18 +98,19 @@ class Trade(Observer):
         order.filled.connect(self.on_fill)
         self.broker.submit(order)
 
-    def make_order(self, order_spec: dict):
-        """Make single order and attach self to filled signal"""
+    # def make_order(self, order_spec: dict):
+    #     """Make single order and attach self to filled signal"""
 
-        order = ords.make_order(**order_spec)
-        order.filled.connect(self.on_fill)
+    #     order = ords.make_order(**order_spec)
+    #     order.filled.connect(self.on_fill)
 
-        return order
+    #     return order
 
     def on_fill(self, qty: int, *args):
         """Perform action when any orders filled"""
 
         # chose side based on first order filled
+
         if self.is_pending:
             self.side = np.sign(qty)
             self.status = TradeStatus.OPEN
@@ -112,7 +127,8 @@ class Trade(Observer):
 
         order = MarketOrder(
             qty=qty,
-            name='market_close')
+            name='market_close',
+            symbol=self.symbol)
 
         self.add_order(order)
 
@@ -143,7 +159,7 @@ class Trade(Observer):
 
     def close(self):
         self.status = TradeStatus.CLOSED
-        self.closed.emit()
+        # self.closed.emit()
         self.detach()
 
     def exit_trade(self):
@@ -185,15 +201,15 @@ class Trade(Observer):
     #     self.candles.append(cdl)
     #     self.cdl = cdl
 
-    def duration(self):
-        offset = -1 if self.partial else 0
-        return len(self.candles) + offset
+    # def duration(self):
+    #     offset = -1 if self.partial else 0
+    #     return len(self.candles) + offset
 
-    def check_timeout(self):
-        """Check if trade timed out"""
-        if self.duration() >= self.timeout:
-            self.timedout = True
-            self.active = False
+    # def check_timeout(self):
+    #     """Check if trade timed out"""
+    #     if self.duration() >= self.timeout:
+    #         self.timedout = True
+    #         self.active = False
 
     def pnl_acct(self):
         if self.exitbalance == 0:
