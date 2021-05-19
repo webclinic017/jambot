@@ -55,6 +55,7 @@ if True:
     # from jambot import optimization as op
     # from jambot import backtest as bt
     from jambot import charts as ch
+    from jambot import data
     from jambot import functions as f
     from jambot import signals as sg
     from jambot import sklearn_helper_funcs as sf
@@ -84,7 +85,7 @@ if True:
 
         df.to_csv(p)
     else:
-        df = pd.read_csv(p, parse_dates=['Timestamp'], index_col='Timestamp')
+        df = data.default_df()
 
     print(f'DateRange: {df.index.min()} - {df.index.max()}')
 

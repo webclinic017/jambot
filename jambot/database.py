@@ -15,7 +15,6 @@ from pypika import Order, Query
 from pypika import functions as fn
 
 from . import functions as f
-from . import livetrading as live
 
 global db
 
@@ -80,7 +79,8 @@ class DB(object):
     def update_all_symbols(self, u=None, interval=1):
         lst = []
         if u is None:
-            u = live.User()
+            from .livetrading import User
+            u = User()
 
         # loop query result, add all to dict with maxtime as KEY, symbols as LIST
         m = defaultdict(list)

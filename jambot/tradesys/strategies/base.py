@@ -23,7 +23,7 @@ class StrategyBase(Observer):
 
         f.set_self(vars())
 
-    def step(self, c):
+    def step(self):
         pass
 
     @property

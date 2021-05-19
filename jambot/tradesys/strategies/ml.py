@@ -54,7 +54,7 @@ class Strategy(StrategyBase):
 
         trade.add_order(order)
 
-    def step(self, c):
+    def step(self):
         # self.cdl = c
         # df = self.df
         t = self.trade
@@ -63,7 +63,7 @@ class Strategy(StrategyBase):
         # signal_side = c.y_pred # psar strat
         # assign current side based on rolling proba
 
-        signal_side = 1 if c.rolling_proba > self.split_val else -1
+        signal_side = 1 if self.c.rolling_proba > self.split_val else -1
 
         # cur_price = c.Close
         # if not t is None:
