@@ -14,6 +14,10 @@ class SignalEvent(object):
         self._funcs = []
         self._types = types
 
+    @property
+    def funcs(self):
+        return self._funcs
+
     def emit(self, *args):
         """Emit signal with specified args
 
@@ -74,7 +78,11 @@ class Observer(object, metaclass=ABCMeta):
     def listeners(self):
         return self._listeners
 
-    def attach(self, obj: 'Observer', c: tuple = None) -> None:
+    @property
+    def num_listeners(self):
+        return len(self.listeners)
+
+    def attach(self, obj: 'Observer') -> None:
         """Attach child listener"""
         # NOTE could check to make sure child is instance of listener as well?
 
@@ -91,7 +99,7 @@ class Observer(object, metaclass=ABCMeta):
             self.parent.listeners.remove(self)
 
     @abstractmethod
-    def step(self, c: tuple) -> None:
+    def step(self) -> None:
         """Perform specific actions at each timestep, must be implemmented by each object"""
         raise NotImplementedError('Must implement step in child class!')
 
@@ -102,7 +110,7 @@ class Observer(object, metaclass=ABCMeta):
 
         self.c = c
         self._duration += 1
-        self.step(c)
+        self.step()
 
     def to_dict(self):
         return {listener: listener.to_dict() for listener in self.listeners}
@@ -112,3 +120,20 @@ class Observer(object, metaclass=ABCMeta):
 
     # def __repr__(self) -> str:
     #     return str(self)
+
+
+class Clock(Observer):
+    """Top level observer to send timesteps using dataframe index"""
+
+    def __init__(self, df: pd.DataFrame):
+        super().__init__()
+        self.df = df
+        self._iterator = df.itertuples()
+
+    def next(self):
+        """Move all listeners forward one step"""
+        self._step(c=next(self._iterator))
+
+    def step(self):
+        """Move clock forward one timestep"""
+        pass
