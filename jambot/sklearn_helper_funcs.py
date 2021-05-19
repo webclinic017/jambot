@@ -3,28 +3,29 @@ import pickle
 import re
 import time
 from pathlib import Path
-from IPython.core.display import display_pdf
 
 import numpy as np
 import pandas as pd
+from icecream import ic
+from IPython.core.display import display_pdf
 from IPython.display import display
-from matplotlib.colors import LinearSegmentedColormap, ListedColormap # type: ignore
+from lightgbm import LGBMRegressor
+from matplotlib.colors import LinearSegmentedColormap  # type: ignore
+from matplotlib.colors import ListedColormap
 from seaborn import diverging_palette
 from sklearn.compose import ColumnTransformer
+from sklearn.decomposition import PCA
 from sklearn.feature_extraction.text import CountVectorizer, _VectorizerMixin
 from sklearn.feature_selection import SelectKBest
 from sklearn.feature_selection._base import SelectorMixin
 from sklearn.metrics import (accuracy_score, classification_report, f1_score,
-                             make_scorer, recall_score, mean_squared_error)
+                             make_scorer, mean_squared_error, recall_score)
 from sklearn.model_selection import (GridSearchCV, RandomizedSearchCV,
                                      cross_val_score, cross_validate,
                                      train_test_split)
 from sklearn.pipeline import Pipeline
-from sklearn.decomposition import PCA
-from lightgbm import LGBMRegressor
 from tqdm import tqdm
 
-from icecream import ic
 ic.configureOutput(prefix='')
 try:
     import shap
@@ -159,9 +160,8 @@ class ModelManager(object):
         pipe = Pipeline(
             steps=[
                 ('ct', self.ct),
-                ('pca', PCA(n_components=10, random_state=self.random_state)),
                 (name, model)],
-            # memory=str(p_tmp)
+            # ('pca', PCA(n_components=10, random_state=self.random_state)),
         )
 
         # insert extra steps in pipe, eg RFECV
@@ -189,7 +189,7 @@ class ModelManager(object):
         """
         if self.ct is None:
             raise AttributeError('ColumnTransformer not init!')
-        
+
         if df_scores is None:
             df_scores = self.df_results
 
@@ -219,14 +219,14 @@ class ModelManager(object):
 
         if show:
             self.show()
-        
+
     def show(self, df=None):
         if df is None:
             df = self.df_results
 
         show_scores(df)
 
-    def fit(self, name: str, best_est=False, model=None):
+    def fit(self, name: str, best_est=False, model=None, fit_params=None):
         """Fit model to training data"""
         if best_est:
             model = self.best_est(name)
@@ -234,7 +234,10 @@ class ModelManager(object):
         if model is None:
             model = self.pipes[name]
 
-        model.fit(self.x_train, self.y_train.values.ravel())
+        # allow passing in fit params eg lgbm__sample_weight=..
+        fit_params = fit_params or {}
+
+        model.fit(self.x_train, self.y_train.values.ravel(), **fit_params)
         return model
 
     def y_pred(self, X, model=None, **kw):
@@ -276,7 +279,16 @@ class ModelManager(object):
         """Concat df of predict_proba"""
         return pd.concat([df, self.df_proba(**kw)], axis=1) if do else df
 
-    def add_predict_iter(self, df, name, model, batch_size: int=96, min_size: int=180*24, max_train_size=None, regression=True):
+    def add_predict_iter(
+            self,
+            df,
+            name: str,
+            model=None,
+            pipe=None,
+            batch_size: int = 96,
+            min_size: int = 180 * 24,
+            max_train_size=None,
+            regression=True):
         """Retrain model every x periods and add predictions for next batch_size"""
         df_train = df.copy()
         df = df.copy()
@@ -284,12 +296,13 @@ class ModelManager(object):
         df['y_pred'] = np.NaN
         if not regression:
             df['proba_long'] = np.NaN
-            
+
         nrows = df.shape[0]
         num_batches = ((nrows - min_size) // batch_size) + 1
 
-        pipe = self.make_pipe(name=name, model=model)
-        
+        if pipe is None:
+            pipe = self.make_pipe(name=name, model=model)
+
         # return num_batches
         for i in tqdm(range(num_batches)):
 
@@ -300,7 +313,7 @@ class ModelManager(object):
             # max number of rows to train on
             # if max_train_size is None:
             #     max_train_size = i_lower
-            
+
             # train model up to current position
             x_train, y_train = split(
                 df_train.iloc[0: i_lower],
@@ -335,7 +348,8 @@ class ModelManager(object):
     def add_predict(self, df, proba=True, **kw):
         """Add predicted vals to df"""
         df = df \
-            .assign(y_pred=self.y_pred(X=df.drop(columns=[self.target]), **kw)) \
+            .assign(
+                y_pred=self.y_pred(X=df.drop(columns=[self.target]), **kw)) \
             .pipe(self.add_proba, do=proba, **kw)
 
         # save predicted values for each model
@@ -418,7 +432,7 @@ class ModelManager(object):
 
         Parameters
         ---------
-        target : list   
+        target : list
             target column to remove for y_
         """
         if not 'test_size' in kw:
@@ -442,6 +456,7 @@ class ModelManager(object):
             ct=self.ct,
             model=self.models[name],
             **kw)
+
 
 def shap_explainer_values(X, y, ct, model, n_sample=2000):
     """Create shap values/explainer to be used with summary or force plot"""
@@ -470,12 +485,13 @@ def shap_plot(X, y, ct, model, n_sample=2000):
         plot_type='violin',
         axis_color='white')
 
+
 def shap_top_features(shap_vals, X_sample):
     vals = np.abs(shap_vals).mean(0)
     return pd \
         .DataFrame(
             data=list(zip(X_sample.columns, vals)),
-            columns=['feature_name','importance']) \
+            columns=['feature_name', 'importance']) \
         .sort_values(by=['importance'], ascending=False)
 
 
@@ -551,7 +567,9 @@ def append_mean_std_score(df=None, scores=None, name=None, show=False, scoring: 
         name = name.steps[1][0]
 
     exclude = ['fit_time', 'score_time']
-    def name_cols(cols, type_): return {col: f'{type_}{col}' for col in cols}
+
+    def name_cols(cols, type_):
+        return {col: f'{type_}{col}' for col in cols}
 
     score_cols = [col for col in scores.keys() if not col in exclude]
     mean_cols = name_cols(score_cols, '')
@@ -768,8 +786,8 @@ def set_self(m, prnt=False, exclude=()):
 
 
 def remove_bad_chars(w: str):
-    """Remove any bad chars " : < > | . \ / * ? in string to make safe for filepaths"""
-    return re.sub('[":<>|.\\\/\*\?]', '', str(w))
+    """Remove any bad chars " : < > | . \ / * ? in string to make safe for filepaths"""  # noqa
+    return re.sub(r'[":<>|.\\\/\*\?]', '', str(w))
 
 
 def to_snake(s: str):
@@ -830,6 +848,7 @@ def mpl_dict(params):
     """"Convert _ to . for easier mpl rcparams grid definition"""
     return {k.replace('_', '.'): v for k, v in params.items()}
 
+
 def all_except(df, exclude: list):
     """Return all cols in df except exclude
 
@@ -843,13 +862,21 @@ def all_except(df, exclude: list):
     -------
     list
         list of all cols in df except exclude
-    """    
+    """
     return [col for col in df.columns if not any(col in lst for lst in exclude)]
 
-# scoring
+
+def df_proba(df, model, **kw):
+    """Return df of predict_proba, with timestamp index"""
+    arr = model.predict_proba(df)
+    m = {-1: 'short', 0: 'neutral', 1: 'long'}
+    cols = [f'proba_{m.get(c)}' for c in model.classes_]
+    return pd.DataFrame(data=arr, columns=cols, index=df.index)
+
 
 def smape(y_true, y_pred, h=1, **kw):
-    """Calculate symmetric mean absolute percentage error 
+    """Calculate symmetric mean absolute percentage error
+
     Parameters
     ----------
     y_true : array-like
@@ -858,12 +885,13 @@ def smape(y_true, y_pred, h=1, **kw):
         Predicted values
     h : int, optional
         The forecast horizon, by default 1
+
     Returns
     -------
-    float : 
+    float :
         The sMAPE of the `y_pred` against `y_true`
     """
-    return np.mean(2.0 * np.abs(y_true - y_pred) / ((np.abs(y_true) + np.abs(y_pred))*h))
+    return np.mean(2.0 * np.abs(y_true - y_pred) / ((np.abs(y_true) + np.abs(y_pred)) * h))
 
 
 def mase(y_true, y_pred, h=1, **kw):
@@ -884,7 +912,7 @@ def mase(y_true, y_pred, h=1, **kw):
     """
     d = np.abs(np.diff(y_true)).sum() / (y_pred.shape[0] - 1)
     errors = np.abs(y_true - y_pred)
-    return errors.mean()/(d*h)
+    return errors.mean() / (d * h)
     # assert mase(np.array([1,2,3,4,5,6]),np.array([2,3,4,5,6,7])) == 1.0, "MASE bust"
 
 
@@ -903,7 +931,7 @@ def avg_mase_smape(y_true, y_pred, h=1, **kw):
     float :
         The (SMAPE + MASE)/2 for `y_true` and `y_pred`
     """
-    return (smape(y_true, y_pred, h=h) + mase(y_true, y_pred, h=h))/2
+    return (smape(y_true, y_pred, h=h) + mase(y_true, y_pred, h=h)) / 2
 
 
 def reverse_pct(df, start_num, pct_col, num_col):
@@ -912,7 +940,7 @@ def reverse_pct(df, start_num, pct_col, num_col):
     for i in range(df.shape[0]):
         start_num = df[pct_col].iloc[i] * start_num + start_num
         nums_out.append(start_num)
-    
+
     return df \
         .assign(**{num_col: nums_out})
 # from statsmodels.tsa.api import ETSModel

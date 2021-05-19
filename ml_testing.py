@@ -1,11 +1,10 @@
 # PCA
 # try to idenfity areas with high probability of a large move?
 # weight more recent values higher
-# try min_agree cumulative % threshold instead of number
 # need to test constantly retraining model every x hours (24?)
 # additive interactions?
 
-#%% - IMPORTS
+# %% - IMPORTS
 if True:
     import json
     import os
@@ -17,53 +16,55 @@ if True:
     import matplotlib as mpl
     import matplotlib.pyplot as plt
     plt.style.use('dark_background')
-    plt.rcParams.update({"font.size": 14})
+    plt.rcParams.update({'font.size': 14})
     import numpy as np
     import pandas as pd
     import seaborn as sns
     import shap
     from IPython.display import display
     from lightgbm.sklearn import LGBMClassifier, LGBMRegressor
-
     from sklearn.compose import ColumnTransformer, make_column_transformer
+    from sklearn.decomposition import PCA
     # Classifiers
     from sklearn.dummy import DummyClassifier
-    from sklearn.ensemble import (AdaBoostClassifier, GradientBoostingClassifier,
-                                RandomForestClassifier)
+    from sklearn.ensemble import (AdaBoostClassifier,
+                                  GradientBoostingClassifier,
+                                  RandomForestClassifier)
     # other
     from sklearn.feature_selection import RFE, RFECV
     from sklearn.impute import SimpleImputer
     # classifiers / models
-    from sklearn.linear_model import (LinearRegression, LogisticRegression, Ridge,
-                                    RidgeCV)
-    from sklearn.metrics import (accuracy_score, classification_report, f1_score,
-                                make_scorer, recall_score, mean_squared_error)
+    from sklearn.linear_model import (LinearRegression, LogisticRegression,
+                                      Ridge, RidgeCV)
+    from sklearn.metrics import (accuracy_score, classification_report,
+                                 f1_score, make_scorer, mean_squared_error,
+                                 recall_score)
     from sklearn.model_selection import (GridSearchCV, RandomizedSearchCV,
-                                        cross_val_score, cross_validate,
-                                        train_test_split, TimeSeriesSplit)
-    from sklearn.pipeline import Pipeline, make_pipeline, FeatureUnion
-    from sklearn.preprocessing import (MinMaxScaler, OneHotEncoder, OrdinalEncoder,
-                                    PolynomialFeatures, RobustScaler,
-                                    StandardScaler)
+                                         TimeSeriesSplit, cross_val_score,
+                                         cross_validate, train_test_split)
+    from sklearn.pipeline import FeatureUnion, Pipeline, make_pipeline
+    from sklearn.preprocessing import (MinMaxScaler, OneHotEncoder,
+                                       OrdinalEncoder, PolynomialFeatures,
+                                       RobustScaler, StandardScaler)
     from sklearn.svm import SVC
     from sklearn.tree import (DecisionTreeClassifier, DecisionTreeRegressor,
-                            export_graphviz)
+                              export_graphviz)
     from xgboost import XGBClassifier
 
-    from jambot import backtest as bt
+    # from jambot import livetrading as live
+    # from jambot import optimization as op
+    # from jambot import backtest as bt
     from jambot import charts as ch
     from jambot import functions as f
-    from jambot import livetrading as live
-    from jambot import optimization as op
     from jambot import signals as sg
     from jambot import sklearn_helper_funcs as sf
-    from jambot.strategies import ml
+    # from jambot.strategies import ml
     from jambot.database import db
-    from jambot.strategies import trendrev
 
+    # from jambot.strategies import trendrev
     # from mlxtend.feature_selection import SequentialFeatureSelector
 
-#%% - LOAD DF
+# %% - LOAD DF
 if True:
     kw = dict(
         symbol='XBTUSD',
@@ -77,9 +78,10 @@ if True:
 
     # read from db or csv
     if not p.exists() or dt.fromtimestamp(p.stat().st_mtime) < dt.now() + delta(days=-1):
+        print('Downloading from db')
         df = db.get_dataframe(**kw) \
             .drop(columns=['Timestamp', 'Symbol'])
-            
+
         df.to_csv(p)
     else:
         df = pd.read_csv(p, parse_dates=['Timestamp'], index_col='Timestamp')
@@ -88,10 +90,10 @@ if True:
 
 # %% - ADD SIGNALS
 
-sm = sg.SignalManager()
+sm = sg.SignalManager(add_slope=False)
 
 n_periods = 6
-p_ema = None # 6
+p_ema = None  # 6
 # Target = sg.TargetMeanEMA
 Target = sg.TargetMean
 # regression = True
@@ -108,14 +110,14 @@ signals = [
     'Momentum',
     'Trend',
     'Candle',
-    'EMASlope',
-    'Volatility',
-    'Volume',
+    # 'EMASlope',
+    # 'Volatility',
+    # 'Volume',
     # 'MACD',
-    'SFP',
+    # 'SFP',
     # 'CandlePatterns',
     target_signal
-    ]
+]
 
 # drop last rows which we cant set proper target
 df = sm.add_signals(df=df, signals=signals) \
@@ -125,7 +127,7 @@ df = sm.add_signals(df=df, signals=signals) \
 if not regression:
     sf.show_prop(df=df)
 
-#%% - FEATURES
+# %% - FEATURES, MODELMANAGER
 if True:
     cols_ohlcv = ['Open', 'High', 'Low', 'Close', 'VolBTC']
     drop_feats = cols_ohlcv + ['ema10', 'ema50', 'ema200', 'pxhigh', 'pxlow']
@@ -135,32 +137,41 @@ if True:
         target=['target'],
         drop=drop_feats,
         passthrough=['ema_trend', 'ema_slope', 'cdl_side', 'macd_trend']
-        )
+    )
 
-    features['passthrough'] = features['passthrough'] + [col for col in df.columns if any(item in col for item in ('sfp', 'prevhigh', 'prevlow'))]
-    features['numeric'] = [col for col in df.columns if not any(col in lst for lst in features.values())]
+    features['passthrough'] = features['passthrough'] + \
+        [col for col in df.columns if any(item in col for item in ('sfp', 'prevhigh', 'prevlow'))]
+    features['numeric'] = sf.all_except(df, features.values())
 
     # remove any cols not in df
     features = {name: [col for col in cols if col in df.columns] for name, cols in features.items()}
-    
+
     encoders = dict(
         drop='drop',
         passthrough='passthrough',
-        numeric=MinMaxScaler(feature_range=(0.5, 1)),
-        )
+        numeric=MinMaxScaler(feature_range=(0, 1)))
 
-    # cv = 5
-    n_splits = 3
+    n_splits = 5
     train_size = 0.9
-    max_train_size = df.shape[0] * train_size / n_splits
-    cv = TimeSeriesSplit(n_splits=n_splits, max_train_size=int(max_train_size))
+    # max_train_size = int(df.shape[0] * train_size / n_splits)
+    max_train_size = None
+    cv = TimeSeriesSplit(n_splits=n_splits, max_train_size=max_train_size)
 
     if not regression:
-        scoring = dict(acc='accuracy')
+        scorer = ml.StratScorer()
+        final_scorer = lambda *args: scorer.score(*args, _type='final')
+        max_scorer = lambda *args: scorer.score(*args, _type='max')
+
+        scoring = dict(acc='accuracy', max=max_scorer, final=final_scorer)
     else:
         scoring = dict(rmse='neg_root_mean_squared_error')
 
-    cv_args = dict(cv=cv, n_jobs=-2, return_train_score=True, scoring=scoring)
+    # NOTE modified fit in lgbm.sklearn to accept callable
+    # fit_params = dict(
+    #     lgbm__sample_weight=lambda x: np.linspace(0.5, 1, x.shape[0]))
+    fit_params = None
+
+    cv_args = dict(cv=cv, n_jobs=1, return_train_score=True, scoring=scoring, fit_params=fit_params)
     mm = sf.ModelManager(scoring=scoring, cv_args=cv_args)
     ct = mm.make_column_transformer(features=features, encoders=encoders)
 
@@ -170,36 +181,38 @@ if True:
         train_size=train_size,
         shuffle=False)
 
-#%% - SHOW COLUMN TRANSFORMS
-# mm.show_ct()
-
-#%% - MODELS
+# %% - MODELS
 LGBM = LGBMRegressor if regression else LGBMClassifier
 
 models = dict(
     # rnd_forest=RandomForestClassifier,
     # xgb=XGBClassifier,
     # ada=AdaBoostClassifier(),
+    # lgbm=LGBM,
     lgbm=LGBM(num_leaves=50, n_estimators=50, max_depth=10, boosting_type='dart')
-    )
-    
-mm.cross_val(models)
+)
 
-#%% - OPTIMIZE FEATURES
+steps = [
+    (1, ('pca', PCA(n_components=15, random_state=mm.random_state)))]
+# steps = None
+
+mm.cross_val(models, steps=steps)
+
+# %% - OPTIMIZE FEATURES
 if False:
     feature_names = 'mnt_awesome'
     params = sm.get_signal_params(feature_names=feature_names)
 
     windows = [2, 6, 12, 18, 24, 36, 48]
     windows = [96]
-    params = dict(trend_trix=dict(window=windows)) #, window_slow=windows, cycle=windows))
+    params = dict(trend_trix=dict(window=windows))  # , window_slow=windows, cycle=windows))
     # params = dict(trend_cci=dict(constant=[0.05, 0.01, 0.015, 0.02, 0.04, 0.05, 0.06]))
     sf.pretty_dict(params)
 
-    name='lgbm'
+    name = 'lgbm'
     mm.cross_val_feature_params(signal_manager=sm, name=name, model=models[name], feature_params=params)
 
-#%% - GRID - LGBMClassifier
+# %% - GRID - LGBMClassifier
 
 best_est = False
 if best_est:
@@ -208,7 +221,7 @@ if best_est:
         n_estimators=[25, 50, 100],
         max_depth=[-1, 5, 10, 20, 30],
         num_leaves=[5, 10, 20, 40, 100],
-        )
+    )
 
     grid = mm.search(
         name='lgbm',
@@ -216,10 +229,10 @@ if best_est:
         search_type='grid',
         refit='acc')
 
-#%% - CLASSIFICATION REPORT
+# %% - CLASSIFICATION REPORT
 # mm.class_rep('lgbm', best_est=best_est)
 
-#%% GRID - AdaBoostClassifier
+# %% GRID - AdaBoostClassifier
 run_ada = False
 if run_ada:
     params = dict(
@@ -233,7 +246,7 @@ if run_ada:
         search_type='random',
         refit='acc')
 
-#%% - ADD PREDICT
+# %% - ADD PREDICT
 name = 'lgbm'
 model = models[name]
 # df2 = df[df.index > '2020-06-01'].copy()
@@ -241,51 +254,62 @@ model = models[name]
 n_smooth = 6
 rolling_col = 'proba_long' if not regression else 'y_pred'
 
-# df_pred = mm.add_predict_iter(df=df, name=name, model=models[name], batch_size=24, max_train_size=None, regression=regression) \
-# df_pred = df_pred \
-#     .pipe(sg.add_ema, p=n_smooth, c=rolling_col, col='rolling_proba')
-    # .assign(rolling_proba=lambda x: x[rolling_col].rolling(n_smooth).mean())
-# df_pred_iter = df_pred.copy()
-# df_pred = df_pred_iter.copy()
+if False:
+    # df_pred = mm.add_predict_iter(df=df, name=name, pipe=mm.pipes[name], batch_size=24*4, max_train_size=None, regression=regression) \
+    # .pipe(sg.add_ema, p=n_smooth, c=rolling_col, col='rolling_proba')
+    df_pred = df_pred \
+        .assign(rolling_proba=lambda x: x[rolling_col].rolling(n_smooth).mean())
+    df_pred_iter = df_pred.copy()
+    # df_pred = df_pred_iter.copy()
 
-#%% - RUN STRAT
-# name = 'lgbm_poly'
-df_pred = mm.add_predict(df=df, name=name, best_est=False, proba=not regression) \
+# %% - RUN STRAT
+fit_params = dict(
+    lgbm__sample_weight=np.linspace(0.5, 1, mm.df_train.shape[0]))
+fit_params = None
+
+# import talib as tb
+# df['psar'] = tb.SAR(df.High, df.Low, acceleration=0.02, maximum=0.2)
+# df['y_pred'] = np.where(df.Close > df.psar, -1, 1)
+# df_pred = df.copy()
+df_pred = mm.add_predict(
+    df=df,
+    name=name,
+    best_est=False,
+    proba=not regression,
+    fit_params=fit_params) \
     .pipe(sg.add_ema, p=n_smooth, c=rolling_col, col='rolling_proba')
-    # .assign(rolling_proba=lambda x: x[rolling_col].rolling(n_smooth).mean())
+# .assign(rolling_proba=lambda x: x[rolling_col].rolling(n_smooth).mean())
 
 strat = ml.Strategy(
-    min_agree=10,
     lev=3,
-    min_proba=0.5,
     slippage=0,
     regression=regression,
     # stoppercent=-0.025,
-    )
-idx = mm.df_test.index
+)
 
+idx = mm.df_test.index
 kw = dict(
     symbol='XBTUSD',
     # daterange=365 * 3,
     # startdate=dt(2020, 8, 1),
     startdate=idx[0],
     # interval=1
-    )
+)
 
-sym = bt.Backtest(**kw, strats=strat, df=df_pred)
+cols = ['Open', 'High', 'Low', 'Close', 'y_pred', 'proba_long', 'rolling_proba']
+sym = bt.Backtest(**kw, strat=strat, df=df_pred[cols])
 sym.decide_full()
-# f.print_time(start)
 sym.print_final()
 sym.account.plot_balance(logy=True)
 trades = strat.trades
 t = trades[-1]
 
-#%% - PLOT
+# %% - PLOT
 
-periods = 720
+periods = 30 * 24
 # periods = 400
-# startdate = dt(2020, 8, 1)
-startdate = None
+startdate = dt(2021, 1, 4)
+# startdate = None
 split_val = 0.5 if not regression else 0
 
 df_chart = df_pred[df_pred.index >= x_test.index[0]]
@@ -301,18 +325,18 @@ traces = [
     # dict(name='VolBTC', func=ch.bar),
 ]
 
-df_balance = strat.a.df_balance
+df_balance = strat.sym.account.df_balance
 # df_balance = None
 
 if not df_balance is None:
     traces.append(dict(name='balance', func=ch.scatter, color='#91ffff', stepped=True))
-    
+
     df_chart = df_chart.merge(right=df_balance, how='left', left_index=True, right_index=True) \
         .assign(balance=lambda x: x.balance.fillna(method='ffill'))
 
 
 # Add trade_side for trade entry indicators in chart
-df_trades = strat.result()
+df_trades = strat.df_trades()
 # df_trades = None
 
 if not df_trades is None:
@@ -325,11 +349,10 @@ if not df_trades is None:
         Exit='trade_exit')
 
     df_trades = df_trades.set_index('Timestamp') \
-        .rename(columns=rename_cols) \
-        [rename_cols.values()]
+        .rename(columns=rename_cols)[rename_cols.values()]
 
     df_chart = df_chart.merge(right=df_trades, how='left', left_index=True, right_index=True)
-        
+
 # enumerate row numbers
 # traces = [{**m, **dict(row=m.get('row', i+2))} for i, m in enumerate(traces)]
 # traces = None
@@ -339,27 +362,27 @@ fig = ch.chart(
     periods=periods,
     last=True,
     startdate=startdate,
-    df_balance=strat.a.df_balance,
+    df_balance=df_balance,
     traces=traces,
     regression=regression)
 fig.show()
 
-#%% - SHAP PLOT
+# %% - SHAP PLOT
 mm.shap_plot(name=name)
 
-#%% - RIDGE
+# %% - RIDGE
 models = dict(
     lgbm_rfecv=mm.models['lgbm'])
 
-extra_steps = (1, ('rfecv', RFECV(Ridge()))) # must insert rfecv BEFORE other model
+extra_steps = (1, ('rfecv', RFECV(Ridge())))  # must insert rfecv BEFORE other model
 mm.cross_val(models, steps=extra_steps)
 
-#%% - RFECV SHOW FEATURES
+# %% - RFECV SHOW FEATURES
 data = ct.fit_transform(x_train)
 df_trans = sf.df_transformed(data=data, ct=ct).describe().T
 
 pipe_rfe = mm.pipes['lgbm_rfecv']
-pipe_rfe.fit(x_train, y_train) # need fit pipe again outside of cross_validate
+pipe_rfe.fit(x_train, y_train)  # need fit pipe again outside of cross_validate
 rfecv = pipe_rfe.named_steps['rfecv']
 rfecv.n_features_
 
@@ -367,7 +390,7 @@ pd.DataFrame(data=rfecv.support_, columns=['Included'], index=df_trans.index) \
     .style \
     .apply(sf.highlight_val, subset=['Included'], m={True: (ch.colors['lightblue'], 'black')})
 
-#%%
+# %%
 # POLY
 models = dict(
     lgbm_poly=mm.models['lgbm'])
@@ -379,7 +402,7 @@ extra_steps = [
 
 mm.cross_val(models, steps=extra_steps)
 
-#%%
+# %%
 pipe_rfe = mm.pipes['lgbm_poly']
 pipe_rfe.fit(x_train, y_train)
 rfecv = pipe_rfe.named_steps['rfecv']

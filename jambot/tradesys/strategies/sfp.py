@@ -1,10 +1,11 @@
-from .. import (
-    backtest as bt,
-    signals as sg,
-    functions as f)
-from ..backtest import Order, Candle
+from .. import backtest as bt
+from .. import functions as f
+from .. import signals as sg
+from .__init__ import *
+from .base import StrategyBase
 
-class Strategy(bt.Strategy):
+
+class Strategy(StrategyBase):
     def __init__(self, weight=1, lev=5, **kw):
         super().__init__(weight, lev, **kw)
         self.name = 'SFP'
@@ -12,7 +13,7 @@ class Strategy(bt.Strategy):
         self.stypes = dict(high=1, low=-1)
 
     def init(self, sym=None, df=None):
-        
+
         if not sym is None:
             self.sym = sym
             self.df = sym.df
@@ -22,7 +23,7 @@ class Strategy(bt.Strategy):
             self.df = df
 
         offset = 6
-        period_base = 48 #48, 96, 192
+        period_base = 48  # 48, 96, 192
 
         for i in range(3):
             period = period_base * 2 ** i
@@ -34,7 +35,7 @@ class Strategy(bt.Strategy):
         df = df.pipe(ema.add_signal)
         self.df = df
         # self.sym.df = df
-        
+
     def check_tail(self, side, cdl):
         return True if cdl.tailsize(side=side) / cdl.size() > self.minswing else False
 
@@ -42,8 +43,8 @@ class Strategy(bt.Strategy):
         c = cdl.row
         px_max = c.High if side == 1 else c.Low
 
-        if (side * (px_max - swingval) > 0 and 
-            side * (c.Close - swingval) < 0):
+        if (side * (px_max - swingval) > 0 and
+                side * (c.Close - swingval) < 0):
             return True
 
     def is_swingfail(self, c=None, i=None):
@@ -74,8 +75,8 @@ class Strategy(bt.Strategy):
 
                 if (side * (swingval - prevmax) > 0 and
                     self.check_swing(side=side, swingval=swingval, cdl=cdl) and
-                    self.check_tail(side=side, cdl=cdl)):
-                        sfp.append(dict(name=swing, price=swingval))
+                        self.check_tail(side=side, cdl=cdl)):
+                    sfp.append(dict(name=swing, price=swingval))
 
                 prevmax = swingval
 
@@ -91,7 +92,7 @@ class Strategy(bt.Strategy):
 
     def decide(self, c):
         stypes = self.stypes
-        
+
         # EXIT Trade
         if not self.trade is None:
             t = self.trade
@@ -105,14 +106,14 @@ class Strategy(bt.Strategy):
 
         if self.trade is None:
             sfps = self.is_swingfail(c=c)
-            
+
             if sfps:
                 cdl = self.cdl
                 m = {}
                 for k in stypes.keys():
                     m[k] = len(list(filter(lambda x: k in x['name'], sfps)))
-                
-                m2 = {k:v for k,v in m.items() if v > 0}
+
+                m2 = {k: v for k, v in m.items() if v > 0}
                 if len(m2) > 1:
                     swingtype = cdl.side()
                 else:
@@ -120,34 +121,35 @@ class Strategy(bt.Strategy):
 
                 self.enter_trade(side=swingtype * -1, price=c.Close, c=c)
 
+
 class Trade(bt.Trade):
     def __init__(self):
         super().__init__()
 
     def exit_(self, price):
-        self.marketclose.price = price # so that not 'marketfilled'
+        self.marketclose.price = price  # so that not 'marketfilled'
         self.marketclose.fill(c=self.cdl)
         self.exit_trade()
 
     def enter(self):
         self.marketopen = Order(
-                    price=self.entrytarget,
-                    side=self.side,
-                    contracts=self.targetcontracts,
-                    activate=True,
-                    ordtype_bot=5,
-                    ordtype='Market',
-                    name='marketopen',
-                    trade=self)
+            price=self.entrytarget,
+            side=self.side,
+            contracts=self.targetcontracts,
+            activate=True,
+            ordtype_bot=5,
+            ordtype='Market',
+            name='marketopen',
+            trade=self)
 
         self.marketclose = Order(
-                    price=self.entrytarget,
-                    side=self.side * -1,
-                    contracts=self.targetcontracts,
-                    activate=True,
-                    ordtype_bot=6,
-                    ordtype='Market',
-                    name='marketclose',
-                    trade=self)
+            price=self.entrytarget,
+            side=self.side * -1,
+            contracts=self.targetcontracts,
+            activate=True,
+            ordtype_bot=6,
+            ordtype='Market',
+            name='marketclose',
+            trade=self)
 
         self.marketopen.fill(c=self.cdl)

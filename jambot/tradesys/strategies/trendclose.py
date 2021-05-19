@@ -1,12 +1,12 @@
-from .. import (
-    backtest as bt,
-    signals as sg,
-    functions as f)
+from .. import backtest as bt
+from .. import functions as f
+from .. import signals as sg
 from ..backtest import Order
 from . import trend
 
+
 class Strategy(trend.Strategy):
-    def __init__(self, speed=(18,18), emaspeed=(200, 800)):
+    def __init__(self, speed=(18, 18), emaspeed=(200, 800)):
         super().__init__(speed=speed, emaspeed=emaspeed)
         self.name = 'trendopen'
 
@@ -14,11 +14,11 @@ class Strategy(trend.Strategy):
         self.sym = sym
         df = sym.df
         fast, slow = self.emaspeed[0], self.emaspeed[1]
-            
+
         macd = sg.MACD(df=sym.df, weight=1, fast=fast, slow=slow)
         ema = sg.EMA(df=sym.df, weight=1, fast=fast, slow=slow)
         self.conf.add_signal([macd, ema])
-        
+
         self.trend = sg.Trend(df=df, offset=6, signals=[df.ema_trend], speed=self.speed)
 
     def enter_trade(self, side, c):
@@ -42,14 +42,14 @@ class Strategy(trend.Strategy):
 
             if t.side == 1:
                 if c.Close < pxlow:
-                    self.exit_trade()                
+                    self.exit_trade()
             else:
                 if c.Close > pxhigh:
                     self.exit_trade()
 
             if not t.active:
                 self.trade = None
-        
+
         # Enter Trade
         if self.trade is None:
             pxhigh *= (1 + self.enteroffset)
@@ -61,7 +61,8 @@ class Strategy(trend.Strategy):
                 self.enter_trade(side=-1, c=c)
 
         # self.lasthigh, self.lastlow = pxhigh, pxlow
-     
+
+
 class Trade(bt.Trade):
     def __init__(self):
         super().__init__()
@@ -71,25 +72,24 @@ class Trade(bt.Trade):
         contracts = int(self.targetcontracts * self.conf)
 
         self.marketopen = Order(
-                    price=self.entrytarget,
-                    side=self.side,
-                    contracts=contracts,
-                    activate=True,
-                    ordtype_bot=5,
-                    ordtype='Market',
-                    name='marketopen',
-                    trade=self)
+            price=self.entrytarget,
+            side=self.side,
+            contracts=contracts,
+            activate=True,
+            ordtype_bot=5,
+            ordtype='Market',
+            name='marketopen',
+            trade=self)
 
         self.marketclose = Order(
-                    price=self.entrytarget,
-                    side=self.side * -1,
-                    contracts=contracts,
-                    activate=False,
-                    ordtype_bot=6,
-                    ordtype='Market',
-                    name='marketclose',
-                    execinst='Close',
-                    trade=self)
-        
+            price=self.entrytarget,
+            side=self.side * -1,
+            contracts=contracts,
+            activate=False,
+            ordtype_bot=6,
+            ordtype='Market',
+            name='marketclose',
+            exec_inst='Close',
+            trade=self)
+
         self.marketopen.fill(c=self.cdl)
-        

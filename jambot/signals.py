@@ -1,8 +1,8 @@
 import inspect
+import operator as opr
 import re
 import sys
 from collections import defaultdict as dd
-import operator as opr
 
 import numpy as np
 import pandas as pd
@@ -17,8 +17,8 @@ from ta.momentum import (AwesomeOscillatorIndicator, KAMAIndicator,
                          RSIIndicator, StochasticOscillator, StochRSIIndicator,
                          TSIIndicator, UltimateOscillator)
 from ta.trend import (ADXIndicator, AroonIndicator, CCIIndicator, DPOIndicator,
-                      EMAIndicator, KSTIndicator, MassIndex, STCIndicator,
-                      TRIXIndicator)
+                      EMAIndicator, KSTIndicator, MassIndex, PSARIndicator,
+                      STCIndicator, TRIXIndicator)
 from ta.volatility import UlcerIndex
 from ta.volume import (AccDistIndexIndicator, ChaikinMoneyFlowIndicator,
                        EaseOfMovementIndicator, ForceIndexIndicator,
@@ -27,6 +27,7 @@ from ta.volume import (AccDistIndexIndicator, ChaikinMoneyFlowIndicator,
 from . import charts as ch
 from . import functions as f
 from . import sklearn_helper_funcs as sf
+from .__init__ import *
 
 """
 target classification
@@ -82,19 +83,19 @@ drop
 - drop anything still NA at beginning of series
 """
 
+
 class SignalManager(BaseEstimator, TransformerMixin):
-    def __init__(self, signals_list : list=None, target: str=None, prefix: str=None):
+    def __init__(self, signals_list: list = None, target: str = None, prefix: str = None, add_slope: bool = False):
         # df_orig = df.copy()
         signal_groups = {}
-        features = {} # map of {feature_name: signal_group}
+        features = {}  # map of {feature_name: signal_group}
         scaler = MinMaxScaler()
         f.set_self(vars())
-    
+
     def transform(self, df, **transform_params):
         """Return compound sentiment score for text column"""
         # self.df = df
         print(f'transforming: {df.shape}, {df.columns}')
-        
 
         df = self.add_signals(df=df, signals=self.signals_list)
         cols_ohlcv = ['Open', 'High', 'Low', 'Close', 'VolBTC']
@@ -112,15 +113,15 @@ class SignalManager(BaseEstimator, TransformerMixin):
     def get_params(self, deep=True):
         # NOTE not using as a transformer yet
         return dict(thing1=1, thing2=2)
-    
-    def get_signal_group(self, feature_name : str):
+
+    def get_signal_group(self, feature_name: str):
         """Return signal_group object from feature_name"""
         return list(filter(lambda x: feature_name in x.signals, self.signal_groups.values()))[0]
 
     def print_signal_params(self, **kw):
         m = self.get_signal_params(**kw)
         sf.pretty_dict(m)
-    
+
     def get_signal_params(self, feature_names=None, **kw):
         """Return all optimizeable params from each signal feature"""
         m = {}
@@ -132,21 +133,23 @@ class SignalManager(BaseEstimator, TransformerMixin):
                     if feature_names is None or feature_name in feature_names:
                         m[feature_name] = m2['params']
         return m
-    
+
     def get_feature_names(self, *args, **kw):
         print('get_feature_names')
         return self.cols
         # return self.df.columns.to_list()
 
-    def add_signals(self, df, signals : list=None, signal_params : dict=None, **kw) -> pd.DataFrame:
+    def add_signals(self, df, signals: list = None, signal_params: dict = None, **kw) -> pd.DataFrame:
         """Add multiple initialized signals to dataframe"""
         # df = self.df
         if signals is None:
             signals = self.signals_list
 
         # convert input dict/single str to list
-        if isinstance(signals, dict): signals = list(signals.values())
-        if isinstance(signals, str): signals = [signals]
+        if isinstance(signals, dict):
+            signals = list(signals.values())
+        if isinstance(signals, str):
+            signals = [signals]
         signal_params = signal_params or {}
 
         # SignalGroup obj, not single column
@@ -154,21 +157,22 @@ class SignalManager(BaseEstimator, TransformerMixin):
 
             # if str, init obj with defauls args
             if isinstance(signal_group, str):
-                signal_group = getattr(sys.modules[__name__], signal_group)(target=self.target)
-            
+                signal_group = getattr(sys.modules[__name__], signal_group)()
+
             self.signal_groups[signal_group.__class__.__name__.lower()] = signal_group
 
-            signal_group.df = df # NOTE kinda sketch
+            signal_group.df = df  # NOTE kinda sketch
+            signal_group.add_slope = self.add_slope  # sketch too
             df = df.pipe(signal_group.add_all_signals, **kw)
 
         self.df = df
 
         return df
-    
+
     def show_signals(self):
         m = dd(dict)
         for name, signal_group in self.signal_groups.items():
-            
+
             for sig_name, params in signal_group.signals.items():
                 if 'cls' in params:
                     m[name].update({sig_name: params['cls'].__name__})
@@ -177,7 +181,7 @@ class SignalManager(BaseEstimator, TransformerMixin):
 
         sf.pretty_dict(m)
 
-    def replace_single_feature(self, df, feature_params : dict, **kw) -> pd.DataFrame:
+    def replace_single_feature(self, df, feature_params: dict, **kw) -> pd.DataFrame:
         """Generator to replace single feature at a time with new values from params dict"""
 
         for feature_name, m in feature_params.items():
@@ -186,7 +190,7 @@ class SignalManager(BaseEstimator, TransformerMixin):
 
             for param, vals in m.items():
                 for val in vals:
-                    param_single = {feature_name: {param: val}} # eg {'mnt_rsi': {'window': 12}}
+                    param_single = {feature_name: {param: val}}  # eg {'mnt_rsi': {'window': 12}}
                     yield df.pipe(signal_group.assign_signals, params=param_single), f'{feature_name}_{param}_{val}'
 
     def make_plot_traces(self, name) -> list:
@@ -195,17 +199,17 @@ class SignalManager(BaseEstimator, TransformerMixin):
         signal_group = self.signal_groups[name].signals
 
         return [dict(name=name, func=m['plot'], row=m.get('row', None)) for name, m in signal_group.items()]
-    
+
     def plot_signal_group(self, name, **kw):
         """Convenience func to show plot with a full group of signals"""
         fig = ch.chart(
             df=self.df,
             traces=self.make_plot_traces(name=name),
             **kw)
-        
+
         self.fig = fig
         fig.show()
-        
+
 
 class SignalGroup():
     """Base class for ta indicators"""
@@ -217,9 +221,10 @@ class SignalGroup():
         close='Close',
         volume='VolBTC')
 
-    def __init__(self, target=None, df=None, signals=None, fillna=True, prefix: str=None, **kw):
+    def __init__(self, df=None, signals=None, fillna=True, prefix: str = None, **kw):
         drop_cols = []
         signals = self.init_signals(signals)
+        add_slope = False
         f.set_self(vars())
 
     def init_signals(self, signals):
@@ -228,10 +233,10 @@ class SignalGroup():
             return
 
         for name, m in signals.items():
-            
+
             if not isinstance(m, dict):
                 if callable(m):
-                    m = dict(func=m) # signal was just created as single func
+                    m = dict(func=m)  # signal was just created as single func
                 else:
                     raise AttributeError('signal must be init with a dict or callable func!')
 
@@ -244,7 +249,7 @@ class SignalGroup():
             signals[name] = m
 
         return signals
-    
+
     def add_all_signals(self, df, **kw):
         """Convenience base wrapper to work with ta/non-ta signals"""
         df = df.pipe(self.assign_signals, **kw)
@@ -253,29 +258,38 @@ class SignalGroup():
 
         return df \
             .drop(columns=drop_cols)
-    
-    def assign_signals(self, df, params : dict=None) -> pd.DataFrame:
+
+    def assign_signals(self, df, params: dict = None, names: list = None) -> pd.DataFrame:
         """loop self.signal_groups, init, call correct func and assign to df column
-        
+
         Parameters
         ----------
         params : dict
             if params passed, only reassign those features (for quick optimization testing)
             params must be dict of {feature_name: {single param: value}}
+        names : list
+            init only specific signals by name
         """
 
         final_signals = {}
         signals = self.signals if params is None else params
 
+        # filter specific names to init specific signals only
+        if not names is None:
+            if isinstance(names, str):
+                names = [names]
+            signals = {k: v for k, v in signals.items() if k in names}
+
         for feature_name, m in signals.items():
-            
+
             if not params is None:
                 # overwrite original feature params with new value eg {'mnt_rsi': {'window': 12}}
                 m = {**self.signals[feature_name], **m}
 
             if 'cls' in m:
                 # init ta signal
-                final_signals[feature_name] = self.make_signal(**m)
+                final_signals.update(self.make_signal(**m))
+                # final_signals[feature_name] = self.make_signal(**m)
             elif 'func' in m:
                 final_signals[feature_name] = m['func']
             else:
@@ -285,9 +299,18 @@ class SignalGroup():
         if self.prefix:
             final_signals = {f'{self.prefix}_{k}': v for k, v in final_signals.items()}
 
+        # add simple rate of change for all signal columns
+        # not super useful
+        if self.add_slope and not 'target' in self.__class__.__name__.lower():
+            # dont add slope for any Target classes
+            slope_signals = {f'dxy_{name}': lambda x: self.make_slope(
+                x[name].values) for name, s in final_signals.items()}
+
+            final_signals.update(slope_signals)
+
         return df \
             .assign(**final_signals)
-    
+
     @property
     def default_cols(self) -> dict:
         """Convert default dict of strings to pd.Series for default cols"""
@@ -305,21 +328,45 @@ class SignalGroup():
         m_all_kw = {**self.default_cols, **(kw or {})}
 
         return {name: col for name, col in m_all_kw.items() if name in signature.parameters.keys()}
-    
-    def make_signal(self, cls, ta_func : str, **kw):
+
+    def make_signal(self, cls, name: str, ta_func: str, **kw):
         """Helper func to init TA signal with correct OHLCV columns
-        
+
         Parameters
         ---------
+        name : str
+            name for dict key to return
         cls : ta
             class defn of ta indicator to be init
         ta_func : str
             func to call on ta obj to create final signal
+
+        Returns
+        -------
+        dict : dict of {name: ta signal column}
         """
-        kw['fillna'] = self.fillna
+
+        # most will be single string, but allow list of multiple
+        if not isinstance(ta_func, list):
+            ta_func = [ta_func]
+
+        kw['fillna'] = kw.get('fillna', self.fillna)
         good_kw = self.filter_valid_kws(cls=cls, **kw)
 
-        return getattr(cls(**good_kw), ta_func)()
+        # init ta obj
+        signal = cls(**good_kw)
+
+        # allow adding multiple columns from single ta signal obj
+        m = {}
+        for func in ta_func:
+            key = f'{name}_{func}' if len(ta_func) > 1 else name
+
+            # use dict as ordered set here
+            key = '_'.join({k: 1 for k in key.split('_')}.keys())  # remove duplicates for multi cols per signal
+            m[key] = getattr(signal, func)()
+
+        return m
+        # return getattr(cls(**good_kw), ta_func)()
 
     def trend_changed(self, df, i, side):
         """NOTE Not sure if this used"""
@@ -328,8 +375,14 @@ class SignalGroup():
         tprev = tseries.iloc[i - 1]
         return not tnow == side and not tnow == tprev
 
+    def make_slope(self, s, n_periods: int = 2):
+        """Return series as slope of input series"""
+        return (s - np.roll(s, n_periods, axis=0)) / n_periods
+
+
 class FeatureInteraction(SignalGroup):
     """Calc differenc btwn two columns"""
+
     def __init__(self, cols, int_type='sub', **kw):
         kw['signals'] = dict()
 
@@ -340,10 +393,10 @@ class FeatureInteraction(SignalGroup):
             add=np.add,
             mul=np.multiply,
             div=np.divide) \
-        .get(int_type)
+            .get(int_type)
 
         f.set_self(vars())
-    
+
     def add_all_signals(self, df, **kw):
         cols = self.cols
         scaler = MinMaxScaler()
@@ -353,25 +406,35 @@ class FeatureInteraction(SignalGroup):
         # name = f'{cols[0]}_{cols[1]}_diff'
         return df.assign(**{self.int_type: cols_int})
 
+
 class Momentum(SignalGroup):
     def __init__(self, window=2, **kw):
         kw['signals'] = dict(
             mnt_rsi_2=dict(cls=RSIIndicator, ta_func='rsi', window=window, params=dict(window=[2, 6, 12, 18, 24, 36])),
             mnt_rsi_6=dict(cls=RSIIndicator, ta_func='rsi', window=6),
+            mnt_rsi_12=dict(cls=RSIIndicator, ta_func='rsi', window=12),
             mnt_rsi_24=dict(cls=RSIIndicator, ta_func='rsi', window=24),
             mnt_pvo=dict(cls=PercentageVolumeOscillator, ta_func='pvo'),
             mnt_roc=dict(cls=ROCIndicator, ta_func='roc', window=window),
             mnt_stoch=dict(cls=StochasticOscillator, ta_func='stoch', window=12, smooth_window=12),
             mnt_tsi=dict(cls=TSIIndicator, ta_func='tsi'),
             mnt_ultimate=dict(cls=UltimateOscillator, ta_func='ultimate_oscillator'),
-            mnt_awesome=dict(cls=AwesomeOscillatorIndicator, ta_func='awesome_oscillator', window1=10, window2=50, params=dict(window1=[6, 12, 18], window2=[36, 50, 200])),
+            mnt_awesome=dict(
+                cls=AwesomeOscillatorIndicator,
+                ta_func='awesome_oscillator',
+                window1=10,
+                window2=50,
+                params=dict(
+                    window1=[6, 12, 18],
+                    window2=[36, 50, 200])),
             mnt_awesome_rel=lambda x: x.mnt_awesome / x.ema50
             # mnt_kama=dict(cls=KAMAIndicator, ta_func='kama', window=12, pow1=2, pow2=30, row=1)
-            )
+        )
 
         super().__init__(**kw)
         drop_cols = ['mnt_awesome']
         f.set_self(vars())
+
 
 class Volume(SignalGroup):
     def __init__(self, **kw):
@@ -382,11 +445,12 @@ class Volume(SignalGroup):
             # vol_adi=dict(cls=AccDistIndexIndicator, ta_func='acc_dist_index'),
             # vol_eom=dict(cls=EaseOfMovementIndicator, ta_func='ease_of_movement', window=14),
             # vol_force=dict(cls=ForceIndexIndicator, ta_func='force_index', window=14),
-            )
+        )
 
         super().__init__(**kw)
         f.set_self(vars())
-   
+
+
 class Volatility(SignalGroup):
     def __init__(self, norm=(0.004, 0.024), **kw):
         kw['signals'] = dict(
@@ -402,38 +466,43 @@ class Volatility(SignalGroup):
 
         super().__init__(**kw)
         drop_cols = ['maxhigh', 'minlow']
-        f.set_self(vars())  
+        f.set_self(vars())
 
     def final(self, c):
         # return self.df.norm_ema[i]
         return c.norm_ema
 
+
 class Trend(SignalGroup):
     def __init__(self, **kw):
         kw['signals'] = dict(
-                trend_adx=dict(cls=ADXIndicator, ta_func='adx', window=36),
-                trend_aroon=dict(cls=AroonIndicator, ta_func='aroon_indicator', window=25),
-                trend_cci=dict(cls=CCIIndicator, ta_func='cci', window=20, constant=0.015),
-                trend_mass=dict(cls=MassIndex, ta_func='mass_index', window_fast=9, window_slow=25),
-                trend_stc=dict(cls=STCIndicator, ta_func='stc'),
-                # trend_dpo=dict(cls=DPOIndicator, ta_func='dpo'),
-                trend_kst=dict(cls=KSTIndicator, ta_func='kst'),
-                trend_trix=dict(cls=TRIXIndicator, ta_func='trix', window=48),
-                
+            trend_adx=dict(cls=ADXIndicator, ta_func='adx', window=36),
+            trend_aroon=dict(cls=AroonIndicator, ta_func='aroon_indicator', window=25),
+            trend_cci=dict(cls=CCIIndicator, ta_func='cci', window=20, constant=0.015),
+            trend_mass=dict(cls=MassIndex, ta_func='mass_index', window_fast=9, window_slow=25),
+            trend_stc=dict(cls=STCIndicator, ta_func='stc'),
+            # trend_dpo=dict(cls=DPOIndicator, ta_func='dpo'),
+            trend_kst=dict(cls=KSTIndicator, ta_func='kst'),
+            trend_trix=dict(cls=TRIXIndicator, ta_func='trix', window=48),
+            # trend_psar=dict(cls=PSARIndicator, ta_func=['psar', 'psar_down', 'psar_up'],
+            # # step=0.02, max_step=0.2, fillna=False)
+
         )
-        
+
         super().__init__(**kw)
         # accept 1 to n series of trend signals, eg 1 or -1
         f.set_self(vars())
-          
+
     def final(self, c):
         return c.trend
 
+
 class EMA(SignalGroup):
     """Add pxhigh, pxlow for rolling period, depending if ema_trend is positive or neg
-    
+
     w = with, a = agains, n = neutral (neutral not used)
     """
+
     def __init__(self, fast=50, slow=200, speed=(24, 18), offset=1, **kw):
 
         against, wth, neutral = speed[0], speed[1], int(np.average(speed))
@@ -441,24 +510,26 @@ class EMA(SignalGroup):
         c = self.get_c(maxspread=0.1)
 
         kw['signals'] = dict(
-                ema_spread=lambda x: (x[colfast] - x[colslow]) / ((x[colfast] + x[colslow]) / 2),
-                ema_trend=lambda x: np.where(x[colfast] > x[colslow], 1, -1),
-                ema_conf=lambda x: self.ema_exp(x=x.ema_spread, c=c),
-                mhw=lambda x: x.High.rolling(wth).max().shift(offset),
-                mha=lambda x: x.High.rolling(against).max().shift(offset),
-                mhn=lambda x: x.High.rolling(neutral).max().shift(offset),
-                mla=lambda x: x.Low.rolling(wth).min().shift(offset),
-                mlw=lambda x: x.Low.rolling(against).min().shift(offset),
-                mln=lambda x: x.Low.rolling(neutral).min().shift(offset),
-                pxhigh=dict(row=1, func=lambda x: np.where(x.ema_trend == 0, x.mhn, np.where(x.ema_trend == 1, x.mha, x.mhw))),
-                pxlow=dict(row=1, func=lambda x: np.where(x.ema_trend == 0, x.mln, np.where(x.ema_trend == -1, x.mlw, x.mla))),
+            ema_spread=lambda x: (x[colfast] - x[colslow]) / ((x[colfast] + x[colslow]) / 2),
+            ema_trend=lambda x: np.where(x[colfast] > x[colslow], 1, -1),
+            ema_conf=lambda x: self.ema_exp(x=x.ema_spread, c=c),
+            mhw=lambda x: x.High.rolling(wth).max().shift(offset),
+            mha=lambda x: x.High.rolling(against).max().shift(offset),
+            mhn=lambda x: x.High.rolling(neutral).max().shift(offset),
+            mla=lambda x: x.Low.rolling(wth).min().shift(offset),
+            mlw=lambda x: x.Low.rolling(against).min().shift(offset),
+            mln=lambda x: x.Low.rolling(neutral).min().shift(offset),
+            pxhigh=dict(row=1, func=lambda x: np.where(x.ema_trend == 0,
+                        x.mhn, np.where(x.ema_trend == 1, x.mha, x.mhw))),
+            pxlow=dict(row=1, func=lambda x: np.where(x.ema_trend == 0,
+                       x.mln, np.where(x.ema_trend == -1, x.mlw, x.mla))),
         )
 
         super().__init__(**kw)
         drop_cols = ['mha', 'mhw', 'mla', 'mlw', 'mhn', 'mln']
         # trandseries = 'ema_trend'
         f.set_self(vars())
-    
+
     def add_all_signals(self, df):
         return df \
             .pipe(add_emas, emas=[self.fast, self.slow]) \
@@ -471,9 +542,9 @@ class EMA(SignalGroup):
             conf = 1.5 - temp_conf * 2
         else:
             conf = 0.5 + temp_conf * 2
-        
+
         return conf * self.weight
-            
+
     def get_c(self, maxspread):
         m = -2.9
         b = 0.135
@@ -482,7 +553,7 @@ class EMA(SignalGroup):
     def ema_exp(self, x, c):
         side = np.where(x >= 0, 1, -1)
         x = abs(x)
-        
+
         aLim = 2
         a = -1000
         b = 3
@@ -493,21 +564,23 @@ class EMA(SignalGroup):
 
         return round(y, 6)
 
+
 class EMASlope(SignalGroup):
     """Calc slope (+1 or -1) for ema, over previous slope periods"""
+
     def __init__(self, p=50, slope=5, **kw):
         ema_col = f'ema{p}'
         kw['signals'] = dict(
             ema10_slope=lambda x: (x.ema10 - np.roll(x.ema10, slope, axis=0)) / slope,
             ema50_slope=lambda x: (x.ema50 - np.roll(x.ema50, slope, axis=0)) / slope,
             ema50_slope_int=lambda x: np.where(np.roll(x[ema_col], slope, axis=0) < x[ema_col], 1, -1)
-            )
+        )
 
         super().__init__(**kw)
         name = 'ema_Slope'
         trendseries = 'ema_slope'
         f.set_self(vars())
-    
+
     def add_all_signals(self, df):
         p, slope = self.p, self.slope
 
@@ -519,7 +592,8 @@ class EMASlope(SignalGroup):
 
     def final(self, side, c):
         conf = 1.5 if side * c.ema_slope == 1 else 0.5
-        return conf * self.weight     
+        return conf * self.weight
+
 
 class MACD(SignalGroup):
     def __init__(self, fast=50, slow=200, smooth=50, **kw):
@@ -535,7 +609,7 @@ class MACD(SignalGroup):
         name = 'macd'
         trendseries = 'macd_trend'
         f.set_self(vars())
-    
+
     def add_all_signals(self, df):
         return df \
             .pipe(add_emas, emas=[self.fast, self.slow]) \
@@ -543,7 +617,8 @@ class MACD(SignalGroup):
 
     def final(self, side, c):
         conf = 1.25 if side * c.macd_trend == 1 else 0.5
-        return conf * self.weight        
+        return conf * self.weight
+
 
 class SFP(SignalGroup):
     """
@@ -551,9 +626,10 @@ class SFP(SignalGroup):
     - This signal needs cdl body signals init first
     - NOTE could maybe use min/max peaks from tsfresh?
     """
+
     def __init__(self, period_base=48, **kw):
         super().__init__(**kw)
-        minswing = 0.05 # NOTE could be hyperparam
+        minswing = 0.05  # NOTE could be hyperparam
         f.set_self(vars())
 
     def add_all_signals(self, df):
@@ -566,26 +642,28 @@ class SFP(SignalGroup):
 
         for period in periods:
             for extrema, v in m.items():
-                agg_func, side = v[0], v[1] 
-                check_extrema = f'{extrema.lower()}_{period}' # high_48
-                
+                agg_func, side = v[0], v[1]
+                check_extrema = f'{extrema.lower()}_{period}'  # high_48
+
                 s = df[extrema].rolling(period)
-                
-                df[check_extrema] = getattr(s, agg_func)().shift(offset) # min() or max()
+
+                df[check_extrema] = getattr(s, agg_func)().shift(offset)  # min() or max()
                 # df[f'low_{period}'] = df.Low.rolling(period).min().shift(offset)
 
                 # calc candle is swing fail or not
                 # minswing means tail must also be greater than min % of candle full size
                 df[f'sfp_{check_extrema}'] = np.where(
-                    (side * (df[extrema] - df[check_extrema]) > 0) & 
+                    (side * (df[extrema] - df[check_extrema]) > 0) &
                     (side * (df.Close - df[check_extrema] < 0)) &
                     (df[f'cdl_tail_size_{extrema.lower()}'] / df.cdl_size_full > self.minswing),
                     1, 0)
 
-        drop_cols = [col for col in df.columns if any(item in col for item in ('high_', 'low_')) and not any(item in col for item in ('sfp', 'prevhigh', 'prevlow'))]
+        drop_cols = [col for col in df.columns if any(item in col for item in (
+            'high_', 'low_')) and not any(item in col for item in ('sfp', 'prevhigh', 'prevlow'))]
 
         return df \
             .drop(columns=drop_cols)
+
 
 class Candle(SignalGroup):
     """
@@ -599,9 +677,10 @@ class Candle(SignalGroup):
     - low_below_prevlow, close_below_prevlow
     - close_v_range > did we close towards upper or lower side of prev 24 period min/max range
     """
+
     def __init__(self, **kw):
 
-        n_periods = 24 # used to cal relative position of close to prev range
+        n_periods = 24  # used to cal relative position of close to prev range
         kw['signals'] = dict(
             cdl_side=lambda x: np.where(x.Close > x.Open, 1, -1),
             cdl_size_full=lambda x: np.abs(x.High - x.Low) / x.Open,
@@ -621,7 +700,6 @@ class Candle(SignalGroup):
             buy_pressure=lambda x: (x.Close - x.Low.rolling(2).min().shift(1)) / x.Close,
             sell_pressure=lambda x: (x.Close - x.High.rolling(2).max().shift(1)) / x.Close,
         )
-
 
         super().__init__(**kw)
         drop_cols = ['min_n', 'range_n', 'pxhigh', 'pxlow']
@@ -646,10 +724,11 @@ class Candle(SignalGroup):
                 buy_pressure=0,
                 sell_pressure=0,
                 # close_v_range=df.close_v_range.mean()
-                ))) \
+            ))) \
             .pipe(self.close_v_range, n_periods=96) \
             # .pipe(self.close_v_range, n_periods=24) \
-            # .pipe(self.close_v_range, n_periods=384) \
+        # .pipe(self.close_v_range, n_periods=384) \
+
 
 class CandlePatterns(SignalGroup):
     def __init__(self, **kw):
@@ -665,6 +744,7 @@ class CandlePatterns(SignalGroup):
         return df
         # return super().add_all_signals(df)
 
+
 class TargetClass(SignalGroup):
     """
     target classification
@@ -674,20 +754,22 @@ class TargetClass(SignalGroup):
     - calc close price vs current price, x periods in future (rolling method)
     # NOTE doesn't work currently need to redo with kw['signals]
     """
+
     def __init__(self, p_ema=10, n_periods=10, pct_min=0.02, **kw):
         super().__init__(**kw)
-        ema_col = f'ema{p_ema}' # named so can drop later
+        ema_col = f'ema{p_ema}'  # named so can drop later
         pct_min = pct_min / 2
 
         f.set_self(vars())
+
 
 class TargetMeanEMA(TargetClass):
     def __init__(self, **kw):
         super().__init__(**kw)
         f.set_self(vars())
-    
+
     def add_all_signals(self, df):
-        pct_min = self.pct_min # NOTE this could be a hyperparam
+        pct_min = self.pct_min  # NOTE this could be a hyperparam
         # TODO ^ definitely needs to be scaled to daily volatility
 
         predict_col = self.ema_col
@@ -700,11 +782,13 @@ class TargetMeanEMA(TargetClass):
                 target=lambda x: np.where(x.pct_future > pct_min, 1, np.where(x.pct_future < pct_min * -1, -1, 0))) \
             .drop(columns=['pct_future'])
 
+
 class TargetMean(TargetClass):
     """
     Calc avg price of next n close prices
     - maybe - bin into % ranges?
     """
+
     def __init__(self, n_periods, regression=False, pct_min=0, **kw):
 
         if not regression:
@@ -713,7 +797,7 @@ class TargetMean(TargetClass):
                 target=lambda x: np.where(x.pct_future > pct_min, 1, -1),
             )
             drop_cols = ['pct_future']
-        
+
         else:
             # just use % diff for regression instead of -1/1 classification
             kw['signals'] = dict(
@@ -724,15 +808,16 @@ class TargetMean(TargetClass):
         f.set_self(vars())
 
 
-def add_emas(df, emas : list=None):
+def add_emas(df, emas: list = None):
     """Convenience func to add both 50 and 200 emas"""
     if emas is None:
-        emas = [50, 200] # default fast/slow
+        emas = [50, 200]  # default fast/slow
 
     for p in emas:
         df = df.pipe(add_ema, p=p)
-    
+
     return df
+
 
 def add_ema(df, p, c='Close', col=None, overwrite=True):
     """Add ema from Close price to df if column doesn't already exist (more than one signal may add an ema"""
@@ -742,10 +827,11 @@ def add_ema(df, p, c='Close', col=None, overwrite=True):
     if not col in df.columns or overwrite:
         # df[col] = df[c].ewm(span=p, min_periods=p).mean()
         df[col] = EMAIndicator(close=df[c], window=p, fillna=True).ema_indicator()
-    
+
     return df
 
-def get_mom_acc(s: pd.Series, size: int=1):
+
+def get_mom_acc(s: pd.Series, size: int = 1):
 
     d_dx = FinDiff(0, size, 1)
     d2_dx2 = FinDiff(0, size, 2)
@@ -754,31 +840,33 @@ def get_mom_acc(s: pd.Series, size: int=1):
     momacc = d2_dx2(arr)
     return mom, momacc
 
-def get_extrema(is_min, mom, momacc, s, window: int=1):
+
+def get_extrema(is_min, mom, momacc, s, window: int = 1):
 
     if not isinstance(s, list):
         s = s.tolist()
 
     return [x for x in range(len(mom))
-        if (momacc[x] > 0 if is_min else momacc[x] < 0) and
-        (mom[x] == 0 or #slope is 0
-            (x != len(mom) - 1 and #check next day
+            if (momacc[x] > 0 if is_min else momacc[x] < 0) and
+            (mom[x] == 0 or  # slope is 0
+            (x != len(mom) - 1 and  # check next day
                 (mom[x] > 0 and mom[x + 1] < 0 and
-                s[x] >= s[x + 1] or
-                mom[x] < 0 and mom[x + 1] > 0 and
-                s[x] <= s[x + 1]) or
-            x != 0 and #check prior day
+                 s[x] >= s[x + 1] or
+                 mom[x] < 0 and mom[x + 1] > 0 and
+                 s[x] <= s[x + 1]) or
+             x != 0 and  # check prior day
                 (mom[x - 1] > 0 and mom[x] < 0 and
-                s[x - 1] < s[x] or
-                mom[x - 1] < 0 and mom[x] > 0 and
-                s[x - 1] > s[x])))]
+                 s[x - 1] < s[x] or
+                 mom[x - 1] < 0 and mom[x] > 0 and
+                 s[x - 1] > s[x])))]
 
     # momentum greater than zero, momentum next less than zero
     # AND price greater than next price
-    #  OR 
+    #  OR
     # momentum less than zero and momentum next gt zero
     # ABD price less than next price
-    # 
+    #
+
 
 def add_extrema(df, side):
 
@@ -803,7 +891,7 @@ def add_extrema(df, side):
     # idxs = get_extrema(is_min, mom, momacc, s)
     idxs = peakutils.indexes(s, thres=0.2, min_dist=24, thres_abs=False)
     df_extrema = df.iloc[idxs][col].rename(name)
-    
+
     df = df.join(df_extrema) \
         .assign(
             **{
@@ -814,7 +902,8 @@ def add_extrema(df, side):
 
     return df
 
-def _get_extrema(is_min, mom, momacc, h, window: int=1):
+
+def _get_extrema(is_min, mom, momacc, h, window: int = 1):
 
     length = len(mom)
     op = opr.gt
@@ -823,8 +912,7 @@ def _get_extrema(is_min, mom, momacc, h, window: int=1):
 
     # for x in range(window, length - window):
     #     if op(momacc[x], 0) and (
-    #         mom[x] == 0 or x != length - 1 
-
+    #         mom[x] == 0 or x != length - 1
 
     #     )
 
@@ -842,7 +930,7 @@ def _get_extrema(is_min, mom, momacc, h, window: int=1):
 #     df2 = df.iloc[start: start + periods] \
 #         .pipe(sg.add_extrema, side=1) \
 #         .pipe(sg.add_extrema, side=-1)
-    
+
 #     df2
 
 #     traces = [

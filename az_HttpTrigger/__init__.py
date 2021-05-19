@@ -1,15 +1,15 @@
 import logging
 
 import azure.functions as func
+from __app__.jambot import functions as f
+from __app__.jambot import livetrading as live
 
-from __app__.jambot import (
-    functions as f,
-    livetrading as live)
 
 def err():
     msg = 'ERROR: Http function not triggered.'
     logging.error(msg)
     return func.HttpResponse(msg, status_code=400)
+
 
 def main(req: func.HttpRequest) -> func.HttpResponse:
 
@@ -29,18 +29,17 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
         elif action == 'run_toploop':
             live.run_toploop(partial=True)
         elif action == 'close_position':
-            
+
             pass
         elif action == 'cancel_orders':
             u = live.User()
             u.cancel_manual()
         else:
             return err()
-        
+
         return func.HttpResponse(f'{action} success!', status_code=200)
     except:
         try:
             f.send_error()
         finally:
             return err()
-        

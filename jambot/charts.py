@@ -4,17 +4,17 @@ import sys
 from datetime import datetime as dt
 from datetime import timedelta as delta
 
+import numpy as np
 import plotly.graph_objs as go
 import plotly.offline as py
 import seaborn as sns
-import numpy as np
+from icecream import ic
 from matplotlib import pyplot
 from plotly.subplots import make_subplots
 
 from . import functions as f
 from . import sklearn_helper_funcs as sf
 
-from icecream import ic
 ic.configureOutput(prefix='')
 
 colors = dict(
@@ -30,6 +30,7 @@ def background_contracts(s):
     is_neg = s < 0
     return ['background-color: red' if v else 'background-color: blue' for v in is_neg]
 
+
 def neg_red(s):
     return ['color: #ff8080' if v < 0 else '' for v in s]
 
@@ -38,18 +39,23 @@ def neg_red(s):
 # sym.df.plot(kind='line', x='Timestamp', y='conf', secondary_y=True, ax=ax)
 
 # Charts
+
+
 def matrix(df, cols):
     return df.pivot(cols[0], cols[1], cols[2])
 
-def heatmap(df, cols, title='', dims=(15,15)):
+
+def heatmap(df, cols, title='', dims=(15, 15)):
     _, ax = pyplot.subplots(figsize=dims)
     ax.set_title(title)
-    return sns.heatmap(ax=ax, data=matrix(df, cols), annot=True, annot_kws={"size":8}, fmt='.1f')
+    return sns.heatmap(ax=ax, data=matrix(df, cols), annot=True, annot_kws={'size': 8}, fmt='.1f')
+
 
 def plot_chart(df, symbol, df2=None):
     py.iplot(chart(df=df, symbol=symbol, df2=df2))
 
-def add_order(order, ts, price=None):    
+
+def add_order(order, ts, price=None):
     if price is None:
         price = order.price
         if order.marketfilled:
@@ -58,14 +64,14 @@ def add_order(order, ts, price=None):
             linedash = None
     else:
         linedash = 'dot'
-    
+
     ft = order.filledtime
     if ft is None:
         ft = ts + delta(hours=24)
         linedash = 'dashdot'
     elif ft == ts:
         ft = ts + delta(hours=1)
-    
+
     if not order.cancelled:
         if order.ordtype == 2:
             color = 'red'
@@ -85,6 +91,7 @@ def add_order(order, ts, price=None):
             width=2,
             dash=linedash))
 
+
 def chart_orders(t, pre=36, post=None, width=900, fast=50, slow=200):
     dur = t.duration()
     df = t.df()
@@ -94,16 +101,16 @@ def chart_orders(t, pre=36, post=None, width=900, fast=50, slow=200):
     ts = t.candles[0].Timestamp
     timelower = ts - delta(hours=pre)
     timeupper = ts + delta(hours=post)
-    
+
     mask = (df['Timestamp'] >= timelower) & (df['Timestamp'] <= timeupper)
     df = df.loc[mask].reset_index(drop=True)
-    
+
     shapes, x, y, text = [], [], [], []
     for order in t.all_orders():
         shapes.append(add_order(order, ts=ts))
         if order.marketfilled or order.cancelled:
             shapes.append(add_order(order, ts=ts, price=order.pxoriginal))
-        
+
         x.append(ts + delta(hours=-1))
         y.append(order.price),
         text.append('({:,}) {}'.format(order.contracts, order.name[:2]))
@@ -111,12 +118,12 @@ def chart_orders(t, pre=36, post=None, width=900, fast=50, slow=200):
     labels = go.Scatter(x=x, y=y, text=text, mode='text', textposition='middle left')
 
     fig = go.Figure()
-    
+
     fig.add_trace(go.Scatter(x=df.Timestamp, y=df[f'ema{fast}'], line=dict(color='#18f27d', width=1)))
     fig.add_trace(go.Scatter(x=df.Timestamp, y=df[f'ema{slow}'], line=dict(color='#9d19fc', width=1)))
     fig.add_trace(candlestick(df))
     fig.add_trace(labels)
-    
+
     scale = 0.8
 
     fig.update_layout(
@@ -130,14 +137,14 @@ def chart_orders(t, pre=36, post=None, width=900, fast=50, slow=200):
         shapes=shapes,
         xaxis_rangeslider_visible=False,
         yaxis=dict(side='right',
-			showgrid=False,
-			autorange=True,
-			fixedrange=False) ,
+                        showgrid=False,
+                        autorange=True,
+                        fixedrange=False),
         yaxis2=dict(showgrid=False,
-            overlaying='y',
-            autorange=False,
-            fixedrange=True,
-            range=[0,0.4]))
+                    overlaying='y',
+                    autorange=False,
+                    fixedrange=True,
+                    range=[0, 0.4]))
     fig.update_xaxes(
         autorange=True,
         tickformat=f.time_format(hrs=True),
@@ -145,8 +152,9 @@ def chart_orders(t, pre=36, post=None, width=900, fast=50, slow=200):
         showgrid=False,
         gridwidth=1,
         tickangle=315)
-    
+
     fig.show()
+
 
 def add_traces(df, fig, traces):
     """Create traces from list of dicts and add to fig
@@ -158,18 +166,19 @@ def add_traces(df, fig, traces):
             col=m.get('col', 1))
 
     for m in traces:
-        m['df'] = m.get('df', df) # allow using different df (for balance)
+        m['df'] = m.get('df', df)  # allow using different df (for balance)
         traces = m['func'](**m)
         if isinstance(traces, list):
             for trace in traces:
                 _append_trace(trace, m)
         else:
             _append_trace(traces, m)
-    
+
     # set everything except candles to x2 so they dont show in rangeslider
     for trace in fig.data:
         if not trace['name'] == 'candles':
             trace.update(xaxis='x2')
+
 
 def candlestick(df, **kw):
     return go.Candlestick(
@@ -184,8 +193,10 @@ def candlestick(df, **kw):
         line=dict(width=1),
         hoverlabel=dict(split=False, bgcolor='rgba(0,0,0,0)'))
 
-def scatter(df, name, color=None, hoverinfo='all', stepped=False, **kw):
 
+def scatter(df, name, color=None, hoverinfo='all', stepped=False, mode='lines', **kw):
+    # mode = lines or markers
+    # marker=dict(size=0.5),
     # TODO make this more general than just for scatter
     signature = inspect.signature(go.Scatter.__init__)
     kw = {k: v for k, v in kw.items() if k in signature.parameters.keys()}
@@ -198,10 +209,11 @@ def scatter(df, name, color=None, hoverinfo='all', stepped=False, **kw):
         name=name,
         x=df.index,
         y=df[name],
-        mode='lines',
+        mode=mode,
         # line=dict(color=color, width=1),
         hoverinfo=hoverinfo,
         **kw)
+
 
 def bar(df, name, color=None, **kw):
     trace = go.Bar(
@@ -215,16 +227,18 @@ def bar(df, name, color=None, **kw):
     )
     return trace
 
+
 def add_pred_trace(df, offset=2):
     # TODO this is so messy... 200 needs to be a %, not hard coded
     s_offset = df.Low * offset * 0.01
 
     # df['sma_low'] = df.Low.rolling(10).mean() - s_offset
     df['sma_low'] = (df.Low - s_offset).rolling(10).mean()
-    df['sma_low'] = df[['sma_low', 'Low']].min(axis=1) #- s_offset
+    df['sma_low'] = df[['sma_low', 'Low']].min(axis=1)  # - s_offset
     # df['sma_low'] = df['sma_low'].ewm(span=5).mean()
     # df['sma_low'] = df[['sma_low', 'Low']].min(axis=1) - s_offset
     return df
+
 
 def predictions(df, name, regression=False, **kw):
     """Add traces of predicted 1, 0, -1 vals as shapes"""
@@ -235,11 +249,11 @@ def predictions(df, name, regression=False, **kw):
         'triangle-up': [1, 'green'],
         'circle': [0, '#8c8c8c'],
         'triangle-down': [-1, 'red']}
-        
+
     traces = []
 
     for name, (side, color) in m.items():
-        
+
         # convert pred pcts to 1/-1 for counting as 'correct' or not
         if regression:
             df.y_pred = np.where(df.y_pred > 0, 1, -1)
@@ -275,8 +289,9 @@ def predictions(df, name, regression=False, **kw):
                 hoverinfo='text')
 
             traces.append(trace)
-    
+
     return traces
+
 
 def trades(df, name, **kw):
     """Add traces of trade entries with direction and profitable|not"""
@@ -286,7 +301,7 @@ def trades(df, name, **kw):
     m = {
         'star-triangle-up': [1, colors['lightblue']],
         'star-triangle-down': [-1, colors['lightred']]}
-    
+
     traces = []
 
     for name, (side, color) in m.items():
@@ -298,9 +313,10 @@ def trades(df, name, **kw):
 
             # set hover label
             fmt = lambda x, y: f'{y}: {x:,.0f}'
+
             text = df3.index.strftime('%Y-%m-%d %H') + '<br>' + \
                 df3.trade_entry.apply(fmt, y='entry') + '<br>' + \
-                df3.trade_exit.apply(fmt, y='exit')  + '<br>' + \
+                df3.trade_exit.apply(fmt, y='exit') + '<br>' + \
                 df3.trade_pnl.apply(lambda x: f'pnl: {x:.2%}')
 
             trace = go.Scatter(
@@ -319,6 +335,7 @@ def trades(df, name, **kw):
 
     return traces
 
+
 def trace_extrema(df, name, **kw):
     """Add trace of indicators for high/low peaks"""
     m = dict(
@@ -335,6 +352,7 @@ def trace_extrema(df, name, **kw):
     )
     return [trace]
 
+
 def split_trace(df, name, split_val=0.5, **kw):
     """Split trace into two at value, eg 0.5 for long/short traces"""
     df = df.copy()
@@ -344,16 +362,17 @@ def split_trace(df, name, split_val=0.5, **kw):
 
     for color, op in zip(clrs, oprs):
         df2 = df.copy()
-        df2.loc[op(df[name], split_val)] = split_val # set lower/higher values to 0.5
+        df2.loc[op(df[name], split_val)] = split_val  # set lower/higher values to 0.5
 
         trace = scatter(
             df=df2,
             name=name,
             color=color,
             # fill='tonexty'
-            )
+        )
         traces.append(trace)
     return traces
+
 
 def probas(df, **kw):
     df = df.copy()
@@ -363,7 +382,7 @@ def probas(df, **kw):
     names = dict(
         long=colors['lightblue'],
         short=colors['lightred']
-        )
+    )
 
     for name, color in names.items():
         trace = go.Bar(
@@ -375,10 +394,11 @@ def probas(df, **kw):
                 color=color),
             offsetgroup=0
         )
-        
+
         traces.append(trace)
 
     return traces
+
 
 def clean_traces(cols, traces):
     """Remove cols not in df"""
@@ -386,14 +406,26 @@ def clean_traces(cols, traces):
     include = ('candle', 'probas', 'trades')
     return [m for m in traces if m['name'] in cols or any(m['name'] == item for item in include)]
 
+
 def enum_traces(traces, base_num=2):
     """Give traces a row number?"""
     return [{**m, **dict(row=m.get('row', None) or i + base_num)} for i, m in enumerate(traces)]
 
-def chart(df, symbol='XBTUSD', periods=200, last=True, startdate=None, df_balance=None, traces=None, default_range=None, secondary_row_width: float=0.12, **kw):
+
+def chart(
+        df,
+        symbol='XBTUSD',
+        periods=200,
+        last=True,
+        startdate=None,
+        df_balance=None,
+        traces=None,
+        default_range=None,
+        secondary_row_width: float = 0.12,
+        **kw):
     """Main plotting func for showing main candlesticks with supporting subplots of features"""
     bgcolor = '#000B15'
-    gridcolor='#182633'
+    gridcolor = '#182633'
 
     base_traces = [
         dict(name='ema10', func=scatter, color='orange', hoverinfo='skip'),
@@ -401,8 +433,8 @@ def chart(df, symbol='XBTUSD', periods=200, last=True, startdate=None, df_balanc
         dict(name='ema200', func=scatter, color='#9d19fc', hoverinfo='skip'),
         dict(name='y_pred', func=predictions, **kw),
         dict(name='candle', func=candlestick),
-        ]
-    
+    ]
+
     # clean and combine base with extra traces
     base_traces = clean_traces(cols=df.columns, traces=base_traces)
     traces = clean_traces(cols=df.columns, traces=traces)
@@ -416,7 +448,7 @@ def chart(df, symbol='XBTUSD', periods=200, last=True, startdate=None, df_balanc
         df = df.iloc[-1 * periods:, :]
     else:
         df = df.iloc[:periods, :]
-    
+
     rows = max([m.get('row', 1) for m in traces])
     row_widths = ([secondary_row_width] * (rows - 1) + [0.4])[rows * -1:]
     height = 1000 * sum(row_widths)
@@ -425,8 +457,8 @@ def chart(df, symbol='XBTUSD', periods=200, last=True, startdate=None, df_balanc
     subplot_titles = {}
     for m in traces:
         subplot_titles[m.get('row', 1)] = m.get('name', '')
-    
-    subplot_titles[1] = '' # main chart doesn't need title
+
+    subplot_titles[1] = ''  # main chart doesn't need title
     subplot_titles = [subplot_titles[k] for k in sorted(subplot_titles)]
 
     fig = make_subplots(
@@ -437,7 +469,7 @@ def chart(df, symbol='XBTUSD', periods=200, last=True, startdate=None, df_balanc
         vertical_spacing=0.03,
         subplot_titles=subplot_titles,
         # specs=specs
-        )
+    )
 
     fig = go.FigureWidget(fig)
 
@@ -454,7 +486,8 @@ def chart(df, symbol='XBTUSD', periods=200, last=True, startdate=None, df_balanc
         ],
     )
 
-    rng = None if default_range is None else [df.index[-1 * default_range * 24].to_pydatetime(), df.index[-1].to_pydatetime()]
+    rng = None if default_range is None else [
+        df.index[-1 * default_range * 24].to_pydatetime(), df.index[-1].to_pydatetime()]
 
     xaxis = dict(
         type='date',
@@ -466,13 +499,13 @@ def chart(df, symbol='XBTUSD', periods=200, last=True, startdate=None, df_balanc
             visible=True,
             thickness=0.0125,
             # range=rng
-            ),
+        ),
         rangeselector=rangeselector,
         side='top',
         showticklabels=True,
         range=rng,
-        )
-    
+    )
+
     xaxis2 = dict(
         matches='x',
         overlaying='x',
@@ -510,12 +543,11 @@ def chart(df, symbol='XBTUSD', periods=200, last=True, startdate=None, df_balanc
         showlegend=False,
         dragmode='pan',
         # title=symbol
-        )
-    
+    )
+
     # update subplot title size/position
     for i in fig['layout']['annotations']:
         i['font'] = dict(size=9)
         i['x'] = 0.05
 
     return fig
- 

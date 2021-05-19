@@ -1,11 +1,13 @@
-from .. import (
-    backtest as bt,
-    signals as sg,
-    functions as f)
-from ..backtest import Order, Strategy, Trade
+from .. import backtest as bt
+from .. import functions as f
+from .. import signals as sg
+from ..orders import Order
+from ..trade import Trade
+from .base import StrategyBase
 
-class Strategy(Strategy):
-    def __init__(self, speed=(8,8), weight=1, norm=(0.004, 0.024), lev=5):
+
+class Strategy(StrategyBase):
+    def __init__(self, speed=(8, 8), weight=1, norm=(0.004, 0.024), lev=5):
         super().__init__(weight, lev)
         self.name = 'trendrev'
         self.stoppercent = -0.03
@@ -19,7 +21,7 @@ class Strategy(Strategy):
         self.sym = sym
         df = sym.df
         self.a = self.sym.account
-        
+
         self.vty = sg.Volatility(weight=1, norm=self.norm)
         df = df.pipe(self.vty.add_signal)
 
@@ -27,7 +29,7 @@ class Strategy(Strategy):
         ema = sg.EMA(weight=1)
         emaslope = sg.EMASlope(weight=1, p=50, slope=5)
         df = self.conf.add_signal(df=df, signals=[macd, ema, emaslope],
-                            trendsignals=[ema])
+                                  trendsignals=[ema])
 
         # NOTE kinda sketch for now, manually adding signals this way to avoid adding to 'conf' signal
         self.trend = sg.Trend(signal_series='ema_trend', speed=self.speed)
@@ -44,24 +46,26 @@ class Strategy(Strategy):
             t.stop.cancel()
             t.limitclose.fill(c=c, price=c.Close)
             self.unfilledtrades += 1
-            
+
         t.exit_trade()
         self.trade = None
-    
+
     def enter_trade(self, side, entryprice):
-        self.trade = self.init_trade(trade=Trade(), side=side, entryprice=entryprice)
+        self.trade = self.init_trade(trade=TradeRev(), side=side, entryprice=entryprice)
         t = self.trade
         t.check_orders(self.sym.cdl)
-        if not t.active: self.exit_trade()
-        
+        if not t.active:
+            self.exit_trade()
+
     def decide(self, c):
         self.cdl = c
         self.i = c.Index
         pxhigh, pxlow = c.pxhigh, c.pxlow
 
-        # if we exit a trade and limitclose isnt filled, limitopen may wait and fill in next candles, but current trade gets 0 profit. Need to exit properly.
+        # if we exit a trade and limitclose isnt filled, limitopen may wait and fill in next
+        # # candles, but current trade gets 0 profit. Need to exit properly.
 
-        # Exit Trade
+        # Exit TradeRev
         if not self.trade is None:
             t = self.trade
 
@@ -73,13 +77,14 @@ class Strategy(Strategy):
                     t.active = False
 
             t.check_orders(c)
-            if not t.active: self.exit_trade()
+            if not t.active:
+                self.exit_trade()
 
             # need to make trade active=False if limitclose is filled?
             # order that candle moves is important
             # TODO: need enter > exit > enter all in same candle
 
-        # Enter Trade
+        # Enter TradeRev
         enterhigh, enterlow = self.lasthigh, self.lastlow
         # enterhigh, enterlow = pxhigh, pxlow
         if self.trade is None:
@@ -106,40 +111,40 @@ class Strategy(Strategy):
         limitclose = t_current.limitclose
 
         # PREVCLOSE - Check if position is still open with correct side/contracts
-        if (prevclose.marketfilled 
-        and pos.side() == t_prev.side 
-        and t_current.duration() <= 4):
+        if (prevclose.marketfilled
+            and pos.side() == t_prev.side
+                and t_current.duration() <= 4):
             pos.add_order(Order(
-                            contracts=pos.contracts * -1,
-                            ordtype='Market',
-                            name='marketclose',
-                            trade=t_prev))
+                contracts=pos.contracts * -1,
+                ordtype='Market',
+                name='marketclose',
+                trade=t_prev))
 
         # OPEN
         if limitopen.filled:
-            if (limitopen.marketfilled 
-            and pos.contracts == 0
-            and t_current.duration() == 4):
+            if (limitopen.marketfilled
+                and pos.contracts == 0
+                    and t_current.duration() == 4):
                 pos.add_order(Order(
-                                contracts=limitopen.contracts,
-                                ordtype='Market',
-                                name='marketopen',
-                                trade=t_current))
+                    contracts=limitopen.contracts,
+                    ordtype='Market',
+                    name='marketopen',
+                    trade=t_current))
         else:
-            pos.add_order(limitopen) # Only till max 4 candles into trade
+            pos.add_order(limitopen)  # Only till max 4 candles into trade
 
         # STOP
         if not stopclose.filled:
             pos.add_order(stopclose)
 
         # CLOSE - current
-        if not pos.contracts == 0:            
+        if not pos.contracts == 0:
             if t_current.timedout:
                 pos.add_order(Order(
-                                contracts=limitclose.contracts,
-                                ordtype='Market',
-                                name='marketclose',
-                                trade=t_current))
+                    contracts=limitclose.contracts,
+                    ordtype='Market',
+                    name='marketclose',
+                    trade=t_current))
             else:
                 pos.add_order(limitclose)
 
@@ -149,23 +154,24 @@ class Strategy(Strategy):
         # NEXT - Init next trade to get next limitopen and stop
         c = self.cdl
         t_next = self.init_trade(
-                        side=t_current.side * -1,
-                        entryprice=(c.pxhigh if t_current.side == 1 else c.pxlow),
-                        balance=balance,
-                        temp=True,
-                        trade=Trade())
+            side=t_current.side * -1,
+            entryprice=(c.pxhigh if t_current.side == 1 else c.pxlow),
+            balance=balance,
+            temp=True,
+            trade=TradeRev())
 
         pos.add_order(t_next.limitopen)
         pos.add_order(t_next.stop)
 
         return pos.final_orders()
 
-class Trade(Trade):
+
+class TradeRev(Trade):
     def __init__(self):
         super().__init__()
         self.stopped = False
         self.enteroffset = 0
-    
+
     def closeprice(self):
         c = self.strat.cdl
         price = c.pxhigh if self.side == 1 else c.pxlow
@@ -173,8 +179,8 @@ class Trade(Trade):
         self.enteroffset = c.norm_ema
 
         # TODO: move this to a 'slippage price' function
-        return round(price * (1 + self.enteroffset * self.side), self.sym.decimalfigs)
-    
+        return round(price * (1 + self.enteroffset * self.side), self.sym.decimal_figs)
+
     def enter(self):
         c = self.strat.cdl
         self.stoppercent = self.strat.stoppercent
@@ -188,51 +194,46 @@ class Trade(Trade):
         contracts = int(self.targetcontracts * self.conf)
 
         self.limitopen = Order(
-                    price=limitbuyprice,
-                    side=self.side,
-                    contracts=contracts,
-                    activate=True,
-                    ordtype_bot=1,
-                    ordtype='Limit',
-                    name='limitopen',
-                    trade=self)
+            price=limitbuyprice,
+            side=self.side,
+            contracts=contracts,
+            activate=True,
+            ordtype_bot=1,
+            ordtype='Limit',
+            name='limitopen',
+            trade=self)
 
         self.stop = Order(
-                    price=self.stoppx,
-                    side=self.side * -1,
-                    contracts=contracts,
-                    activate=False,
-                    ordtype_bot=2,
-                    ordtype='Stop',
-                    name='stop',
-                    reduce=True,
-                    trade=self)
+            price=self.stoppx,
+            side=self.side * -1,
+            contracts=contracts,
+            activate=False,
+            ordtype_bot=2,
+            ordtype='Stop',
+            name='stop',
+            reduce=True,
+            trade=self)
 
         self.limitclose = Order(
-                    price=limitcloseprice,
-                    side=self.side * -1,
-                    contracts=contracts,
-                    activate=False,
-                    ordtype_bot=3,
-                    ordtype='Limit',
-                    name='limitclose',
-                    reduce=True,
-                    trade=self)
-    
+            price=limitcloseprice,
+            side=self.side * -1,
+            contracts=contracts,
+            activate=False,
+            ordtype_bot=3,
+            ordtype='Limit',
+            name='limitclose',
+            reduce=True,
+            trade=self)
+
     def check_position_closed(self):
         if self.limitclose.filled:
             self.active = False
-    
-    def check_timeout(self):
-        if self.duration() >= self.timeout:
-            self.timedout = True
-            self.active = False
-    
+
     def check_orders(self, c):
         # trade stays active until pxlow is hit, strat controlls
         # filling order sets the trade's actual entryprice
-        # filling close or stop order sets trade's exit price        
-        
+        # filling close or stop order sets trade's exit price
+
         self.add_candle(c)
 
         for o in self.orders:
@@ -245,8 +246,8 @@ class Trade(Trade):
                 if (o.ordtype_bot == 1
                     and self.active
                     and self.duration() == 4
-                    and not o.filled):
-                        o.fill(c=c, price=c.Close)
+                        and not o.filled):
+                    o.fill(c=c, price=c.Close)
 
                 if o.filled:
                     if o.ordtype_bot == 1:
@@ -255,13 +256,13 @@ class Trade(Trade):
                         self.limitclose.activate(c=c, delay=delay)
                         self.stop.activate(c=c, delay=0)
                     elif o.ordtype_bot == 2:
-                        self.limitclose.cancel() #make limitclose filledtime be end of trade
+                        self.limitclose.cancel()  # make limitclose filledtime be end of trade
                         self.stopped = True
                         self.pnlfinal = f.get_pnl(self.side, self.entryprice, self.exitprice)
                         self.exitbalance = self.sym.account.get_balance()
                     elif o.ordtype_bot == 3:
                         self.stop.cancel()
-            
+
         # adjust limitclose for next candle
         self.limitclose.set_price(price=self.closeprice())
         self.check_timeout()

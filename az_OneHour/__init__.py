@@ -1,12 +1,12 @@
 
-from datetime import (datetime as dt, timedelta as delta)
+from datetime import datetime as dt
+from datetime import timedelta as delta
 
 import azure.functions as func
-
-from __app__.jambot import (
-    functions as f,
-    livetrading as live)
+from __app__.jambot import functions as f
+from __app__.jambot import livetrading as live
 from __app__.jambot.database import db
+
 
 def main(mytimer: func.TimerRequest) -> None:
     try:

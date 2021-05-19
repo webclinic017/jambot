@@ -1,10 +1,9 @@
 import pandas as pd
 
-from .. import (
-    backtest as bt,
-    signals as sg,
-    functions as f)
-from ..backtest import Order, OrdArray
+from .. import backtest as bt
+from .. import functions as f
+from .. import signals as sg
+from ..backtest import OrdArray, Order
 
 try:
     from IPython.display import display
@@ -13,14 +12,14 @@ except ModuleNotFoundError:
 
 
 class Strategy(bt.Strategy):
-    def __init__(self, speed=(36,36), weight=1, norm=(1,4), speedtp=(36, 36)):
+    def __init__(self, speed=(36, 36), weight=1, norm=(1, 4), speedtp=(36, 36)):
         super().__init__(weight=weight)
         self.name = 'chop'
         self.speed = speed
         self.speedtp = speedtp
         self.norm = norm
         # anchordist > 0 - 0.02, step 0.002
-        # Order/Stop spread, 
+        # Order/Stop spread,
 
     def init(self, sym):
         self.sym = sym
@@ -52,10 +51,10 @@ class Strategy(bt.Strategy):
 
         contracts = f.get_contracts(balance * self.weight, self.lev, entryprice, side, self.sym.altstatus)
 
-        trade = Trade_Chop(c=self.cdl)
+        trade = Trade(c=self.cdl)
         trade.init(entryprice, contracts, self, side=side)
         return trade
-    
+
     def enter_trade(self, entryprice):
         self.trade = self.init_trade(entryprice, self.status)
         self.trade.check_orders(self.cdl)
@@ -66,28 +65,28 @@ class Strategy(bt.Strategy):
     def get_next_ord_arrays(self, anchorprice, c, side, trade=None):
 
         orders = OrdArray(ordtype_bot=1,
-                        anchorprice=anchorprice,
-                        orderspread=0.002 * c.norm,
-                        trade=trade,
-                        activate=True)
-        
+                          anchorprice=anchorprice,
+                          orderspread=0.002 * c.norm,
+                          trade=trade,
+                          activate=True)
+
         stops = OrdArray(ordtype_bot=2,
-                        anchorprice=f.get_price(
-                            -0.01 * c.norm,
-                            orders.maxprice,
-                            side),
-                        orderspread=0.002 * c.norm,
-                        trade=trade,
-                        activate=False)
-        
+                         anchorprice=f.get_price(
+                             -0.01 * c.norm,
+                             orders.maxprice,
+                             side),
+                         orderspread=0.002 * c.norm,
+                         trade=trade,
+                         activate=False)
+
         outerprice = c.tp_high if side == 1 else c.tp_low
 
         takeprofits = OrdArray(ordtype_bot=3,
-                        anchorprice=trade.anchorstart,
-                        outerprice=outerprice,
-                        orderspread=0,
-                        trade=trade,
-                        activate=False)
+                               anchorprice=trade.anchorstart,
+                               outerprice=outerprice,
+                               orderspread=0,
+                               trade=trade,
+                               activate=False)
 
         return [orders, stops, takeprofits]
 
@@ -107,7 +106,7 @@ class Strategy(bt.Strategy):
             lstOrders.extend(t.orders.getUnfilledOrders(targetcontracts))
             lstOrders.extend(t.stops.getUnfilledOrders(targetcontracts, remainingcontracts))
             lstOrders.extend(t.takeprofits.getUnfilledOrders(targetcontracts, remainingcontracts))
-            
+
         else:
             # not in a trade, need upper and lower order/stop arrays
             c = self.cdl
@@ -126,7 +125,8 @@ class Strategy(bt.Strategy):
         data = []
         cols = ['N', 'Timestamp', 'Sts', 'Dur', 'Anchor', 'Entry', 'Exit', 'Contracts', 'Filled', 'Pnl', 'Balance']
         for i, t in enumerate(self.trades):
-            if not maxmin == 0 and maxmin * t.pnlfinal <= 0: continue
+            if not maxmin == 0 and maxmin * t.pnlfinal <= 0:
+                continue
 
             data.append([
                 t.tradenum,
@@ -141,24 +141,26 @@ class Strategy(bt.Strategy):
                 '{:.2%}'.format(t.pnlfinal),
                 round(t.exitbalance, 2)
             ])
-        
-            if i == maxlines: break
+
+            if i == maxlines:
+                break
 
         df = pd.DataFrame(data=data, columns=cols)
         display(df)
+
 
 class Trade(bt.Trade):
     def __init__(self, c):
         super().__init__()
         self.numorders = 4
         self.cdl = c
-            
+
     def enter(self):
         self.anchorstart = self.entryprice
         self.entryprice = 0
-        
+
         c = self.cdl
-        
+
         self.anchorprice = self.strat.get_anchor_price(self.anchorstart, c.norm, self.status)
 
         lst = self.strat.get_next_ord_arrays(self.anchorprice, c, self.status, self)
@@ -169,21 +171,21 @@ class Trade(bt.Trade):
     def exit_(self):
         self.filledcontracts = self.orders.filledcontracts
         self.exit_trade()
-        
+
     def check_orders(self, c):
         self.add_candle(c)
 
-        if self.duration() == 5: # 5 is arbitrary
+        if self.duration() == 5:  # 5 is arbitrary
             self.deactivate_orders()
         elif self.duration() == 40:
             self.close_position()
-        
+
         self.orders.check_orders(c)
         self.stops.check_orders(c)
         self.takeprofits.check_orders(c)
-        
+
         if not self.orders.active and self.contracts == 0:
-            self.active = False # > then exit trade??
+            self.active = False  # > then exit trade??
 
         if (not self.stops.active) or (not self.takeprofits.active):
             self.active = False
@@ -210,9 +212,8 @@ class Trade(bt.Trade):
         lst = []
         lst.extend(self.orders.orders)
         lst.extend(self.stops.orders)
-        lst.extend(self.takeprofits.orders)        
+        lst.extend(self.takeprofits.orders)
         return lst
 
     def print_all_orders(self):
         self.strat.print_orders(self.all_orders())
-

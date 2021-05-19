@@ -1,0 +1,38 @@
+# install both commit and push hooks with:
+# poetry run pre-commit install --hook-type pre-commit --hook-type pre-push
+
+fail_fast: false # true makes it stop and not fix all errors in one run
+repos:
+  - repo: https://github.com/pre-commit/mirrors-autopep8
+    rev: v1.5.7
+    hooks:
+      - id: autopep8
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v3.4.0
+    hooks:
+      - id: double-quote-string-fixer
+  # - repo: https://github.com/PyCQA/pydocstyle # pydocstyle too strict
+  #   rev: '6.0.0'
+  #   hooks:
+  #     - id: pydocstyle
+  #       name: pydocstyle
+  #       args: ["--ignore=D100,D400"]
+  - repo : https://github.com/PyCQA/isort
+    rev: '5.8.0'
+    hooks:
+      - id: isort
+        name: sort_imports # sort imports at top of python file
+  - repo: local
+    hooks: 
+      - id: flake8
+        name: flake8
+        entry: poetry run flake8
+        language: system
+        types: [python]
+    #   - id: pytest
+    #     name: pytest
+    #     entry: poetry run pytest
+    #     language: system
+    #     types: [python]
+    #     stages: [push] # only run pytest before push, not every commit
+    #     pass_filenames: false # push would fail if no test are run for specific .py file

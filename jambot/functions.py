@@ -1,16 +1,16 @@
 # General Functions module - don't rely on any other modules from jambot
 import json
 import os
-from datetime import (datetime as dt, timedelta as delta)
+from datetime import datetime as dt
+from datetime import timedelta as delta
 from pathlib import Path
 from sys import platform
 from time import time
-import yaml
 
 import pandas as pd
 import pyodbc
 import pypika as pk
-
+import yaml
 from dateutil.parser import parse
 from pypika import functions as fn
 
@@ -22,37 +22,44 @@ except ModuleNotFoundError:
 global topfolder
 topfolder = Path(__file__).parent
 
+
 def set_self(m, prnt=False, exclude=()):
     """Convenience func to assign an object's func's local vars to self"""
-    if not isinstance(exclude, tuple): exclude = (exclude, )
-    exclude += ('__class__', 'self') # always exclude class/self
-    obj = m.get('self', None) # self must always be in vars dict
+    # if not isinstance(exclude, tuple): exclude = (exclude, )
+    exclude += ('__class__', 'self')  # always exclude class/self
+    obj = m.get('self', None)  # self must always be in vars dict
 
     if obj is None:
         return
 
     for k, v in m.items():
-        if prnt:
-            print(f'\n\t{k}: {v}')
+        # if prnt:
+        #     print(f'\n\t{k}: {v}')
 
         if not k in exclude:
             setattr(obj, k, v)
 
+
 def filter_df(dfall, symbol):
-    return dfall[dfall.Symbol==symbol].reset_index(drop=True)
+    return dfall[dfall.Symbol == symbol].reset_index(drop=True)
 
 # DATETIME
+
+
 def check_date(d):
     if type(d) is str:
         return parse(d)
     else:
         return d
 
+
 def startvalue(startdate):
     return startdate + delta(days=-25)
 
+
 def enddate(startdate, rng):
     return startdate + delta(days=rng)
+
 
 def time_format(hrs=False, mins=False, secs=False):
     if secs:
@@ -64,6 +71,7 @@ def time_format(hrs=False, mins=False, secs=False):
     else:
         return '%Y-%m-%d'
 
+
 def print_time(start):
     end = time()
     duration = end - start
@@ -73,15 +81,17 @@ def print_time(start):
         mins = duration / 60
         secs = duration % 60
         ans = '{:.0f}m {:.3f}s'.format(mins, secs)
-        
+
     print(ans)
 
 
 def line():
     return '\n'
 
+
 def dline():
     return line() + line()
+
 
 def read_csv(startdate, daterange, symbol=None):
     p = Path.cwd().parent / 'Testing/df.csv'
@@ -94,18 +104,22 @@ def read_csv(startdate, daterange, symbol=None):
     df = df.loc[mask].reset_index(drop=True)
     return df
 
+
 def percent(val):
     return '{:.2%}'.format(val)
+
 
 def price_format(altstatus=False):
     ans = '{:,.0f}' if not altstatus else '{:,.0f}'
     return ans
+
 
 def get_price(pnl, entryprice, side):
     if side == 1:
         return pnl * entryprice + entryprice
     elif side == -1:
         return entryprice / (1 + pnl)
+
 
 def get_pnl_xbt(contracts=0, entryprice=0, exitprice=0, isaltcoin=False):
     if 0 in (entryprice, exitprice):
@@ -115,6 +129,7 @@ def get_pnl_xbt(contracts=0, entryprice=0, exitprice=0, isaltcoin=False):
     elif isaltcoin:
         return round(contracts * (exitprice - entryprice), 8)
 
+
 def get_pnl(side, entryprice, exitprice):
     if 0 in (entryprice, exitprice):
         return 0
@@ -123,19 +138,22 @@ def get_pnl(side, entryprice, exitprice):
     else:
         return round((entryprice - exitprice) / exitprice, 4)
 
-def get_contracts(xbt, leverage, entryprice, side, isaltcoin=False):
-    if not isaltcoin:
-        return int(xbt * leverage * entryprice * side)
+
+def get_contracts(xbt, leverage, price, side, is_altcoin=False):
+    if not is_altcoin:
+        return int(xbt * leverage * price * side)
     else:
-        return int(xbt * leverage * (1 / entryprice) * side)
+        return int(xbt * leverage * (1 / price) * side)
+
 
 def side(x):
-    side = lambda x: -1 if x < 0 else (1 if x > 0 else 0)
-    return side(x)
+    return -1 if x < 0 else (1 if x > 0 else 0)
+
 
 def useful_keys(orders):
     # return only useful keys from bitmex orders in dict form
-    keys = ('symbol', 'clOrdID', 'side', 'price', 'stopPx', 'ordType', 'execInst', 'ordStatus', 'contracts', 'name', 'manual', 'orderID')
+    keys = ('symbol', 'clOrdID', 'side', 'price', 'stopPx', 'ordType',
+            'execInst', 'ordStatus', 'contracts', 'name', 'manual', 'orderID')
     if not isinstance(orders, list):
         islist = False
         orders = [orders]
@@ -143,22 +161,25 @@ def useful_keys(orders):
         islist = True
 
     result = [{key: o[key] for key in o.keys() if key in keys} for o in orders]
-    
+
     if islist:
         return result
     else:
         return result[0]
 
+
 def key(symbol, name, side, ordtype):
     # if ordtype == 'Stop':
     #     side *= -1
-    
+
     sidestr = 'long' if side == 1 else 'short'
 
     return '{}-{}-{}'.format(symbol, name.lower(), sidestr)
 
+
 def col(df, col):
     return df.columns.get_loc(col)
+
 
 def binance_creds():
     p = topfolder / 'data/ApiKeys/binance.yaml'
@@ -166,24 +187,27 @@ def binance_creds():
         m = yaml.full_load(file)
     return m
 
+
 def discord(msg, channel='jambot'):
-    import requests
     import discord
-    from discord import Webhook, RequestsWebhookAdapter, File
+    import requests
+    from discord import File, RequestsWebhookAdapter, Webhook
 
     p = Path(topfolder) / 'data/ApiKeys/discord.csv'
     r = pd.read_csv(p, index_col='channel').loc[channel]
-    if channel == 'err': msg += '@here' 
+    if channel == 'err':
+        msg += '@here'
 
     # Create webhook
     webhook = Webhook.partial(r.id, r.token, adapter=RequestsWebhookAdapter())
-    
+
     # split into strings of max 2000 char for discord
     n = 2000
-    out = [(msg[i:i+n]) for i in range(0, len(msg), n)]
-    
+    out = [(msg[i:i + n]) for i in range(0, len(msg), n)]
+
     for msg in out:
         webhook.send(msg)
+
 
 def send_error(msg='', prnt=False):
     import traceback
@@ -191,7 +215,7 @@ def send_error(msg='', prnt=False):
 
     if not msg == '':
         err = '{}:\n{}'.format(msg, err).replace(':\nNoneType: None', '')
-    
+
     err = '*------------------*\n{}'.format(err)
 
     if prnt or not 'linux' in platform:
@@ -213,11 +237,13 @@ def get_delta(interval=1):
     elif interval == 15:
         return delta(minutes=15)
 
+
 def timenow(interval=1):
     if interval == 1:
         return dt.utcnow().replace(microsecond=0, second=0, minute=0)
     elif interval == 15:
         return round_minutes(dt=dt.utcnow(), resolution=15).replace(microsecond=0, second=0)
+
 
 def round_minutes(dt, resolution):
     new_minute = (dt.minute // resolution) * resolution
@@ -232,7 +258,7 @@ class Switch:
         return self
 
     def __exit__(self, type, value, traceback):
-        return False # Allows a traceback to occur
+        return False  # Allows a traceback to occur
 
     def __call__(self, *values):
         return self.value in values

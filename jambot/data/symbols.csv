@@ -1,4 +1,4 @@
-symbol,symbolbitmex,altstatus,fullname,symbolshort,enabled,against,withspeed,against2,with2,uppernormal,lowernormal,meanrevenabled,decimalfigs,url,urlshort
+symbol,symbolbitmex,altstatus,fullname,symbolshort,enabled,against,withspeed,against2,with2,uppernormal,lowernormal,meanrevenabled,decimal_figs,url,urlshort
 .BADAXBT,ADAU19,1,Cardano,ADA,1,36,18,36,36,8,2,0,8,https://www.tradingview.com/chart/HSxuns6m/?symbol=BINANCE:ADABTC,http://bit.ly/2sdynId
 .BBCHXBT,BCHU19,1,Bitcoin Cash,BCH,1,36,18,36,36,8,2,0,4,https://www.tradingview.com/chart/HSxuns6m/?symbol=COINBASE:BCHBTC,http://bit.ly/2C27KKV
 .BEOSXBT,EOSU19,1,EOS,EOS,1,36,18,36,36,8,2,0,7,https://www.tradingview.com/chart/HSxuns6m/?symbol=BINANCE:EOSBTC,http://bit.ly/2RucjHN
