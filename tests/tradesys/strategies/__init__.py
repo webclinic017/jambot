@@ -1,1 +1,1 @@
-SYMBOL = 'XBTUSD'
+from ..__init__ import *
