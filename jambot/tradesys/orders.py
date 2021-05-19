@@ -7,16 +7,13 @@ from .enums import OrderStatus, OrderType, TradeSide
 
 
 class Order(Observer, metaclass=ABCMeta):
-    filled = SignalEvent(int)
-    cancelled = SignalEvent()
-    # timedout = SignalEvent() # NOTE not sure if this is different than cancelled
-    ammended = SignalEvent(float)
 
     def __init__(
         self,
         qty: int,
         # ordtype: str,
         price: float,
+        symbol: str = None,
         # side: int = None,
         # ordtype_bot: int = None,
         reduce_only: bool = False,
@@ -24,14 +21,17 @@ class Order(Observer, metaclass=ABCMeta):
         # sym: 'Backtest' = None,
         order_id: str = None,
         # activate: bool = False,
-        # symbol: str = 'XBTUSD',
         name: str = '',
         exec_inst: list = None,
         is_live: bool = False,
-        timeout: int = None
+        timeout: int = float('inf')
     ):
 
         super().__init__()
+
+        filled = SignalEvent(int)
+        cancelled = SignalEvent()
+        ammended = SignalEvent(float)
 
         # give order unique id
         if order_id is None:
@@ -40,12 +40,11 @@ class Order(Observer, metaclass=ABCMeta):
         status = OrderStatus.PENDING
         name = name.lower()
         # orderID = ''
-        delaytime = None
-        # filled = False
-        marketfilled = False
-        cancelled = False
-        filledtime = None
-        livedata = []
+        # delaytime = None
+        filled_time = None
+        # marketfilled = False
+        # cancelled = False
+        # livedata = []
 
         if qty == 0:
             raise ValueError('Order quantity cannot be 0.')
@@ -74,33 +73,6 @@ class Order(Observer, metaclass=ABCMeta):
 
         # decimaldouble = float(f'1e-{decimal_figs}')
 
-        """
-        # enter_exit: 1,2 happen in same direction, 3,4 opposite (used to check if filled)
-        # add_subtract: 1,4 add qty to trade, 2,3 remove, relative to side
-        # 1 - LimitOpen
-        # 2 - StopClose
-        # 3 - LimitClose
-        # 4 - StopOpen
-        # 5 - MarketOpen - only used for add_subtract
-        # 6 - MarketClose"""
-        # if ordtype_bot:
-        #     enter_exit = -1 if ordtype_bot in (1, 2) else 1
-        #     add_subtract = -1 if ordtype_bot in (2, 3, 6) else 1
-
-        #     if not trade is None:
-        #         direction = trade.side * enter_exit
-
-        # If Side is passed explicitly > force it, else get from qty
-        # if not side is None:
-        #     qty = abs(qty) * side
-        # else:
-        #     side = 1 if qty > 0 else -1
-
-        # checkside = side * -1 if is_stop else side
-
-        # if price is None and not ordtype == 'Market':
-        #     raise ValueError('Price cannot be None!')
-
         f.set_self(vars())
         # self.price = self.final_price(price)
         self.price_original = self.price
@@ -117,6 +89,35 @@ class Order(Observer, metaclass=ABCMeta):
     @property
     def is_filled(self):
         return self.status == OrderStatus.FILLED
+
+    @property
+    def is_expired(self):
+        """Check if order has reached its timeout duration"""
+        return self.duration >= self.timeout
+
+    def step(self):
+        """Check if execution price hit and fill"""
+        pass
+
+    def fill(self):
+        """Decide if adding or subtracting qty"""
+        self.filled_time = self.timestamp
+        self.filled.emit(self.qty)  # NOTE not sure if qty needed
+        self.status = OrderStatus.FILLED
+        self.detach()
+
+        # market filling
+        # if not price is None:
+        #     self.price = price
+        #     self.marketfilled = True
+
+        # price = self.check_stop_price()
+
+        # self.open_(price=price) if self.add_subtract == 1 else self.close(price=price)
+
+    def cancel(self):
+        """Cancel order"""
+        self.cancelled.emit()
 
     # def final_price(self, price=None):
     #     # NOTE not really sure why this is necessary
@@ -176,34 +177,6 @@ class Order(Observer, metaclass=ABCMeta):
         """Use price if Limit/Market, else use slippage price"""
         price = self.price if not self.is_stop else self.stoppx()
         return price
-
-    def step(self, c):
-        """Check if execution price hit and fill"""
-        pass
-        # checkprice = c.High if self.direction == 1 else c.Low
-
-        # if self.direction * (self.price - checkprice) <= 0:
-        #     self.fill(c=c)
-
-    def fill(self):
-        """Decide if adding or subtracting qty"""
-        # self.filledtime = c.Index
-        self.filled.emit(self.qty)  # NOTE not sure if qty needed
-        self.status = OrderStatus.FILLED
-        self.detach()
-
-        # market filling
-        # if not price is None:
-        #     self.price = price
-        #     self.marketfilled = True
-
-        # price = self.check_stop_price()
-
-        # self.open_(price=price) if self.add_subtract == 1 else self.close(price=price)
-
-    def cancel(self):
-        """Cancel order"""
-        self.cancelled.emit()
 
     def open_(self, price):
         """Increase trade qty and adjust trade entryprice
@@ -326,7 +299,9 @@ class Order(Observer, metaclass=ABCMeta):
             symbol=self.symbol,
             order_type=str(self.order_type),
             qty=self.qty,
-            price=self.price
+            price=self.price,
+            status=self.status,
+            name=self.name
         )
 
     def new_order(self) -> dict:
@@ -372,7 +347,7 @@ class MarketOrder(Order):
     """Market order which will be executed immediately"""
     trigger_switch = None
     order_type = OrderType.MARKET
-    price = None
+    # price = None
 
     def __init__(self, price: float = None, **kw):
         super().__init__(price=price, **kw)
@@ -407,7 +382,7 @@ def make_order(order_type: 'OrderType', **kw) -> Order:
     return cls(**kw)
 
 
-def make_orders(order_specs: list) -> list:
+def make_orders(order_specs: list, **kw) -> list:
     """Make multiple orders
 
     Parameters
@@ -420,4 +395,4 @@ def make_orders(order_specs: list) -> list:
     list
         list of initialized Order objects
     """
-    return [make_order(**order_spec) for order_spec in order_specs]
+    return [make_order(**order_spec, **kw) for order_spec in order_specs]
