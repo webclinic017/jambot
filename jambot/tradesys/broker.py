@@ -3,6 +3,8 @@ from .base import Observer, SignalEvent
 from .orders import LimitOrder, MarketOrder, Order, OrderType, StopOrder
 from .wallet import Wallet
 
+log = getlog(__name__)
+
 
 class Broker(Observer):
     """Class to manage submitting and checking orders
@@ -67,12 +69,10 @@ class Broker(Observer):
         # TODO need to mock filling?
         if order.is_market and not self.c is None:
             # fill immediately
-
             order.price = self.c.Close
             self.fill_order(order)
         else:
             self.open_orders[order.order_id] = order
-        # self.open_orders.append(order)
 
     def cancel(self, order: 'Order'):
         """Cancel order"""
@@ -103,16 +103,24 @@ class Broker(Observer):
         wallet = self.wallets[order.symbol]
         wallet.fill_order(order)
 
-    def step(self, c):
+        # remove order from open orders
+        if order.order_id in self.open_orders:
+            self.open_orders.pop(order.order_id)
+
+    def step(self):
         """Check open orders, fill if price hit
         - NOTE should probably consider order candle hits either side
         """
 
-        for order in self.open_orders.values():
+        for order_id in list(self.open_orders):
             # need order direction, check relative to price
+            order = self.open_orders[order_id]
+
+            if order.is_market:
+                order.price = self.c.Close
 
             # fill if order lies in current candle's range
-            if c.Low <= order.price <= c.High:
+            if self.c.Low <= order.price <= self.c.High:
                 self.fill_order(order)
 
             # TODO handle wallet transactions here
