@@ -3,7 +3,7 @@ from sklearn.utils.validation import check_is_fitted
 
 from ... import signals as sg
 from ... import sklearn_helper_funcs as sf
-from ..backtest import Backtest
+from ..backtest import BacktestManager
 from ..orders import LimitOrder, MarketOrder, StopOrder
 from ..trade import Trade
 from .__init__ import *
@@ -15,6 +15,7 @@ log = getlog(__name__)
 class Strategy(StrategyBase):
     def __init__(
             self,
+            symbol: str = 'XBTUSD',
             min_proba=0.5,
             min_agree=0,
             stoppercent=None,
@@ -23,24 +24,27 @@ class Strategy(StrategyBase):
             min_agree_pct=0.8,
             regression=False,
             **kw):
-        super().__init__(**kw)
+        super().__init__(symbol=symbol, **kw)
 
         use_stops = True if not stoppercent is None else False
-        split_val = 0 if regression else 0.5
+        # split_val = 0 if regression else 0.5
 
         # Trade = TradeML
         trades = []
 
         f.set_self(vars())
 
-    def init(self, sym, df):
-        # a = sym.account
-        icol_y_pred = df.columns.get_loc('y_pred')
-        f.set_self(vars())
+    # def init(self, bm, df):
+    #     # a = bm.account
+    #     icol_y_pred = df.columns.get_loc('y_pred')
+    #     f.set_self(vars())
 
     def exit_trade(self):
         """Market close trade"""
-        self.trade.market_close()
+        trade = self.trade
+
+        if not trade is None:
+            trade.market_close()
 
     def enter_trade(self, side: int, target_price: float):
 
@@ -49,6 +53,7 @@ class Strategy(StrategyBase):
         qty = self.wallet.available_quantity(leverage=self.lev, price=target_price)
 
         order = MarketOrder(
+            symbol=self.symbol,
             qty=qty * side,
             name='market_open')
 
@@ -58,138 +63,22 @@ class Strategy(StrategyBase):
         # self.cdl = c
         # df = self.df
         t = self.trade
+        c = self.c
 
         # signal_side = c.y_pred
         # signal_side = c.y_pred # psar strat
         # assign current side based on rolling proba
 
-        signal_side = 1 if self.c.rolling_proba > self.split_val else -1
+        # signal_side = 1 if self.c.rolling_proba > self.split_val else -1
 
-        # cur_price = c.Close
-        # if not t is None:
-        #     side = t.side
-        #     t.check_orders(c) # broker checks all orders
-        # else:
-        #     side = 0
-
-        # track current trade side
-        # check if signal side changed (y_pred)
-        if not signal_side == 0 and not self.side == signal_side:
+        if c.signal in (1, -1):
             self.exit_trade()
-            self.enter_trade(side=signal_side, target_price=self.c.Close)
-
-            # proba = {
-            #     -1: c.proba_short,
-            #     1: c.proba_long}.get(signal_side)
-
-            # # check if prev predictions agree to minimize excessive switching
-            # i = df.index.get_loc(c.Index)
-            # s = df.iloc[i - self.min_agree: i, self.icol_y_pred] \
-            #     .pipe(lambda s: s[s != 0])
-
-            # if all(s == signal_side): # or proba > self.min_proba_enter:
-
-            #     if proba > self.min_proba:
-            #         self.exit_trade(exit_price=cur_price)
-            #         self.enter_trade(side=signal_side, entry_price=cur_price)
+            self.enter_trade(side=c.signal, target_price=c.Close)
 
         # close final trade at last candle to see pnl
         # TODO do this with a "final candle" signal or similar
         # if c.Index == df.index[-1]:
         #     self.exit_trade(exit_price=cur_price)
-
-
-# class TradeML(bt.TradeBase):
-#     def __init__(self, **kw):
-#         super().__init__(**kw)
-
-#     def step(self, c):
-
-#         if self.limitopen.filled:
-#             self.close()
-
-#     def enter(self):
-
-#         contracts = int(self.targetcontracts * self.conf)
-
-#         offset_pct = 0.0025
-#         limitbuyprice = self.entrytarget * (1 + offset_pct * self.side * -1)
-
-#         self.limitopen = Order(
-#             price=limitbuyprice,
-#             side=self.side,
-#             contracts=contracts,
-#             ordtype_bot=1,
-#             ordtype='Limit',
-#             name='limitopen',
-#             trade=self)
-
-#         # .activate(c=self.strat.cdl, timeout=4)
-
-#         # MARKET OPEN
-#         # self.marketopen = Order(
-#         #     price=self.entrytarget,
-#         #     side=self.side,
-#         #     contracts=contracts,
-#         #     activate=True,
-#         #     ordtype_bot=5,
-#         #     ordtype='Market',
-#         #     name='marketopen',
-#         #     trade=self)
-
-#         # self.marketopen.fill(price=self.entrytarget, c=self.strat.cdl)
-
-#         # STOP
-#         if self.strat.use_stops:
-#             self.stoppercent = self.strat.stoppercent
-#             self.stoppx = f.get_price(self.stoppercent, self.entrytarget, self.side)
-#             self.stop = Order(
-#                 price=self.stoppx,
-#                 side=self.side * -1,
-#                 contracts=contracts,
-#                 ordtype_bot=2,
-#                 ordtype='Stop',
-#                 name='stop',
-#                 reduce=True,
-#                 trade=self)
-
-#     # def market_close(self, price):
-#     #     self.marketclose = Order(
-#     #         price=price,
-#     #         side=self.side * -1,
-#     #         contracts=self.marketopen.contracts * -1,
-#     #         activate=True,
-#     #         ordtype_bot=6,
-#     #         ordtype='Market',
-#     #         name='marketclose',
-#     #         trade=self)
-
-#     #     self.marketclose.fill(price=price, c=self.strat.cdl)
-
-#     def check_orders(self, c):
-#         """Check if stop is hit"""
-#         # self.add_candle(c)
-#         # if not self.strat.use_stops:
-#         #     return
-
-#         for o in self.orders:
-#             if not o.filled and o.is_active(c=c) and o.ordtype in ('Stop', 'Limit'):
-#                 o.check(c=c)
-
-#                 if o.filled:
-#                     # print(
-#                     #     f'side: {self.side}',
-#                     #     f'entryprice: {self.entryprice}',
-#                     #     f'stoppx: {o.price}',
-#                     #     f'exitprice: {self.exitprice}'
-#                     # )
-#                     if o.ordtype == 'Limit':
-#                         pass
-#                     elif o.ordtype == 'Stop':
-#                         # NOTE not sure if this should be here
-#                         self.stopped = True
-#                         self.pnlfinal = f.get_pnl(self.side, self.entryprice, self.exitprice)
-#                         self.exitbalance = self.sym.account.get_balance()
 
 
 class StratScorer():
@@ -212,16 +101,19 @@ class StratScorer():
         # NOTE will need to not use proba for regression
         # NOTE could build proba/predict together like mm.add_predict
         idx = x.index
-        sym = self.runs.get(idx[0], None)
+        bm = self.runs.get(idx[0], None)
 
-        if sym is None:
+        if bm is None:
             rolling_col = 'proba_long' if not regression else 'y_pred'
 
             df_pred = x \
                 .assign(y_pred=estimator.predict(x)) \
                 .join(sf.df_proba(df=x, model=estimator)) \
                 .pipe(sg.add_ema, p=n_smooth, c=rolling_col, col='rolling_proba') \
-                # .assign(rolling_proba=lambda x: x[rolling_col].rolling(n_smooth).mean()) \
+                .assign(
+                    signal=lambda x: np.sign(np.diff(np.sign(x.rolling_proba - 0.5), prepend=np.array([0])))) \
+                .fillna(0)
+            # .assign(rolling_proba=lambda x: x[rolling_col].rolling(n_smooth).mean()) \
 
             strat = Strategy(
                 lev=3,
@@ -232,15 +124,16 @@ class StratScorer():
                 symbol='XBTUSD',
                 startdate=idx[0])
 
-            cols = ['Open', 'High', 'Low', 'Close', 'y_pred', 'proba_long', 'rolling_proba']
-            sym = Backtest(**kw_args, strat=strat, df=df_pred[cols])
-            sym.decide_full(prnt=False)
+            cols = ['Open', 'High', 'Low', 'Close', 'signal']
+            bm = BacktestManager(**kw_args, strat=strat, df=df_pred[cols])
+            bm.run(prnt=False)
 
-            self.runs[idx[0]] = sym
+            self.runs[idx[0]] = bm
 
+        wallet = bm.strat.wallet
         if _type == 'final':
-            print(f'final: {sym.account.balance:.2f}')
-            return sym.account.balance  # final balance
+            print(f'final: {wallet.balance:.2f}')
+            return wallet.balance  # final balance
         elif _type == 'max':
-            print(f'max: {sym.account.max:.2f}')
-            return sym.account.max
+            print(f'max: {wallet.max:.2f}')
+            return wallet.max
