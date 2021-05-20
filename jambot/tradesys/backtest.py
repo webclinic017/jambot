@@ -7,8 +7,19 @@ from .strategies.base import StrategyBase
 # from .tradesys.broker import Broker
 
 
-class Backtest(Observer):
-    def __init__(self, strat: 'StrategyBase', df: pd.DataFrame, startdate: str, u=None, **kw):
+class BacktestManager(Observer):
+    """Organize and run strategies over dataframe with signals"""
+
+    def __init__(
+            self,
+            strat: 'StrategyBase',
+            df: pd.DataFrame,
+            startdate: str,
+            symbol: str = 'XBTUSD',
+            u=None,
+            **kw):
+
+        super().__init__(**kw)
 
         # if not isinstance(strats, list): strats = [strats]
 
@@ -45,7 +56,7 @@ class Backtest(Observer):
             # startrow = df.index.get_loc(startdate)
 
             # for strat in self.strats:
-            strat.init(sym=self, df=df)
+            # strat.init(bm=self, df=df)
 
         f.set_self(vars())
 
@@ -61,39 +72,42 @@ class Backtest(Observer):
             idx = df.index
             print(f'Test range: {idx[0]} - {idx[-1]}')
 
-        self.attach(self.strat, c=None)
+        self.attach(self.strat)
 
         for c in df.itertuples():
             self._step(c)
             # self.strat.decide(c)
 
-        if self.partial:
-            self.strat.trades[-1].partial = True
+        # if self.partial:
+        #     self.strat.trades[-1].partial = True
 
     def print_final(self):
-        style = self.df_result().style.hide_index()
-        style.format({'Min': '{:.3f}',
-                      'Max': '{:.3f}',
-                      'Final': '{:.3f}',
-                      'Drawdown': '{:.2%}'})
+        style = self.df_result.style.hide_index()
+        style.format({'min': '{:.3f}',
+                      'max': '{:.3f}',
+                      'final': '{:.3f}',
+                      'drawdown': '{:.2%}'})
         display(style)
 
+    @property
     def df_result(self):
-        a = self.account
         strat = self.strat
+        a = strat.wallet
 
         drawdown, drawdates = a.drawdown()
 
-        data = {
-            'symbol': [self.symbol],
-            'Min': [a.min],
-            'Max': [a.max],
-            'Final': [a.balance],
-            'Drawdown': [drawdown],
-            'Period': [drawdates],
-            'Goodtrades': ['{}/{}/{}'.format(strat.good_trades(), strat.tradecount(), strat.unfilledtrades)]}
+        data = dict(
+            symbol=self.symbol,
+            min=a.min,
+            max=a.max,
+            final=a.balance,
+            drawdown=drawdown,
+            period=drawdates,
+            goodtrades='{}/{}'.format(
+                strat.good_trades(),
+                strat.num_trades))
 
-        return pd.DataFrame(data=data)
+        return pd.DataFrame.from_dict(data, orient='index').T
 
     # def write_csv(self):
     #     self.df.to_csv('dfout.csv')
