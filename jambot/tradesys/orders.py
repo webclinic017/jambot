@@ -18,7 +18,7 @@ class Order(Observer, metaclass=ABCMeta):
         # ordtype_bot: int = None,
         reduce_only: bool = False,
         # trade: 'TradeBase' = None,
-        # sym: 'Backtest' = None,
+        # bm: 'BacktestManager' = None,
         order_id: str = None,
         # activate: bool = False,
         name: str = '',
@@ -39,43 +39,17 @@ class Order(Observer, metaclass=ABCMeta):
 
         status = OrderStatus.PENDING
         name = name.lower()
-        # orderID = ''
-        # delaytime = None
+        price_original = price
         filled_time = None
-        # marketfilled = False
-        # cancelled = False
-        # livedata = []
 
-        if qty == 0:
-            raise ValueError('Order quantity cannot be 0.')
+        if pd.isna(qty) or qty == 0:
+            raise ValueError(f'Order quantity cannot be {qty}')
 
-        # is_stop = True if ordtype == 'Stop' else False
-
-        # if not trade is None:
-        #     manual = False
-        #     sym = trade.strat.sym
-        #     slippage = trade.strat.slippage
-        #     trade.orders.append(self)
-        # else:
-        #     manual = True
-        #     if name == '':
-        #         name = 'manual'
-
-        # live trading
-        # if not sym is None:
-        #     decimal_figs = sym.decimal_figs
-        #     symbolbitmex = sym.symbolbitmex
-        # else:
-        #     decimal_figs = 0
-        #     symbolbitmex = symbol
-        #     if symbol is None:
-        #         raise NameError('Symbol required!')
+        qty = int(qty)
 
         # decimaldouble = float(f'1e-{decimal_figs}')
 
         f.set_self(vars())
-        # self.price = self.final_price(price)
-        self.price_original = self.price
         # self.set_key()
 
         if is_live:
@@ -106,29 +80,9 @@ class Order(Observer, metaclass=ABCMeta):
         self.status = OrderStatus.FILLED
         self.detach()
 
-        # market filling
-        # if not price is None:
-        #     self.price = price
-        #     self.marketfilled = True
-
-        # price = self.check_stop_price()
-
-        # self.open_(price=price) if self.add_subtract == 1 else self.close(price=price)
-
     def cancel(self):
         """Cancel order"""
         self.cancelled.emit()
-
-    # def final_price(self, price=None):
-    #     # NOTE not really sure why this is necessary
-    #     if self.ordtype == 'Market':
-    #         return None
-    #     elif self.manual:
-    #         return price
-    #     else:
-    #         if price is None:
-    #             price = self.price
-    #         return round(round(price, self.decimal_figs) + self.decimaldouble * self.side * -1, self.decimal_figs)
 
     def ordtype_str(self):
         # v sketch
@@ -169,59 +123,13 @@ class Order(Observer, metaclass=ABCMeta):
     def stoppx(self):
         return self.price * (1 + self.slippage * self.side)
 
-    def set_price(self, price):
-        if not self.filled:
-            self.price = price
-
-    def check_stop_price(self):
-        """Use price if Limit/Market, else use slippage price"""
-        price = self.price if not self.is_stop else self.stoppx()
-        return price
-
-    def open_(self, price):
-        """Increase trade qty and adjust trade entryprice
-        NOTE some of this should be handled by trade object
-        """
-        t = self.trade
-        qty = self.qty
-
-        if qty == 0:
-            return
-
-        t.entryprice = (t.entryprice * t.qty + price * qty) / (t.qty + qty)
-        t.qty += qty
-
-    def close(self, price: float):
-        """Close order and reduce total trade qty"""
-        self.trade.close_order(price=price, qty=self.qty)
-
-    def is_active(self, c):
-        if not self.delaytime is None:
-            active = True if self.active and c.Index >= self.delaytime else False
-        else:
-            active = self.active
-
-        return active
-
-    def activate(self, c, delay: int = 0):
-        """Make order active after "delay" hours"""
-        self.delaytime = c.Index + delta(hours=delay)
-        self.active = True
-
-    # def cancel(self):
-    #     self.active = False
-    #     self.cancelled = True
-    #     self.filledtime = self.sym.cdl.Index
-    #     if not self.ordarray is None:
-    #         self.ordarray.openorders -= 1
-
     def rescale_contracts(self, balance, conf=1):
         self.qty = int(conf * f.get_contracts(
             xbt=balance,
             leverage=self.trade.strat.lev,
-            entryprice=self.price,
+            entry_price=self.price,
             side=self.side,
-            isaltcoin=self.sym.altstatus))
+            isaltcoin=self.bm.altstatus))
 
     def intake_live_data(self, livedata):
         self.livedata = livedata
@@ -239,7 +147,7 @@ class Order(Observer, metaclass=ABCMeta):
     def amend_order(self):
         m = {}
         m['orderID'] = self.orderID
-        m['symbol'] = self.sym.symbolbitmex
+        m['symbol'] = self.bm.symbolbitmex
         m['orderQty'] = self.qty
         m = self.append_execinst(m)
 
@@ -286,19 +194,13 @@ class Order(Observer, metaclass=ABCMeta):
         else:
             return (-1, float('-inf'))
 
-    # def to_dict(self) -> dict:
-    #     m = self.new_order()
-    #     m['qty'] = self.qty
-    #     m['side'] = self.side
-    #     m['name'] = self.name
-    #     return m
     def to_dict(self) -> dict:
 
         return dict(
             # order_id=self.order_id,
             symbol=self.symbol,
             order_type=str(self.order_type),
-            qty=self.qty,
+            qty=f'{self.qty:+.0f}',
             price=self.price,
             status=self.status,
             name=self.name
@@ -321,13 +223,6 @@ class Order(Observer, metaclass=ABCMeta):
                 m['ordType'] = self.ordtype
 
         return m
-
-    def __str__(self) -> str:
-        data = ['{}={}'.format(k, v) for k, v in self.to_dict().items()]
-        return '<{}: {}>'.format(self.__class__.__name__, ', '.join(data))
-
-    def __repr__(self) -> str:
-        return str(self)
 
 
 class LimitOrder(Order):
