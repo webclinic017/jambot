@@ -21,13 +21,13 @@ class Strategy(bt.Strategy):
         # anchordist > 0 - 0.02, step 0.002
         # Order/Stop spread,
 
-    def init(self, sym):
-        self.sym = sym
+    def init(self, bm):
+        self.bm = bm
 
         # unused, these moved into classes
-        # sym.df = setTradePrices(self.name, sym.df, speed=self.speed)
-        # sym.df = setTradePrices('tp', sym.df, speed=self.speedtp)
-        # sym.df = setVolatility(sym.df, norm=self.norm)
+        # bm.df = setTradePrices(self.name, bm.df, speed=self.speed)
+        # bm.df = setTradePrices('tp', bm.df, speed=self.speedtp)
+        # bm.df = setVolatility(bm.df, norm=self.norm)
 
     def decide(self, c):
         self.cdl = c
@@ -45,18 +45,18 @@ class Strategy(bt.Strategy):
                 self.status = 1
                 self.enter_trade(c.chop_low)
 
-    def init_trade(self, entryprice, side, balance=None):
+    def init_trade(self, entry_price, side, balance=None):
         if balance is None:
-            balance = self.sym.account.get_balance()
+            balance = self.bm.account.get_balance()
 
-        contracts = f.get_contracts(balance * self.weight, self.lev, entryprice, side, self.sym.altstatus)
+        qty = f.get_contracts(balance * self.weight, self.lev, entry_price, side, self.bm.altstatus)
 
         trade = Trade(c=self.cdl)
-        trade.init(entryprice, contracts, self, side=side)
+        trade.init(entry_price, qty, self, side=side)
         return trade
 
-    def enter_trade(self, entryprice):
-        self.trade = self.init_trade(entryprice, self.status)
+    def enter_trade(self, entry_price):
+        self.trade = self.init_trade(entry_price, self.status)
         self.trade.check_orders(self.cdl)
 
     def get_anchor_price(self, anchorstart, norm, side):
@@ -93,15 +93,15 @@ class Strategy(bt.Strategy):
     def final_orders(self, u, weight):
         lstOrders = []
         balance = u.totalbalancewallet * weight
-        remainingcontracts = u.get_position(self.sym.symbolbitmex)['currentQty']
+        remainingcontracts = u.get_position(self.bm.symbolbitmex)['currentQty']
         # print(remainingcontracts)
 
         if not self.trade is None:
             # we should be in a trade
             t = self.trade
 
-            # rescale contracts to reflect actual user balance
-            targetcontracts = f.get_contracts(balance, self.lev, t.anchorstart, t.side, self.sym.altstatus)
+            # rescale qty to reflect actual user balance
+            targetcontracts = f.get_contracts(balance, self.lev, t.anchorstart, t.side, self.bm.altstatus)
 
             lstOrders.extend(t.orders.getUnfilledOrders(targetcontracts))
             lstOrders.extend(t.stops.getUnfilledOrders(targetcontracts, remainingcontracts))
@@ -134,8 +134,8 @@ class Strategy(bt.Strategy):
                 t.status,
                 t.duration(),
                 '{:,.0f}'.format(t.anchorstart),
-                '{:,.0f}'.format(t.entryprice),
-                '{:,.0f}'.format(t.exitprice),
+                '{:,.0f}'.format(t.entry_price),
+                '{:,.0f}'.format(t.exit_price),
                 '({:,} / {:,})'.format(t.filledcontracts, t.targetcontracts),
                 t.all_filled(),
                 '{:.2%}'.format(t.pnlfinal),
@@ -156,8 +156,8 @@ class Trade(bt.Trade):
         self.cdl = c
 
     def enter(self):
-        self.anchorstart = self.entryprice
-        self.entryprice = 0
+        self.anchorstart = self.entry_price
+        self.entry_price = 0
 
         c = self.cdl
 
@@ -184,7 +184,7 @@ class Trade(bt.Trade):
         self.stops.check_orders(c)
         self.takeprofits.check_orders(c)
 
-        if not self.orders.active and self.contracts == 0:
+        if not self.orders.active and self.qty == 0:
             self.active = False  # > then exit trade??
 
         if (not self.stops.active) or (not self.takeprofits.active):

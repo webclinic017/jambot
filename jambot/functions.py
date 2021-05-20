@@ -114,29 +114,29 @@ def price_format(altstatus=False):
     return ans
 
 
-def get_price(pnl, entryprice, side):
+def get_price(pnl, entry_price, side):
     if side == 1:
-        return pnl * entryprice + entryprice
+        return pnl * entry_price + entry_price
     elif side == -1:
-        return entryprice / (1 + pnl)
+        return entry_price / (1 + pnl)
 
 
-def get_pnl_xbt(contracts=0, entryprice=0, exitprice=0, isaltcoin=False):
-    if 0 in (entryprice, exitprice):
+def get_pnl_xbt(qty=0, entry_price=0, exit_price=0, isaltcoin=False) -> float:
+    if 0 in (entry_price, exit_price):
         return 0
     elif not isaltcoin:
-        return round(contracts * (1 / entryprice - 1 / exitprice), 8)
+        return round(qty * (1 / entry_price - 1 / exit_price), 8)
     elif isaltcoin:
-        return round(contracts * (exitprice - entryprice), 8)
+        return round(qty * (exit_price - entry_price), 8)
 
 
-def get_pnl(side, entryprice, exitprice):
-    if 0 in (entryprice, exitprice):
+def get_pnl(side, entry_price, exit_price):
+    if 0 in (entry_price, exit_price):
         return 0
     elif side == 1:
-        return round((exitprice - entryprice) / entryprice, 4)
+        return round((exit_price - entry_price) / entry_price, 4)
     else:
-        return round((entryprice - exitprice) / exitprice, 4)
+        return round((entry_price - exit_price) / exit_price, 4)
 
 
 def get_contracts(xbt, leverage, price, side, is_altcoin=False):
@@ -153,7 +153,7 @@ def side(x):
 def useful_keys(orders):
     # return only useful keys from bitmex orders in dict form
     keys = ('symbol', 'clOrdID', 'side', 'price', 'stopPx', 'ordType',
-            'execInst', 'ordStatus', 'contracts', 'name', 'manual', 'orderID')
+            'execInst', 'ordStatus', 'qty', 'name', 'manual', 'orderID')
     if not isinstance(orders, list):
         islist = False
         orders = [orders]

@@ -35,8 +35,8 @@ def neg_red(s):
     return ['color: #ff8080' if v < 0 else '' for v in s]
 
 # Pandas plot on 2 axis
-# ax = sym.df.plot(kind='line', x='Timestamp', y=['ema50', 'ema200'])
-# sym.df.plot(kind='line', x='Timestamp', y='conf', secondary_y=True, ax=ax)
+# ax = bm.df.plot(kind='line', x='Timestamp', y=['ema50', 'ema200'])
+# bm.df.plot(kind='line', x='Timestamp', y='conf', secondary_y=True, ax=ax)
 
 # Charts
 
@@ -113,7 +113,7 @@ def chart_orders(t, pre=36, post=None, width=900, fast=50, slow=200):
 
         x.append(ts + delta(hours=-1))
         y.append(order.price),
-        text.append('({:,}) {}'.format(order.contracts, order.name[:2]))
+        text.append('({:,}) {}'.format(order.qty, order.name[:2]))
 
     labels = go.Scatter(x=x, y=y, text=text, mode='text', textposition='middle left')
 

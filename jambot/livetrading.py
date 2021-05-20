@@ -155,7 +155,7 @@ class User():
         for o in orders:
             o['sideStr'] = o['side']
             o['side'] = 1 if o['side'] == 'Buy' else -1
-            o['contracts'] = int(o['side'] * o['orderQty'])
+            o['qty'] = int(o['side'] * o['orderQty'])
 
             # add key to the order, excluding manual orders
             if not o['clOrdID'] == '':
@@ -217,13 +217,13 @@ class User():
                 msg += json.dumps(order.amend_order()) + '\n'
             f.send_error(msg)
 
-    def place_manual(self, contracts, price=None, ordtype='Limit', symbol='XBTUSD'):
+    def place_manual(self, qty, price=None, ordtype='Limit', symbol='XBTUSD'):
 
         if price is None:
             ordtype = 'Market'
 
         order = bt.Order(price=price,
-                         contracts=contracts,
+                         qty=qty,
                          ordtype=ordtype,
                          symbol=symbol)
 
@@ -413,15 +413,15 @@ class User():
 
 def compare_state(strat, pos):
     # return TRUE if side is GOOD
-    # Could also check current contracts?
+    # Could also check current qty?
     # only works for trend, don't use for now
-    contracts = pos['currentQty']
-    side = f.side(contracts)
+    qty = pos['currentQty']
+    side = f.side(qty)
 
     ans = True if side == 0 or strat.get_side() == side else False
 
     if not ans:
-        err = '{}: {}, expected: {}'.format(strat.sym.symbolshort, side, strat.get_side())
+        err = '{}: {}, expected: {}'.format(strat.bm.symbolshort, side, strat.get_side())
         f.discord(err)
 
     return ans
@@ -473,7 +473,7 @@ def check_matched(matched, show=False):
         checkprice = ld['price'] if ld['ordType'] == 'Limit' else ld['stopPx']
 
         if not (order.price == checkprice and
-                order.contracts == ld['contracts'] and
+                order.qty == ld['qty'] and
                 order.side == ld['side']):
             amend.append(order)
 
@@ -481,7 +481,7 @@ def check_matched(matched, show=False):
                 print('\nAmmending:')
                 print(order.name)
                 print(order.price == checkprice, order.price, checkprice)
-                print(order.contracts == ld['contracts'], order.contracts, ld['contracts'])
+                print(order.qty == ld['qty'], order.qty, ld['qty'])
                 print(order.side == ld['side'], order.side, ld['side'])
                 display(order.amend_order())
 
@@ -498,7 +498,7 @@ def refresh_gsheet_balance(u=None):
     df2 = pd.read_csv(os.path.join(f.topfolder, 'data/symbols.csv'))
     for row in df2.itertuples():
         if row.symbolshort in lst:
-            syms.append(bt.Backtest(symbol=row.symbol, row=row))
+            syms.append(bt.BacktestManager(symbol=row.symbol, row=row))
 
     if u is None:
         u = User()
@@ -568,7 +568,7 @@ def check_filled_orders(minutes=5, refresh=True, u=None):
                 # need to have all correct symbols in symbols.csv
                 if not symbol in templist:
                     templist.append(symbol)
-                    syms.append(bt.Backtest(symbol=symbol))
+                    syms.append(bt.BacktestManager(symbol=symbol))
 
             ordprice = f' ({price})' if not price == avgpx else ''
             stats = f' | Bal: {u.totalbalancemargin:.3f} | PnL: {u.prevpnl:.3f}' if any(
@@ -577,7 +577,7 @@ def check_filled_orders(minutes=5, refresh=True, u=None):
             lst.append('{} | {} {:,} at ${:,}{} | {}{}'.format(
                 symshort,
                 o['sideStr'],
-                o['contracts'],
+                o['qty'],
                 avgpx,
                 ordprice,
                 name,
@@ -609,13 +609,13 @@ def write_balance_google(syms, u, sht=None, ws=None, preservedf=False, df=None):
 
     u.set_positions()
 
-    for i, sym in enumerate(syms):
-        symbol = sym.symbolbitmex
-        figs = sym.decimal_figs
+    for i, bm in enumerate(syms):
+        symbol = bm.symbolbitmex
+        figs = bm.decimal_figs
         pos = u.get_position(symbol)
 
-        df.at[i, 'Sym'] = sym.symbolshort
-        if sym.tradingenabled:
+        df.at[i, 'Sym'] = bm.symbolshort
+        if bm.tradingenabled:
             df.at[i, 'Size'] = pos['currentQty']
             df.at[i, 'Entry'] = round(pos['avgEntryPrice'], figs)
             df.at[i, 'Last'] = round(pos['lastPrice'], figs)
@@ -624,8 +624,8 @@ def write_balance_google(syms, u, sht=None, ws=None, preservedf=False, df=None):
             df.at[i, 'ROE'] = f.percent(pos['unrealisedRoePcnt'])
             df.at[i, 'Value'] = pos['maintMargin'] / u.div
 
-        if sym.strats:
-            strat = sym.strats[0]
+        if bm.strats:
+            strat = bm.strats[0]
             t = strat.trades[-1]
             df.at[i, 'Dur'] = t.duration()
             df.Conf[i] = t.conf
@@ -646,9 +646,9 @@ def write_balance_google(syms, u, sht=None, ws=None, preservedf=False, df=None):
     df.at[13, 'Size'] = dt.strftime(dt.utcnow(), f.time_format(mins=True))
 
     # concat last 10 trades for google sheet
-    sym = list(filter(lambda x: x.symbol == 'XBTUSD', syms))[0]
-    if sym.strats:
-        dfTrades = sym.strat.df_trades(last=10).drop(columns=['N', 'Contracts', 'Bal'])
+    bm = list(filter(lambda x: x.symbol == 'XBTUSD', syms))[0]
+    if bm.strats:
+        dfTrades = bm.strat.df_trades(last=10).drop(columns=['N', 'Contracts', 'Bal'])
         dfTrades.Timestamp = dfTrades.Timestamp.dt.strftime('%Y-%m-%d %H')
         dfTrades.Pnl = dfTrades.Pnl.apply(lambda x: f.percent(x))
         dfTrades.PnlAcct = dfTrades.PnlAcct.apply(lambda x: f.percent(x))
@@ -704,14 +704,15 @@ def run_toploop(u=None, partial=False, dfall=None):
             strat.stoppercent = -0.03
             strats = [strat]
 
-            sym = bt.Backtest(symbol=symbol, startdate=startdate, strats=strats, row=row, df=df, partial=partial, u=u)
+            bm = bt.BacktestManager(symbol=symbol, startdate=startdate, strats=strats,
+                                    row=row, df=df, partial=partial, u=u)
             if weight <= 0:
-                sym.tradingenabled = False  # this should come from strat somehow
-            sym.decide_full()
-            syms.append(sym)
+                bm.tradingenabled = False  # this should come from strat somehow
+            bm.decide_full()
+            syms.append(bm)
 
-            if sym.tradingenabled:
-                actual = u.get_orders(sym.symbolbitmex, botonly=True)
+            if bm.tradingenabled:
+                actual = u.get_orders(bm.symbolbitmex, botonly=True)
                 theo = strat.final_orders(u, weight)
 
                 matched, missing, notmatched = compare_orders(theo, actual, show=True)

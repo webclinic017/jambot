@@ -65,3 +65,4 @@ def test_orders(trade, clock):
     trade.market_close()
 
     assert trade.is_closed
+    assert trade.wallet.qty == 0

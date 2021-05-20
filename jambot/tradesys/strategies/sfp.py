@@ -12,13 +12,13 @@ class Strategy(StrategyBase):
         self.minswing = 0.05
         self.stypes = dict(high=1, low=-1)
 
-    def init(self, sym=None, df=None):
+    def init(self, bm=None, df=None):
 
-        if not sym is None:
-            self.sym = sym
-            self.df = sym.df
+        if not bm is None:
+            self.bm = bm
+            self.df = bm.df
             df = self.df
-            self.a = self.sym.account
+            self.a = self.bm.account
         elif not df is None:
             self.df = df
 
@@ -34,7 +34,7 @@ class Strategy(StrategyBase):
         ema = sg.EMA(weight=1)
         df = df.pipe(ema.add_signal)
         self.df = df
-        # self.sym.df = df
+        # self.bm.df = df
 
     def check_tail(self, side, cdl):
         return True if cdl.tailsize(side=side) / cdl.size() > self.minswing else False
@@ -83,7 +83,7 @@ class Strategy(StrategyBase):
         return sfp
 
     def enter_trade(self, side, price, c):
-        self.trade = self.init_trade(trade=Trade(), side=side, entryprice=price)
+        self.trade = self.init_trade(trade=Trade(), side=side, entry_price=price)
         self.trade.add_candle(c)
 
     def exit_trade(self, price):
@@ -135,7 +135,7 @@ class Trade(bt.Trade):
         self.marketopen = Order(
             price=self.entrytarget,
             side=self.side,
-            contracts=self.targetcontracts,
+            qty=self.targetcontracts,
             activate=True,
             ordtype_bot=5,
             ordtype='Market',
@@ -145,7 +145,7 @@ class Trade(bt.Trade):
         self.marketclose = Order(
             price=self.entrytarget,
             side=self.side * -1,
-            contracts=self.targetcontracts,
+            qty=self.targetcontracts,
             activate=True,
             ordtype_bot=6,
             ordtype='Market',

@@ -10,19 +10,19 @@ class Strategy(trend.Strategy):
         super().__init__(speed=speed, emaspeed=emaspeed)
         self.name = 'trendopen'
 
-    def init(self, sym):
-        self.sym = sym
-        df = sym.df
+    def init(self, bm):
+        self.bm = bm
+        df = bm.df
         fast, slow = self.emaspeed[0], self.emaspeed[1]
 
-        macd = sg.MACD(df=sym.df, weight=1, fast=fast, slow=slow)
-        ema = sg.EMA(df=sym.df, weight=1, fast=fast, slow=slow)
+        macd = sg.MACD(df=bm.df, weight=1, fast=fast, slow=slow)
+        ema = sg.EMA(df=bm.df, weight=1, fast=fast, slow=slow)
         self.conf.add_signal([macd, ema])
 
         self.trend = sg.Trend(df=df, offset=6, signals=[df.ema_trend], speed=self.speed)
 
     def enter_trade(self, side, c):
-        self.trade = self.init_trade(trade=Trade(), side=side, entryprice=c.Close, conf=self.get_confidence(side=side))
+        self.trade = self.init_trade(trade=Trade(), side=side, entry_price=c.Close, conf=self.get_confidence(side=side))
         self.trade.add_candle(c)
 
     def exit_trade(self):
@@ -69,12 +69,12 @@ class Trade(bt.Trade):
 
     def enter(self, temp=False):
 
-        contracts = int(self.targetcontracts * self.conf)
+        qty = int(self.targetcontracts * self.conf)
 
         self.marketopen = Order(
             price=self.entrytarget,
             side=self.side,
-            contracts=contracts,
+            qty=qty,
             activate=True,
             ordtype_bot=5,
             ordtype='Market',
@@ -84,7 +84,7 @@ class Trade(bt.Trade):
         self.marketclose = Order(
             price=self.entrytarget,
             side=self.side * -1,
-            contracts=contracts,
+            qty=qty,
             activate=False,
             ordtype_bot=6,
             ordtype='Market',

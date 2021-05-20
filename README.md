@@ -47,11 +47,11 @@ strat.slippage = 0
 strat.stoppercent = -0.03
 strat.timeout = 40
 
-# Backtest strategy and plot balance
-sym = bt.Backtest(symbol=symbol, startdate=startdate, strats=[strat], df=df)
-sym.decide_full()
-sym.print_final()
-sym.account.plot_balance(logy=True)
+# BacktestManager strategy and plot balance
+bm = bt.BacktestManager(symbol=symbol, startdate=startdate, strats=[strat], df=df)
+bm.decide_full()
+bm.print_final()
+bm.account.plot_balance(logy=True)
 ```
 ![PlotBalance](docs/pics/PlotBalance.png)
 

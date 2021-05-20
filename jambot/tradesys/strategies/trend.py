@@ -13,13 +13,13 @@ class Strategy(bt.Strategy):
         self.lasthigh, self.lastlow = 0, 0
         self.emaspeed = emaspeed
 
-    def init(self, sym):
-        self.sym = sym
-        df = sym.df
+    def init(self, bm):
+        self.bm = bm
+        df = bm.df
         fast, slow = self.emaspeed[0], self.emaspeed[1]
 
-        macd = sg.MACD(df=sym.df, weight=1, fast=fast, slow=slow)
-        ema = sg.EMA(df=sym.df, weight=1, fast=fast, slow=slow)
+        macd = sg.MACD(df=bm.df, weight=1, fast=fast, slow=slow)
+        ema = sg.EMA(df=bm.df, weight=1, fast=fast, slow=slow)
         # emaslope = EMASlope(df=df, weight=1, p=50, slope=5)
         self.conf.add_signal([macd, ema])
 
@@ -44,10 +44,10 @@ class Strategy(bt.Strategy):
         confidence = recentwinconf if recentwinconf <= 0.5 else conf
         return confidence
 
-    def enter_trade(self, side, entryprice):
-        self.trade = self.init_trade(trade=Trade(), side=side, entryprice=entryprice,
+    def enter_trade(self, side, entry_price):
+        self.trade = self.init_trade(trade=Trade(), side=side, entry_price=entry_price,
                                      conf=self.get_confidence(side=side))
-        self.trade.check_orders(self.sym.cdl)
+        self.trade.check_orders(self.bm.cdl)
 
     def exit_trade(self):
         self.trade.exit_trade()
@@ -86,7 +86,7 @@ class Strategy(bt.Strategy):
     def final_orders(self, u, weight):
         # should actually pass something at the 'position' level, not user?
         lstOrders = []
-        c = self.sym.cdl
+        c = self.bm.cdl
         side = self.get_side()
         price = c.trend_low if self.status == 1 else c.trend_high
 
@@ -95,28 +95,28 @@ class Strategy(bt.Strategy):
         lstOrders.append(Order(
             price=price,
             side=-1 * side,
-            contracts=-1 * u.get_position(self.sym.symbolbitmex)['currentQty'],
-            symbol=self.sym.symbolbitmex,
+            qty=-1 * u.get_position(self.bm.symbolbitmex)['currentQty'],
+            symbol=self.bm.symbolbitmex,
             name='stopclose',
             ordtype='Stop',
-            sym=self.sym))
+            bm=self.bm))
 
         # stopbuy
-        contracts = f.get_contracts(
+        qty = f.get_contracts(
             u.totalbalancewallet * weight,
             self.lev,
             price,
             -1 * side,
-            self.sym.altstatus)
+            self.bm.altstatus)
 
         lstOrders.append(Order(
             price=price,
             side=-1 * side,
-            contracts=contracts,
-            symbol=self.sym.symbolbitmex,
+            qty=qty,
+            symbol=self.bm.symbolbitmex,
             name='stopbuy',
             ordtype='Stop',
-            sym=self.sym))
+            bm=self.bm))
 
         return self.checkfinalorders(lstOrders)
 
@@ -133,12 +133,12 @@ class Trade(bt.Trade):
 
     def enter(self, temp=False):
 
-        contracts = int(self.targetcontracts * self.conf)
+        qty = int(self.targetcontracts * self.conf)
 
         self.stopopen = Order(
             price=self.entrytarget,
             side=self.side,
-            contracts=contracts,
+            qty=qty,
             activate=True,
             ordtype_bot=4,
             ordtype='Stop',
@@ -148,7 +148,7 @@ class Trade(bt.Trade):
         self.stopclose = Order(
             price=self.closeprice(),
             side=self.side * -1,
-            contracts=contracts,
+            qty=qty,
             activate=False,
             ordtype_bot=2,
             ordtype='Stop',
@@ -165,7 +165,7 @@ class Trade(bt.Trade):
 
                 if o.filled:
                     if o.ordtype_bot == 4:
-                        self.filledcontracts = o.contracts
+                        self.filledcontracts = o.qty
                         self.stopclose.active = True
 
         self.stopclose.price = self.closeprice()

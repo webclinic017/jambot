@@ -17,11 +17,11 @@ def run_trend(symbol, startdate, df, against, wth, row, titles):
     strats = []
     strats.append(trend)
 
-    sym = bt.Backtest(symbol=symbol, startdate=startdate, strats=strats, df=df, row=row)
-    sym.decide_full()
+    bm = bt.BacktestManager(symbol=symbol, startdate=startdate, strats=strats, df=df, row=row)
+    bm.decide_full()
 
-    a = sym.account
-    dfTemp.loc[0] = [against, wth, round(a.min, 3), round(a.max, 3), round(a.balance, 3), sym.strats[0].tradecount()]
+    a = bm.account
+    dfTemp.loc[0] = [against, wth, round(a.min, 3), round(a.max, 3), round(a.balance, 3), bm.strats[0].tradecount()]
 
     return dfTemp
 
@@ -62,19 +62,19 @@ def run_single(strattype, startdate, dfall, speed0, speed1, row=None, norm=None,
         strat = bt.Strat_Trend(speed=speed)
         strat.slippage = 0.002
 
-    sym = bt.Backtest(symbol=symbol, startdate=startdate, strats=[strat], df=df, row=row, partial=False)
-    sym.decide_full()
+    bm = bt.BacktestManager(symbol=symbol, startdate=startdate, strats=[strat], df=df, row=row, partial=False)
+    bm.decide_full()
 
-    return sym
+    return bm
 
 
 def run_trendrev(symbol, startdate, df, against, wth, row, titles, norm):
     # Strat_TrendRev
     strat = bt.Strat_TrendRev(speed=(against, wth), norm=norm)
-    sym = bt.Backtest(symbol=symbol, startdate=startdate, strats=[strat], df=df, row=row)
-    sym.decide_full()
+    bm = bt.BacktestManager(symbol=symbol, startdate=startdate, strats=[strat], df=df, row=row)
+    bm.decide_full()
 
-    a = sym.account
+    a = bm.account
 
     dfTemp = pd.DataFrame(columns=[titles[0], titles[1], 'min', 'max', 'final', 'numtrades'])
     dfTemp.loc[0] = [against, wth, round(a.min, 3), round(a.max, 3), round(a.balance, 3), strat.tradecount()]
@@ -93,14 +93,14 @@ def run_chop(symbol, startdate, df, against, wth, tpagainst, tpwith, lowernorm, 
     chop = bt.Strat_Chop(speed=(against, wth), speedtp=(tpagainst, tpwith), norm=(lowernorm, uppernorm))
     strats.append(chop)
 
-    sym = bt.Backtest(symbol=symbol, startdate=startdate, strats=strats, df=df, row=row)
+    bm = bt.BacktestManager(symbol=symbol, startdate=startdate, strats=strats, df=df, row=row)
     try:
-        sym.decide_full()
+        bm.decide_full()
     except ZeroDivisionError:
         print(symbol, lowernorm, uppernorm)
 
-    a = sym.account
+    a = bm.account
     dfTemp.loc[0] = [against, wth, tpagainst, tpwith, lowernorm, uppernorm, round(
-        a.min, 3), round(a.max, 3), round(a.balance, 3), sym.strats[0].tradecount()]
+        a.min, 3), round(a.max, 3), round(a.balance, 3), bm.strats[0].tradecount()]
 
     return dfTemp

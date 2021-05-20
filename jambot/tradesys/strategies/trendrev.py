@@ -17,10 +17,10 @@ class Strategy(StrategyBase):
         self.timeout = 40
         self.slippage = 0
 
-    def init(self, sym):
-        self.sym = sym
-        df = sym.df
-        self.a = self.sym.account
+    def init(self, bm):
+        self.bm = bm
+        df = bm.df
+        self.a = self.bm.account
 
         self.vty = sg.Volatility(weight=1, norm=self.norm)
         df = df.pipe(self.vty.add_signal)
@@ -36,7 +36,7 @@ class Strategy(StrategyBase):
         df = df.pipe(self.trend.add_signal)
 
         self.df = df
-        self.sym.df = df
+        self.bm.df = df
 
     def exit_trade(self):
         t = self.trade
@@ -50,10 +50,10 @@ class Strategy(StrategyBase):
         t.exit_trade()
         self.trade = None
 
-    def enter_trade(self, side, entryprice):
-        self.trade = self.init_trade(trade=TradeRev(), side=side, entryprice=entryprice)
+    def enter_trade(self, side, entry_price):
+        self.trade = self.init_trade(trade=TradeRev(), side=side, entry_price=entry_price)
         t = self.trade
-        t.check_orders(self.sym.cdl)
+        t.check_orders(self.bm.cdl)
         if not t.active:
             self.exit_trade()
 
@@ -96,9 +96,9 @@ class Strategy(StrategyBase):
         self.lasthigh, self.lastlow = pxhigh, pxlow
 
     def final_orders(self, u, weight):
-        symbol = self.sym.symbolbitmex
+        symbol = self.bm.symbolbitmex
         balance = u.balance() * weight
-        pos = bt.Position(contracts=u.get_position(symbol)['currentQty'])
+        pos = bt.Position(qty=u.get_position(symbol)['currentQty'])
         pos.add_order(u.get_orders(symbol=symbol, manualonly=True))
 
         t_prev = self.trades[-2]
@@ -110,12 +110,12 @@ class Strategy(StrategyBase):
         stopclose = t_current.stop
         limitclose = t_current.limitclose
 
-        # PREVCLOSE - Check if position is still open with correct side/contracts
+        # PREVCLOSE - Check if position is still open with correct side/qty
         if (prevclose.marketfilled
             and pos.side() == t_prev.side
                 and t_current.duration() <= 4):
             pos.add_order(Order(
-                contracts=pos.contracts * -1,
+                qty=pos.qty * -1,
                 ordtype='Market',
                 name='marketclose',
                 trade=t_prev))
@@ -123,10 +123,10 @@ class Strategy(StrategyBase):
         # OPEN
         if limitopen.filled:
             if (limitopen.marketfilled
-                and pos.contracts == 0
+                and pos.qty == 0
                     and t_current.duration() == 4):
                 pos.add_order(Order(
-                    contracts=limitopen.contracts,
+                    qty=limitopen.qty,
                     ordtype='Market',
                     name='marketopen',
                     trade=t_current))
@@ -138,24 +138,24 @@ class Strategy(StrategyBase):
             pos.add_order(stopclose)
 
         # CLOSE - current
-        if not pos.contracts == 0:
+        if not pos.qty == 0:
             if t_current.timedout:
                 pos.add_order(Order(
-                    contracts=limitclose.contracts,
+                    qty=limitclose.qty,
                     ordtype='Market',
                     name='marketclose',
                     trade=t_current))
             else:
                 pos.add_order(limitclose)
 
-            if stopclose.contracts == 0 or not stopclose in pos.orders:
+            if stopclose.qty == 0 or not stopclose in pos.orders:
                 f.discord(msg='Error: no stop for current position', channel='err')
 
         # NEXT - Init next trade to get next limitopen and stop
         c = self.cdl
         t_next = self.init_trade(
             side=t_current.side * -1,
-            entryprice=(c.pxhigh if t_current.side == 1 else c.pxlow),
+            entry_price=(c.pxhigh if t_current.side == 1 else c.pxlow),
             balance=balance,
             temp=True,
             trade=TradeRev())
@@ -179,7 +179,7 @@ class TradeRev(Trade):
         self.enteroffset = c.norm_ema
 
         # TODO: move this to a 'slippage price' function
-        return round(price * (1 + self.enteroffset * self.side), self.sym.decimal_figs)
+        return round(price * (1 + self.enteroffset * self.side), self.bm.decimal_figs)
 
     def enter(self):
         c = self.strat.cdl
@@ -191,12 +191,12 @@ class TradeRev(Trade):
         limitcloseprice = self.closeprice()
         self.stoppx = f.get_price(self.stoppercent, limitbuyprice, self.side)
 
-        contracts = int(self.targetcontracts * self.conf)
+        qty = int(self.targetcontracts * self.conf)
 
         self.limitopen = Order(
             price=limitbuyprice,
             side=self.side,
-            contracts=contracts,
+            qty=qty,
             activate=True,
             ordtype_bot=1,
             ordtype='Limit',
@@ -206,7 +206,7 @@ class TradeRev(Trade):
         self.stop = Order(
             price=self.stoppx,
             side=self.side * -1,
-            contracts=contracts,
+            qty=qty,
             activate=False,
             ordtype_bot=2,
             ordtype='Stop',
@@ -217,7 +217,7 @@ class TradeRev(Trade):
         self.limitclose = Order(
             price=limitcloseprice,
             side=self.side * -1,
-            contracts=contracts,
+            qty=qty,
             activate=False,
             ordtype_bot=3,
             ordtype='Limit',
@@ -231,7 +231,7 @@ class TradeRev(Trade):
 
     def check_orders(self, c):
         # trade stays active until pxlow is hit, strat controlls
-        # filling order sets the trade's actual entryprice
+        # filling order sets the trade's actual entry_price
         # filling close or stop order sets trade's exit price
 
         self.add_candle(c)
@@ -251,15 +251,15 @@ class TradeRev(Trade):
 
                 if o.filled:
                     if o.ordtype_bot == 1:
-                        self.filledcontracts = o.contracts
+                        self.filledcontracts = o.qty
                         delay = 1 if o.marketfilled else 0
                         self.limitclose.activate(c=c, delay=delay)
                         self.stop.activate(c=c, delay=0)
                     elif o.ordtype_bot == 2:
                         self.limitclose.cancel()  # make limitclose filledtime be end of trade
                         self.stopped = True
-                        self.pnlfinal = f.get_pnl(self.side, self.entryprice, self.exitprice)
-                        self.exitbalance = self.sym.account.get_balance()
+                        self.pnlfinal = f.get_pnl(self.side, self.entry_price, self.exit_price)
+                        self.exitbalance = self.bm.account.get_balance()
                     elif o.ordtype_bot == 3:
                         self.stop.cancel()
 

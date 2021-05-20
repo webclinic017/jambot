@@ -53,14 +53,14 @@ if True:
 
     # from jambot import livetrading as live
     # from jambot import optimization as op
-    # from jambot import backtest as bt
     from jambot import charts as ch
     from jambot import data
     from jambot import functions as f
     from jambot import signals as sg
     from jambot import sklearn_helper_funcs as sf
-    # from jambot.strategies import ml
     from jambot.database import db
+    from jambot.tradesys import backtest as bt
+    from jambot.tradesys.strategies import ml
 
     # from jambot.strategies import trendrev
     # from mlxtend.feature_selection import SequentialFeatureSelector
@@ -163,7 +163,11 @@ if True:
         final_scorer = lambda *args: scorer.score(*args, _type='final')
         max_scorer = lambda *args: scorer.score(*args, _type='max')
 
-        scoring = dict(acc='accuracy', max=max_scorer, final=final_scorer)
+        scoring = dict(
+            acc='accuracy',
+            max=max_scorer,
+            final=final_scorer
+        )
     else:
         scoring = dict(rmse='neg_root_mean_squared_error')
 
@@ -278,7 +282,10 @@ df_pred = mm.add_predict(
     best_est=False,
     proba=not regression,
     fit_params=fit_params) \
-    .pipe(sg.add_ema, p=n_smooth, c=rolling_col, col='rolling_proba')
+    .pipe(sg.add_ema, p=n_smooth, c=rolling_col, col='rolling_proba') \
+    .assign(
+        signal=lambda x: np.sign(np.diff(np.sign(x.rolling_proba - split_val), prepend=np.array([0])))) \
+    .fillna(0)
 # .assign(rolling_proba=lambda x: x[rolling_col].rolling(n_smooth).mean())
 
 strat = ml.Strategy(
@@ -297,11 +304,11 @@ kw = dict(
     # interval=1
 )
 
-cols = ['Open', 'High', 'Low', 'Close', 'y_pred', 'proba_long', 'rolling_proba']
-sym = bt.Backtest(**kw, strat=strat, df=df_pred[cols])
-sym.decide_full()
-sym.print_final()
-sym.account.plot_balance(logy=True)
+cols = ['Open', 'High', 'Low', 'Close', 'y_pred', 'proba_long', 'rolling_proba', 'signal']
+bm = bt.BacktestManager(**kw, strat=strat, df=df_pred[cols])
+bm.run()
+bm.print_final()
+bm.strat.wallet.plot_balance(logy=True)
 trades = strat.trades
 t = trades[-1]
 
@@ -326,7 +333,7 @@ traces = [
     # dict(name='VolBTC', func=ch.bar),
 ]
 
-df_balance = strat.sym.account.df_balance
+df_balance = strat.bm.account.df_balance
 # df_balance = None
 
 if not df_balance is None:

@@ -41,12 +41,12 @@ class Confidence():
 
 
 class Position():
-    def __init__(self, contracts=0):
-        self.contracts = contracts
+    def __init__(self, qty=0):
+        self.qty = qty
         self.orders = []
 
     def side(self):
-        return f.side(self.contracts)
+        return f.side(self.qty)
 
     def add_order(self, orders):
         if not isinstance(orders, list):
@@ -58,7 +58,7 @@ class Position():
                 orders[i] = o
 
             if o.ordtype == 'Market':
-                self.contracts += o.contracts
+                self.qty += o.qty
 
         self.orders.extend(orders)
 
@@ -66,12 +66,12 @@ class Position():
         # check bot orders that REDUCE position
         # split orders into upper and lower, loop outwards
         def traverse(orders):
-            contracts = self.contracts
+            qty = self.qty
             for o in orders:
                 if o.reduce_only:
-                    o.contracts = contracts * -1
+                    o.qty = qty * -1
 
-                contracts += o.contracts
+                qty += o.qty
 
             return orders
 
@@ -92,7 +92,7 @@ class Position():
         nonmarket = [o for o in self.orders if o.ordtype != ordtype]
         orders.extend(self.set_contracts(orders=nonmarket))
 
-        orders = list(filter(lambda x: x.manual == False and x.contracts != 0, orders))
+        orders = list(filter(lambda x: x.manual == False and x.qty != 0, orders))
 
         return orders
 
@@ -104,7 +104,7 @@ class Position():
         return Order(
             symbol=o['symbol'],
             price=price,
-            contracts=o['contracts'],
+            qty=o['qty'],
             ordtype=o['ordType'],
             name=o['name'])
 
@@ -141,7 +141,7 @@ class OrdArray():
             self.pricerange = abs(self.outerprice - self.anchorprice)
             self.orderspread = (self.pricerange / (trade.numorders + 1)) / anchorprice
 
-        self.decimal_figs = self.trade.strat.sym.decimal_figs
+        self.decimal_figs = self.trade.strat.bm.decimal_figs
 
         self.orders = []
         self.active = True
@@ -168,19 +168,19 @@ class OrdArray():
 
         for i in range(self.numorders):
             price = self.getOrderPrice(i)
-            contracts = int(round(self.getFraction(i) * self.trade.targetcontracts * self.add_subtract, 0))
+            qty = int(round(self.getFraction(i) * self.trade.targetcontracts * self.add_subtract, 0))
 
             order = Order(
                 price=price,
                 side=self.side,
-                contracts=contracts,
+                qty=qty,
                 ordarray=self,
                 activate=activate,
                 index=i,
-                symbol=self.trade.strat.sym.symbol,
+                symbol=self.trade.strat.bm.symbol,
                 name='{}{}{}'.format(self.letter(), i + 1, modi),
                 ordtype=ordtype,
-                sym=self.trade.strat.sym)
+                bm=self.trade.strat.bm)
 
             self.orders.append(order)
 
@@ -188,7 +188,7 @@ class OrdArray():
         if not self.active:
             return
 
-        if self.ordtype_bot > 1 and self.trade.contracts == 0:
+        if self.ordtype_bot > 1 and self.trade.qty == 0:
             return
 
         for i, order in enumerate(self.orders):
@@ -205,7 +205,7 @@ class OrdArray():
                         self.trade.stops.orders[i].cancel()
 
                     self.filledorders += 1
-                    self.filledcontracts += order.contracts
+                    self.filledcontracts += order.qty
             elif order.activenext and not order.cancelled:
                 # delay for 1 period
                 order.activenext = False
@@ -232,9 +232,9 @@ class OrdArray():
         # print('actualcontracts: {}'.format(actualcontracts))
         for i, order in enumerate(self.orders):
 
-            # rescale to contracts to reflect actual user balance
+            # rescale to qty to reflect actual user balance
             if not targetcontracts is None:
-                order.contracts = int(round(self.getFraction(order.index) * targetcontracts * self.add_subtract, 0))
+                order.qty = int(round(self.getFraction(order.index) * targetcontracts * self.add_subtract, 0))
 
             if not (order.cancelled or order.filled):
 
@@ -250,17 +250,17 @@ class OrdArray():
                             lst.append(order)
                     else:
                         # Order SHOULD be filled, check it
-                        # loop from max filled order to current order, check if we have enough contracts
+                        # loop from max filled order to current order, check if we have enough qty
                         ordarray = self.trade.orders
                         maxfilled = ordarray.filledorders
                         # print('i: {}, maxfilled: {}'.format(i, maxfilled))
                         remainingcontracts = actualcontracts
                         for y in range(maxfilled - 1, i, -1):
-                            # print(y, remainingcontracts, ordarray.orders[y].contracts)
-                            remainingcontracts -= ordarray.orders[y].contracts
+                            # print(y, remainingcontracts, ordarray.orders[y].qty)
+                            remainingcontracts -= ordarray.orders[y].qty
 
-                        # print('remainingfinal: {}, order.contr: {}, side: {}'.format(remainingcontracts, order.contracts, ordarray.side))
-                        if (remainingcontracts - order.contracts * -1) * ordarray.side >= 0:
+                        # print('remainingfinal: {}, order.contr: {}, side: {}'.format(remainingcontracts, order.qty, ordarray.side))
+                        if (remainingcontracts - order.qty * -1) * ordarray.side >= 0:
                             lst.append(order)
                             # also check to fill the last order no matter what??
         return lst
