@@ -1,12 +1,12 @@
 from .__init__ import *
-from .base import Observer
+from .base import DictRepr, Observer
 from .enums import TradeSide
 from .orders import Order
 
 log = getlog(__name__)
 
 
-class Txn(object):
+class Txn(DictRepr):
     """Represents a change in base currency balance"""
 
     def __init__(self, timestamp: dt, balance_pre: float, delta: float):
@@ -21,10 +21,14 @@ class Txn(object):
     @property
     def delta_pct(self):
         """Percent change in account for this transaction"""
-        return round(self.delta / self.balance_pre, 3)
+        return self.delta / self.balance_pre
 
-    def printTxn(self):
-        pass
+    def to_dict(self):
+        return dict(
+            timestamp=self.timestamp,
+            balance_pre=f'{self.balance_pre:.3f}',
+            delta=f'{self.delta:+.3f}',
+            pnl=f'{self.delta_pct:+.3f}')
 
 
 class Wallet(Observer):
@@ -41,10 +45,11 @@ class Wallet(Observer):
         _max = 0
         _min = _balance
         txns = []
-        # _df_balance = None
-        # self.symbol = symbol
-        qty = 0  # number of open contracts
+        _qty = 0  # number of open qty
+        exit_qty = 0
         price = 0  # entry price of current position
+        exit_price = 0
+        entry_price = 0
         f.set_self(vars())
 
     def step(self):
@@ -53,6 +58,22 @@ class Wallet(Observer):
     @property
     def side(self):
         return TradeSide(np.sign(self.qty))
+
+    @property
+    def qty(self):
+        return int(self._qty)
+
+    @qty.setter
+    def qty(self, val):
+        self._qty = int(val)
+
+    @property
+    def max(self):
+        return self._max
+
+    @property
+    def min(self):
+        return self._min
 
     @property
     def balance(self):
@@ -95,7 +116,7 @@ class Wallet(Observer):
         self.balance += delta
 
     def available_quantity(self, leverage: int, price: float) -> int:
-        """Max available quantity to purchase of contracts in base pair (eg XBT)
+        """Max available quantity to purchase of qty in base pair (eg XBT)
 
         Parameters
         ----------
@@ -107,7 +128,7 @@ class Wallet(Observer):
         Returns
         -------
         int
-            quantity of contracts
+            quantity of qty
         """
         qty = self.balance * leverage * price
         return int(qty)
@@ -126,11 +147,15 @@ class Wallet(Observer):
 
         if not order.side * self.side == -1:
             # increasing position, update price
-            self.price = (price * qty + order.price * order.qty) / (qty + order.qty)
+            self.price = self.adjust_price(price, order.price, qty, order.qty)
+            self.entry_price = self.price
         else:
             # decreasing position, update balance
             delta = self.get_profit(order.qty, price_pre, order.price)
             self.add_transaction(delta)
+
+            self.exit_price = self.adjust_price(price, order.price, self.exit_qty, order.qty)
+            self.exit_qty += order.qty
 
         self.qty += order.qty
 
@@ -139,6 +164,28 @@ class Wallet(Observer):
 
         order.fill()
 
+    def adjust_price(self, price: float, order_price: float, qty: int, order_qty: int) -> float:
+        """Calculate adjusted basis price when new order filled
+        - used for entry/exit price
+
+        Parameters
+        ----------
+        price : float
+            current wallet price
+        order_price : float
+            current filled order price
+        qty : int
+            current wallet quantity
+        order_qty : int
+            current filled order quantity
+
+        Returns
+        -------
+        float
+            adjusted price
+        """
+        return (price * qty + order_price * order_qty) / (qty + order_qty)
+
     def get_profit(self, exit_qty: int, entry_price: float, exit_price: float):
         """Calculate profit in base instrument (XBT)
         - NOTE this will change with different exchange and different base currency
@@ -146,7 +193,7 @@ class Wallet(Observer):
         Parameters
         ----------
         exit_qty : int
-            quantity of contracts to sell (decrease position)
+            quantity of qty to sell (decrease position)
         entry_price : float
         exit_price : float
 
@@ -157,31 +204,6 @@ class Wallet(Observer):
         """
         profit = -1 * exit_qty * (1 / entry_price - 1 / exit_price)
         return round(profit, self.precision)
-
-    # def modify(self, xbt, timestamp):
-    #     txn = Txn()
-    #     txn.amount = xbt
-    #     txn.timestamp = timestamp
-    #     txn.balance_pre = self.balance
-    #     txn.percentchange = round((xbt / self.balance), 3)
-
-    #     self.txns.append(txn)
-    #     self.balance = self.balance + xbt
-    #     txn.balance_post = self.balance
-
-    #     if self.balance > self.max:
-    #         self.max = self.balance
-
-    #     if self.balance < self.min:
-    #         self.min = self.balance
-
-    # def get_period_num(self, timestamp, period='month'):
-    #     timestamp = f.check_date(timestamp)
-    #     with f.Switch(period) as case:
-    #         if case('month'):
-    #             return timestamp.month
-    #         elif case('week'):
-    #             return timestamp.strftime("%V")
 
     def drawdown(self):
         """Calculate maximum value drawdown during backtest period
@@ -251,22 +273,27 @@ class Wallet(Observer):
 
     @property
     def df_balance(self):
-        if self._df_balance is None:
-            m = dd(list)
+        """df of balance at all transactions"""
+        # if self._df_balance is None:
 
-            for t in self.txns:
-                m['timestamp'].append(t.timestamp)
-                m['balance'].append(t.balance_post)
+        m = {t.timestamp: t.balance_pre for t in self.txns}
 
-            self._df_balance = pd.DataFrame.from_dict(m) \
-                .set_index('timestamp')
+        return pd.DataFrame \
+            .from_dict(
+                m,
+                orient='index',
+                columns=['balance']) \
+            # .rename_axis('timestamp')
 
-        return self._df_balance
-
-    def plot_balance(self, logy=False, title=None):
+    def plot_balance(self, logy=True, title=None):
         """Show plot of account balance over time"""
-        # fig, axs = plt.subplots(figsize=(12, 6))
-        self.df_balance.plot(kind='line', y='balance', logy=logy, linewidth=1, title=title, figsize=(12, 4))
+        self.df_balance.plot(
+            kind='line',
+            y='balance',
+            logy=logy,
+            linewidth=1,
+            title=title,
+            figsize=(12, 4))
 
     def print_txns(self):
         data = []
