@@ -3,6 +3,24 @@ from abc import ABCMeta, abstractmethod
 from .__init__ import *
 
 
+class DictRepr(object):
+    """Class to add better string rep with to_dict"""
+
+    def to_dict_str(self):
+        """TODO func to convert values of output dicts to string reprs based on dtype"""
+        pass
+
+    def __str__(self) -> str:
+        if hasattr(self, 'to_dict'):
+            data = ['{}={}'.format(k, v) for k, v in self.to_dict().items()]
+            return '<{}: {}>'.format(self.__class__.__name__, ', '.join(data))
+        else:
+            return str(self)
+
+    def __repr__(self) -> str:
+        return str(self)
+
+
 class SignalEvent(object):
     """Class to store functions to perform on signal"""
 
@@ -52,7 +70,7 @@ class SignalEvent(object):
         self._funcs.append(func)
 
 
-class Observer(object, metaclass=ABCMeta):
+class Observer(DictRepr, metaclass=ABCMeta):
     """Object which will be called every timestep when attached to main stream"""
 
     def __init__(self, parent_listener=None):
@@ -82,16 +100,17 @@ class Observer(object, metaclass=ABCMeta):
     def num_listeners(self):
         return len(self.listeners)
 
-    def attach(self, obj: 'Observer') -> None:
+    def attach(self, objs: Iterable) -> None:
         """Attach child listener"""
-        # NOTE could check to make sure child is instance of listener as well?
 
-        self.listeners.append(obj)
-        obj.parent = self
+        # enforce iteration
+        # NOTE this may be slower for the sake of cleaner code
+        if not hasattr(objs, '__iter__'):
+            objs = (objs, )
 
-        # call obj.step() here?
-        # if not c is None:
-        #     obj.step(c)
+        for obj in objs:
+            self.listeners.append(obj)
+            obj.parent = self
 
     def detach(self) -> None:
         """Detach self from parent's listeners"""
@@ -115,8 +134,8 @@ class Observer(object, metaclass=ABCMeta):
     def to_dict(self):
         return {listener: listener.to_dict() for listener in self.listeners}
 
-    def __str__(self) -> str:
-        return str({self: self.to_dict()})
+    # def __str__(self) -> str:
+    #     return str({self: self.to_dict()})
 
     # def __repr__(self) -> str:
     #     return str(self)
