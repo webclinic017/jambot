@@ -10,8 +10,8 @@ class StrategyBase(Observer):
         i = 1
         # status = 0
         # self.weight = weight
-        # entryprice = 0
-        # exitprice = 0
+        # entry_price = 0
+        # exit_price = 0
         # maxspread = 0.1
         # self.slippage = slippage
         # self.lev = lev
@@ -20,6 +20,7 @@ class StrategyBase(Observer):
         trades = []
 
         broker = Broker(parent_listener=self)
+        wallet = broker.get_wallet(symbol)
 
         f.set_self(vars())
 
@@ -33,7 +34,7 @@ class StrategyBase(Observer):
         return trade.side if not trade is None else None
 
     @property
-    def tradecount(self):
+    def num_trades(self):
         return len(self.trades)
 
     @property
@@ -91,7 +92,7 @@ class StrategyBase(Observer):
             df = self.df_trades(first=first, last=last)
         style = df.style.hide_index()
 
-        figs = self.sym.decimal_figs
+        figs = self.bm.decimal_figs
         price_format = '{:,.' + str(figs) + 'f}'
 
         cmap = sns.diverging_palette(10, 240, sep=10, n=20, center='dark', as_cmap=True)
@@ -121,8 +122,8 @@ class StrategyBase(Observer):
                 t.candles[0].Index,
                 t.status,
                 t.duration(),
-                t.entryprice,
-                t.exitprice,
+                t.entry_price,
+                t.exit_price,
                 # t.exit_order().ordtype_str(),
                 t.filledcontracts,
                 t.conf,

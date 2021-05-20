@@ -20,6 +20,7 @@ class Broker(Observer):
         # temp set default wallet to only XBTUSD
         symbol = 'XBTUSD'
         wallets[symbol] = Wallet(symbol=symbol)
+        self.attach(wallets.values())
 
         f.set_self(vars())
 
