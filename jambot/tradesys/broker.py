@@ -1,5 +1,6 @@
 from .__init__ import *
 from .base import Observer, SignalEvent
+from .enums import OrderStatus
 from .orders import LimitOrder, MarketOrder, Order, OrderType, StopOrder
 from .wallet import Wallet
 
@@ -20,7 +21,7 @@ class Broker(Observer):
         # temp set default wallet to only XBTUSD
         symbol = 'XBTUSD'
         wallets[symbol] = Wallet(symbol=symbol)
-        self.attach(wallets.values())
+        self.attach_listeners(wallets.values())
 
         f.set_self(vars())
 
@@ -53,7 +54,7 @@ class Broker(Observer):
         for order in orders:
             self._submit_single(order=order)
 
-        # sort after all alled
+        # sort after all added
         self.open_orders = {order.order_id: order for order in sorted(
             self.open_orders.values(), key=lambda x: x.sort_key)}
 
@@ -73,14 +74,16 @@ class Broker(Observer):
             order.price = self.c.Close
             self.fill_order(order)
         else:
+            order.status = OrderStatus.OPEN
             self.open_orders[order.order_id] = order
 
-    def cancel(self, order: 'Order'):
+    def cancel_order(self, order: 'Order'):
         """Cancel order"""
-        self.open_orders.pop(order.order_id)
-        order.cancel()
+        if order.order_id in self.open_orders:
+            self.open_orders.pop(order.order_id)
+            order.cancel()
 
-    def amend(self, order: 'Order', price: float = None, qty: int = None):
+    def amend_order(self, order: 'Order', price: float = None, qty: int = None):
         """Change order price or quantity
 
         Parameters
@@ -118,15 +121,18 @@ class Broker(Observer):
             order = self.open_orders[order_id]
 
             if order.is_market:
+                # NOTE cant adjust market order price without adjusting price
                 order.price = self.c.Close
 
             # fill if order lies in current candle's range
             if self.c.Low <= order.price <= self.c.High:
+
                 self.fill_order(order)
 
-            # TODO handle wallet transactions here
+            elif order.is_expired:
+                self.cancel_order(order)
 
-            # TODO check expired (timedout) orders
-            if order.is_expired:
-                order.cancel()
-                # NOTE this should remove from open orders and clear all listeners?
+    @property
+    def df_orders(self):
+        data = [o.dict_stats() for o in self.all_orders.values()]
+        return pd.DataFrame.from_dict(data)
