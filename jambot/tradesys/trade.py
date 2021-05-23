@@ -1,3 +1,4 @@
+import operator as opr
 from abc import ABCMeta, abstractmethod
 
 from . import orders as ords
@@ -28,6 +29,7 @@ class Trade(Observer):
         orders = []
         status = TradeStatus.PENDING
         _side = TradeSide.NEUTRAL
+        exit_balance = None
 
         wallet = broker.get_wallet(symbol=symbol)
 
@@ -57,11 +59,6 @@ class Trade(Observer):
     def step(self):
         pass
 
-    def add_orders(self, orders: list):
-        """Add multiple orders"""
-        for order in orders:
-            self.add_order(order)
-
     @property
     def num_orders(self):
         return len(self.orders)
@@ -69,6 +66,86 @@ class Trade(Observer):
     @property
     def pnl(self):
         return f.get_pnl(self.side, self.entry_price, self.exit_price)
+
+    @property
+    def is_good(self):
+        return self.pnl > 0
+
+    def _filter_orders(self, _type: str = 'entry'):
+        """Filter filled entry or exit orders
+
+        Parameters
+        ----------
+        _type : str, optional
+            entry|exit, default 'entry'
+
+        Returns
+        -------
+        list
+            list of filtered orders
+        """
+        op = dict(
+            entry=opr.eq,
+            exit=opr.ne).get(_type)
+
+        return [o for o in self.orders if op(o.side, self.side) and o.is_filled]
+
+    @property
+    def entry_orders(self):
+        """Return orders which match self trade side"""
+        return self._filter_orders('entry')
+
+    @property
+    def exit_orders(self):
+        """Return orders which do not match self trade side"""
+        return self._filter_orders('exit')
+
+    @property
+    def open_orders(self):
+        return [o for o in self.orders if o.is_open]
+
+    def _weighted_price(self, _type: str = 'entry') -> float:
+        """Calc weighted price for entry/exit orders
+
+        Parameters
+        ----------
+        _type : str, optional
+            entry|exit, default 'entry'
+
+        Returns
+        -------
+        float
+            price weighted by quantity
+        """
+        orders = self._filter_orders(_type)
+        prices = [o.price for o in orders]
+        qtys = [o.qty for o in orders]
+
+        if not prices:
+            # NOTE not sure if this is best solution yet
+            # print(prices)
+            # print(qtys)
+            return 0
+
+        return np.average(prices, weights=qtys)
+
+    @property
+    def entry_price(self):
+        return self._weighted_price('entry')
+
+    @property
+    def exit_price(self):
+        return self._weighted_price('exit')
+
+    @property
+    def qty(self):
+        """Return quantity of contracts"""
+        return sum([o.qty for o in self.entry_orders])
+
+    def add_orders(self, orders: list):
+        """Add multiple orders"""
+        for order in orders:
+            self.add_order(order)
 
     def add_order(self, order: 'Order'):
         """Add order and connect filled method
@@ -78,7 +155,7 @@ class Trade(Observer):
         order : Order
             order to connect
         """
-        self.attach(order)
+        self.attach_listener(order)
         self.orders.append(order)
         order.filled.connect(self.on_fill)
         self.broker.submit(order)
@@ -95,8 +172,8 @@ class Trade(Observer):
         """Perform action when any orders filled"""
 
         # chose side based on first order filled
-        self.entry_price = self.wallet.entry_price
-        self.exit_price = self.wallet.exit_price
+        # self.entry_price = self.wallet.entry_price
+        # self.exit_price = round(self.wallet.exit_price, 1)
 
         if self.is_pending:
             self.side = np.sign(qty)
@@ -105,8 +182,15 @@ class Trade(Observer):
             if self.wallet.qty == 0:
                 self.close()
 
+    def cancel_open_orders(self):
+        """Cancel all open orders"""
+        for order in self.open_orders:
+            self.broker.cancel_order(order)
+
     def market_close(self):
-        """Create order to market close all qty"""
+        """Create order to market close all qty, submit to broker"""
+        self.cancel_open_orders()
+
         qty = self.wallet.qty * -1
 
         if qty == 0:
@@ -120,33 +204,20 @@ class Trade(Observer):
         self.add_order(order)
 
     def close(self):
-        self.status = TradeStatus.CLOSED
-        # self.closed.emit()
-        self.detach()
-
-    @property
-    def same_orders(self):
-        """Return orders which match self trade side"""
-        return [o for o in self.orders if o.side == self.side]
+        """Close trade"""
+        if not self.is_closed:
+            self.status = TradeStatus.CLOSED
+            self.exit_balance = self.wallet.balance
+            # self.closed.emit()
+            self.detach_listener()
 
     def pnl_maxmin(self, maxmin, firstonly=False):
         return f.get_pnl(self.side, self.entry_price, self.extremum(self.side * maxmin, firstonly))
-
-    def is_good(self):
-        return True if self.pnl > 0 else False
-
-    def is_stopped(self):
-        # NOTE this might be old/not used now that individual orders are used
-        ans = True if self.pnl_maxmin(-1) < self.strat.stoppercent else False
-        return ans
 
     def rescale_orders(self, balance):
         # need to fix 'orders' for trade_chop
         for order in self.orders:
             order.rescale_contracts(balance=balance, conf=self.conf)
-
-    def exit_order(self):
-        return list(filter(lambda x: 'close' in x.name, self.orders))[0]
 
     def df(self):
         return self.bm.df.iloc[self.i_enter:self.i_exit]
@@ -154,7 +225,20 @@ class Trade(Observer):
     def to_dict(self):
         return dict(
             side=self.side,
-            qty=sum(o.qty for o in self.same_orders),
+            qty=sum(o.qty for o in self.entry_orders),
             entry_price=f'{self.entry_price:_.0f}',
             exit_price=f'{self.exit_price:_.0f}',
             pnl=f'{self.pnl:.2%}')
+
+    def dict_stats(self):
+        """Dict of statistics, useful for creating a df of all trades"""
+        return dict(
+            timestamp=self.timestamp_start,
+            side=self.side,
+            dur=self.duration,
+            entry=self.entry_price,
+            exit=self.exit_price,
+            qty=self.qty,
+            pnl=self.pnl,
+            bal=self.exit_balance
+        )
