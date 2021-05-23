@@ -2,6 +2,8 @@ from abc import ABCMeta, abstractmethod
 
 from .__init__ import *
 
+log = getlog(__name__)
+
 
 class DictRepr(object):
     """Class to add better string rep with to_dict"""
@@ -11,11 +13,12 @@ class DictRepr(object):
         pass
 
     def __str__(self) -> str:
+        data = []
+
         if hasattr(self, 'to_dict'):
             data = ['{}={}'.format(k, v) for k, v in self.to_dict().items()]
-            return '<{}: {}>'.format(self.__class__.__name__, ', '.join(data))
-        else:
-            return str(self)
+
+        return '<{}: {}>'.format(self.__class__.__name__, ', '.join(data))
 
     def __repr__(self) -> str:
         return str(self)
@@ -78,10 +81,11 @@ class Observer(DictRepr, metaclass=ABCMeta):
         self._duration = 0
         self.c = None
         self.parent = None
+        self.timestamp_start = None
 
         # NOTE might need to pass c here too?
         if not parent_listener is None:
-            parent_listener.attach(self)
+            parent_listener.attach_listener(self)
 
     @property
     def timestamp(self):
@@ -100,19 +104,36 @@ class Observer(DictRepr, metaclass=ABCMeta):
     def num_listeners(self):
         return len(self.listeners)
 
-    def attach(self, objs: Iterable) -> None:
+    @property
+    def has_parent(self):
+        return not self.parent is None
+
+    def on_attach(self):
+        """Called by parent when child is attached
+        - Perform any necessary actions on attach"""
+        pass
+
+    def attach_listeners(self, objs: Iterable) -> None:
+        """Attach multiple listeners"""
+        for obj in objs:
+            self.attach_listener(obj)
+
+    def attach_listener(self, obj: object) -> None:
         """Attach child listener"""
 
         # enforce iteration
         # NOTE this may be slower for the sake of cleaner code
-        if not hasattr(objs, '__iter__'):
-            objs = (objs, )
+        # if not hasattr(objs, '__iter__'):
+        #     objs = (objs, )
 
-        for obj in objs:
-            self.listeners.append(obj)
-            obj.parent = self
+        # for obj in objs:
+        self.listeners.append(obj)
+        obj.parent = self
+        obj.c = self.c
+        obj.timestamp_start = self.timestamp
+        obj.on_attach()
 
-    def detach(self) -> None:
+    def detach_listener(self) -> None:
         """Detach self from parent's listeners"""
         if not self.parent is None:
             self.parent.listeners.remove(self)
@@ -122,23 +143,21 @@ class Observer(DictRepr, metaclass=ABCMeta):
         """Perform specific actions at each timestep, must be implemmented by each object"""
         raise NotImplementedError('Must implement step in child class!')
 
-    def _step(self, c: tuple) -> None:
-        """Increment one timestep, perform actions, call all children's step method"""
-        for listener in self._listeners:
-            listener._step(c)
-
+    def step_clock(self, c: tuple) -> None:
+        """Update self and all listener clocks"""
         self.c = c
         self._duration += 1
+
+        for listener in self._listeners:
+            listener.step_clock(c)
+
+    def _step(self) -> None:
+        """perform actions, call all children's step method"""
+
+        for listener in self._listeners:
+            listener._step()
+
         self.step()
-
-    def to_dict(self):
-        return {listener: listener.to_dict() for listener in self.listeners}
-
-    # def __str__(self) -> str:
-    #     return str({self: self.to_dict()})
-
-    # def __repr__(self) -> str:
-    #     return str(self)
 
 
 class Clock(Observer):
@@ -149,9 +168,16 @@ class Clock(Observer):
         self.df = df
         self._iterator = df.itertuples()
 
+    def run(self):
+        """Loop through entire dataframe"""
+        for c in self.df.itertuples():
+            self.step_clock(c)
+            self._step()
+
     def next(self):
-        """Move all listeners forward one step"""
-        self._step(c=next(self._iterator))
+        """Move all listeners forward one step (for testing)"""
+        self.step_clock(c=next(self._iterator))
+        self._step()
 
     def step(self):
         """Move clock forward one timestep"""
