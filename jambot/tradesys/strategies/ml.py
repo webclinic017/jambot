@@ -29,15 +29,11 @@ class Strategy(StrategyBase):
         use_stops = True if not stoppercent is None else False
         # split_val = 0 if regression else 0.5
 
-        # Trade = TradeML
-        trades = []
-
         f.set_self(vars())
 
-    # def init(self, bm, df):
-    #     # a = bm.account
-    #     icol_y_pred = df.columns.get_loc('y_pred')
-    #     f.set_self(vars())
+    def on_attach(self):
+        """Market close last trade at end of session"""
+        self.parent.end_session.connect(self.exit_trade)
 
     def exit_trade(self):
         """Market close trade"""
@@ -45,17 +41,54 @@ class Strategy(StrategyBase):
 
         if not trade is None:
             trade.market_close()
+            # trade.cancel_open_orders()
+            trade.close()
+
+    def market_open(self, price: float, side: int, qty: int = None, name: str = 'market_open') -> 'MarketOrder':
+        """Create market order to enter"""
+        if qty is None:
+            qty = self.wallet.available_quantity(price=price)
+
+        return MarketOrder(
+            symbol=self.symbol,
+            qty=qty * side,
+            name=name)
+
+    def market_open_late(self, order):
+        # NOTE this is v messy still
+        # limit order will have stepped forward one timestep from trade
+        self.broker.cancel(order)
+
+        trade = self.trade
+        order = self.market_open(price=self.c.Close, side=order.side, name='market_open_late')
+
+        print(f'market_open_late - wallet balance: {self.wallet.balance:.3f}, c.Close: {self.c.Close}')
+
+        trade.add_order(order)
+
+    def limit_open(self, price: float, side: int, offset: float) -> 'LimitOrder':
+        """Create limit order with offset to enter"""
+        limit_price = f.get_price(pnl=offset, entry_price=price, side=side)
+        qty = self.wallet.available_quantity(price=limit_price)
+
+        order = LimitOrder(
+            symbol=self.symbol,
+            qty=qty * side,
+            price=limit_price,
+            timeout=5,
+            name='limit_open')
+
+        order.timedout.connect(self.market_open_late)
+        # print('limit added')
+        return order
 
     def enter_trade(self, side: int, target_price: float):
 
         trade = self.make_trade()
+        # qty = self.wallet.available_quantity(price=target_price)
 
-        qty = self.wallet.available_quantity(leverage=self.lev, price=target_price)
-
-        order = MarketOrder(
-            symbol=self.symbol,
-            qty=qty * side,
-            name='market_open')
+        # order = self.market_open(target_price, side)
+        order = self.limit_open(target_price, side, -0.006)
 
         trade.add_order(order)
 
@@ -75,23 +108,42 @@ class Strategy(StrategyBase):
             self.exit_trade()
             self.enter_trade(side=c.signal, target_price=c.Close)
 
-        # close final trade at last candle to see pnl
-        # TODO do this with a "final candle" signal or similar
-        # if c.Index == df.index[-1]:
-        #     self.exit_trade(exit_price=cur_price)
-
 
 class StratScorer():
     """Obj to allow scoring only for cross_val test but not train"""
 
     def __init__(self):
-        self.is_train = True
+        self.reset()
+
+    def reset(self):
         self.m_train = dict(final=True, max=True)
         self.runs = {}
 
+    def show_summary(self):
+        """Show summary df of all backtest runs"""
+        fmt = list(self.runs.values())[0].summary_format
+
+        higher = ['min', 'max', 'final', 'drawdown', 'good_pct']
+
+        dfs = [bm.df_result for bm in self.runs.values()]
+        df = pd.concat(dfs) \
+            .reset_index(drop=True)
+
+        style = df \
+            .style.format(fmt) \
+            .pipe(sf.bg, subset=higher, higher_better=True) \
+            .pipe(sf.bg, subset=['tpd'], higher_better=False)
+
+        df_tot = df.mean().to_frame().T
+        style_tot = df_tot \
+            .style.format(fmt)
+
+        display(style)
+        display(style_tot)
+
     def score(self, estimator, x, y_true, _type='final', regression=False, n_smooth=6, **kw):
         """Run strategy and return final balance
-        - called for test then train for x number of splits...
+        - called for test then train for x number of splits
         """
 
         self.m_train[_type] = not self.m_train[_type]
@@ -132,8 +184,8 @@ class StratScorer():
 
         wallet = bm.strat.wallet
         if _type == 'final':
-            print(f'final: {wallet.balance:.2f}')
+            # print(f'final: {wallet.balance:.2f}')
             return wallet.balance  # final balance
         elif _type == 'max':
-            print(f'max: {wallet.max:.2f}')
+            # print(f'max: {wallet.max:.2f}')
             return wallet.max
