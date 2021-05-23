@@ -1,6 +1,7 @@
 from .__init__ import *
 from .base import DictRepr, Observer
 from .enums import TradeSide
+from .exceptions import InsufficientBalance
 from .orders import Order
 
 log = getlog(__name__)
@@ -46,10 +47,8 @@ class Wallet(Observer):
         _min = _balance
         txns = []
         _qty = 0  # number of open qty
-        exit_qty = 0
+        _lev = 3.0
         price = 0  # entry price of current position
-        exit_price = 0
-        entry_price = 0
         f.set_self(vars())
 
     def step(self):
@@ -68,12 +67,24 @@ class Wallet(Observer):
         self._qty = int(val)
 
     @property
+    def lev(self):
+        return self._lev
+
+    @lev.setter
+    def lev(self, val: float):
+        self._lev = val
+
+    @property
     def max(self):
         return self._max
 
     @property
     def min(self):
         return self._min
+
+    @property
+    def num_txns(self):
+        return len(self.txns)
 
     @property
     def balance(self):
@@ -94,9 +105,38 @@ class Wallet(Observer):
         elif self._balance > self._max:
             self._max = self._balance
 
-    @property
-    def num_txns(self):
-        return len(self.txns)
+    def fill_order(self, order: 'Order'):
+        """Perform transcation of order, modify balance, current price/quantity"""
+
+        price, qty = self.price, self.qty
+        qty_pre, price_pre = qty, price
+
+        # adjust current wallet price/quantity
+        # NOTE this doesn't currently handle sells which are bigger than current position
+
+        if not order.side * self.side == -1:
+            # increasing position, update price
+
+            # check balance available
+            avail_qty = self.available_quantity(price=order.price)
+            used_qty = self.qty + order.qty
+
+            if used_qty > avail_qty:
+                raise InsufficientBalance(self.balance, self.qty, order.qty, avail_qty, order)
+
+            self.price = self.adjust_price(price, order.price, qty, order.qty)
+
+        else:
+            # decreasing position, update balance
+            delta = self.get_profit(order.qty, price_pre, order.price)
+            self.add_transaction(delta)
+
+        self.qty += order.qty
+
+        if self.qty == 0:
+            self.price = 0
+
+        order.fill()
 
     def add_transaction(self, delta: float):
         """Add transaction record to ledger
@@ -115,13 +155,11 @@ class Wallet(Observer):
 
         self.balance += delta
 
-    def available_quantity(self, leverage: int, price: float) -> int:
+    def available_quantity(self, price: float) -> int:
         """Max available quantity to purchase of qty in base pair (eg XBT)
 
         Parameters
         ----------
-        leverage : int
-            leverage to use
         price : float
             price in quote instrument (eg USD)
 
@@ -130,39 +168,8 @@ class Wallet(Observer):
         int
             quantity of qty
         """
-        qty = self.balance * leverage * price
+        qty = self.balance * self.lev * price
         return int(qty)
-
-    def reset(self):
-        self._balance = self._default_balance
-
-    def fill_order(self, order: 'Order'):
-        """Perform transcation of order, modify balance, current price/quantity"""
-
-        price, qty = self.price, self.qty
-        qty_pre, price_pre = qty, price
-
-        # adjust current wallet price/quantity
-        # NOTE this doesn't currently handle sells which are bigger than current position
-
-        if not order.side * self.side == -1:
-            # increasing position, update price
-            self.price = self.adjust_price(price, order.price, qty, order.qty)
-            self.entry_price = self.price
-        else:
-            # decreasing position, update balance
-            delta = self.get_profit(order.qty, price_pre, order.price)
-            self.add_transaction(delta)
-
-            self.exit_price = self.adjust_price(price, order.price, self.exit_qty, order.qty)
-            self.exit_qty += order.qty
-
-        self.qty += order.qty
-
-        if self.qty == 0:
-            self.price = 0
-
-        order.fill()
 
     def adjust_price(self, price: float, order_price: float, qty: int, order_qty: int) -> float:
         """Calculate adjusted basis price when new order filled
@@ -238,6 +245,9 @@ class Wallet(Observer):
 
         return drawdown * -1, drawdates
 
+    def reset(self):
+        self._balance = self._default_balance
+
     def get_percent_change(self, balance, change):
         return f.percent(change / balance)
 
@@ -274,16 +284,15 @@ class Wallet(Observer):
     @property
     def df_balance(self):
         """df of balance at all transactions"""
-        # if self._df_balance is None:
 
-        m = {t.timestamp: t.balance_pre for t in self.txns}
+        m = {t.timestamp: t.balance_post for t in self.txns}
 
         return pd.DataFrame \
             .from_dict(
                 m,
                 orient='index',
                 columns=['balance']) \
-            # .rename_axis('timestamp')
+
 
     def plot_balance(self, logy=True, title=None):
         """Show plot of account balance over time"""
