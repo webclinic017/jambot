@@ -16,14 +16,14 @@ class Order(Observer, metaclass=ABCMeta):
         symbol: str = None,
         # side: int = None,
         # ordtype_bot: int = None,
-        reduce_only: bool = False,
+        # reduce_only: bool = False,
         # trade: 'TradeBase' = None,
         # bm: 'BacktestManager' = None,
         order_id: str = None,
         # activate: bool = False,
         name: str = '',
-        exec_inst: list = None,
-        is_live: bool = False,
+        # exec_inst: list = None,
+        # is_live: bool = False,
         timeout: int = float('inf')
     ):
 
@@ -31,34 +31,53 @@ class Order(Observer, metaclass=ABCMeta):
 
         filled = SignalEvent(int)
         cancelled = SignalEvent()
-        ammended = SignalEvent(float)
+        # ammended = SignalEvent(float)
+        timedout = SignalEvent(object)
 
         # give order unique id
         if order_id is None:
-            order_id = str(uuid.uuid4())
+            order_id = str(uuid.uuid1())
 
         status = OrderStatus.PENDING
-        name = name.lower()
+        # name = name.lower()
         price_original = price
-        filled_time = None
+        # filled_time = None
 
         if pd.isna(qty) or qty == 0:
             raise ValueError(f'Order quantity cannot be {qty}')
 
-        qty = int(qty)
+        # qty = int(qty)
 
         # decimaldouble = float(f'1e-{decimal_figs}')
 
         f.set_self(vars())
         # self.set_key()
 
-        if is_live:
-            self.set_live_data()
+        # if is_live:
+        #     self.set_live_data()
+
+    @property
+    def qty(self):
+        return self._qty
+
+    @qty.setter
+    def qty(self, val):
+        """Set qty and side based on qty"""
+        self._qty = int(val)
+        self._side = TradeSide(np.sign(val))
 
     @property
     def side(self):
         """Return qty positive or negative"""
-        return TradeSide(np.sign(self.qty))
+        return self._side
+
+    # @side.setter
+    # def side(self, val):
+    #     self._side = TradeSide(np.sign(val))
+
+    @property
+    def is_open(self):
+        return self.status == OrderStatus.OPEN
 
     @property
     def is_filled(self):
@@ -71,18 +90,27 @@ class Order(Observer, metaclass=ABCMeta):
 
     def step(self):
         """Check if execution price hit and fill"""
-        pass
+        # pass
+        if self.duration >= self.timeout:
+            self.timedout.emit(self)
 
     def fill(self):
         """Decide if adding or subtracting qty"""
         self.filled_time = self.timestamp
         self.filled.emit(self.qty)  # NOTE not sure if qty needed
         self.status = OrderStatus.FILLED
-        self.detach()
+        self.detach_listener()
 
     def cancel(self):
         """Cancel order"""
         self.cancelled.emit()
+        self.status = OrderStatus.CANCELLED
+        self.detach_listener()
+
+    # def timeout(self):
+    #     """Emit timeout signal"""
+    #     # self.cancel()
+    #     self.timedout.emit(self)
 
     def ordtype_str(self):
         # v sketch
@@ -194,10 +222,24 @@ class Order(Observer, metaclass=ABCMeta):
         else:
             return (-1, float('-inf'))
 
+    def dict_stats(self) -> dict:
+
+        return dict(
+            # order_id=self.order_id,
+            ts=self.timestamp,
+            symbol=self.symbol,
+            order_type=self.order_type,
+            qty=self.qty,
+            price=self.price,
+            status=self.status,
+            name=self.name
+        )
+
     def to_dict(self) -> dict:
 
         return dict(
             # order_id=self.order_id,
+            ts=self.timestamp,
             symbol=self.symbol,
             order_type=str(self.order_type),
             qty=f'{self.qty:+.0f}',
