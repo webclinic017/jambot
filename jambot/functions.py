@@ -14,11 +14,6 @@ import yaml
 from dateutil.parser import parse
 from pypika import functions as fn
 
-try:
-    from IPython.display import display
-except ModuleNotFoundError:
-    pass
-
 global topfolder
 topfolder = Path(__file__).parent
 
@@ -85,14 +80,6 @@ def print_time(start):
     print(ans)
 
 
-def line():
-    return '\n'
-
-
-def dline():
-    return line() + line()
-
-
 def read_csv(startdate, daterange, symbol=None):
     p = Path.cwd().parent / 'Testing/df.csv'
     df = pd.read_csv(p, parse_dates=['Timestamp'], index_col=0)
@@ -114,7 +101,8 @@ def price_format(altstatus=False):
     return ans
 
 
-def get_price(pnl, entry_price, side):
+def get_price(pnl: float, entry_price: float, side: float) -> float:
+    """Get price at percentage offset"""
     if side == 1:
         return pnl * entry_price + entry_price
     elif side == -1:

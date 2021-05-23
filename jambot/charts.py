@@ -317,7 +317,8 @@ def trades(df, name, **kw):
             text = df3.index.strftime('%Y-%m-%d %H') + '<br>' + \
                 df3.trade_entry.apply(fmt, y='entry') + '<br>' + \
                 df3.trade_exit.apply(fmt, y='exit') + '<br>' + \
-                df3.trade_pnl.apply(lambda x: f'pnl: {x:.2%}')
+                df3.trade_pnl.apply(lambda x: f'pnl: {x:.2%}') + '<br>' + \
+                df3.dur.apply(lambda x: f'dur: {x:.0f}')
 
             trace = go.Scatter(
                 name='trades',

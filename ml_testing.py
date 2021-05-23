@@ -70,8 +70,8 @@ if True:
     kw = dict(
         symbol='XBTUSD',
         daterange=365 * 5,
-        startdate=dt(2018, 1, 1),
-        # startdate=dt(2017, 1, 1),
+        # startdate=dt(2018, 1, 1),
+        startdate=dt(2017, 1, 1),
         interval=1)
 
     p = Path('df.csv')
@@ -91,9 +91,9 @@ if True:
 
 # %% - ADD SIGNALS
 
-sm = sg.SignalManager(add_slope=False)
+sm = sg.SignalManager(add_slope=5)
 
-n_periods = 6
+n_periods = 10
 p_ema = None  # 6
 # Target = sg.TargetMeanEMA
 Target = sg.TargetMean
@@ -198,10 +198,12 @@ models = dict(
 )
 
 steps = [
-    (1, ('pca', PCA(n_components=15, random_state=mm.random_state)))]
+    (1, ('pca', PCA(n_components=20, random_state=mm.random_state)))]
 # steps = None
 
+scorer.reset()
 mm.cross_val(models, steps=steps)
+scorer.show_summary()
 
 # %% - OPTIMIZE FEATURES
 if False:
@@ -259,15 +261,19 @@ model = models[name]
 n_smooth = 6
 rolling_col = 'proba_long' if not regression else 'y_pred'
 
-if False:
-    # df_pred = mm.add_predict_iter(df=df, name=name, pipe=mm.pipes[name], batch_size=24*4, max_train_size=None, regression=regression) \
-    # .pipe(sg.add_ema, p=n_smooth, c=rolling_col, col='rolling_proba')
-    df_pred = df_pred \
-        .assign(rolling_proba=lambda x: x[rolling_col].rolling(n_smooth).mean())
+if True:
+    df_pred = mm.add_predict_iter(df=df, name=name, pipe=mm.pipes[name], batch_size=24 * 2, max_train_size=None, regression=regression) \
+        .pipe(sg.add_ema, p=n_smooth, c=rolling_col, col='rolling_proba') \
+        .assign(
+        signal=lambda x: np.sign(np.diff(np.sign(x.rolling_proba - 0.5), prepend=np.array([0])))) \
+        .fillna(0)
+    # df_pred = df_pred \
+    #     .assign(rolling_proba=lambda x: x[rolling_col].rolling(n_smooth).mean())
     df_pred_iter = df_pred.copy()
     # df_pred = df_pred_iter.copy()
 
 # %% - RUN STRAT
+
 fit_params = dict(
     lgbm__sample_weight=np.linspace(0.5, 1, mm.df_train.shape[0]))
 fit_params = None
@@ -276,16 +282,18 @@ fit_params = None
 # df['psar'] = tb.SAR(df.High, df.Low, acceleration=0.02, maximum=0.2)
 # df['y_pred'] = np.where(df.Close > df.psar, -1, 1)
 # df_pred = df.copy()
-df_pred = mm.add_predict(
-    df=df,
-    name=name,
-    best_est=False,
-    proba=not regression,
-    fit_params=fit_params) \
-    .pipe(sg.add_ema, p=n_smooth, c=rolling_col, col='rolling_proba') \
-    .assign(
-        signal=lambda x: np.sign(np.diff(np.sign(x.rolling_proba - split_val), prepend=np.array([0])))) \
-    .fillna(0)
+
+# df_pred = mm \
+#     .add_predict(
+#         df=df,
+#         name=name,
+#         best_est=False,
+#         proba=not regression,
+#         fit_params=fit_params) \
+#     .pipe(sg.add_ema, p=n_smooth, c=rolling_col, col='rolling_proba') \
+#     .assign(
+#         signal=lambda x: np.sign(np.diff(np.sign(x.rolling_proba - 0.5), prepend=np.array([0])))) \
+#     .fillna(0)
 # .assign(rolling_proba=lambda x: x[rolling_col].rolling(n_smooth).mean())
 
 strat = ml.Strategy(
@@ -308,7 +316,8 @@ cols = ['Open', 'High', 'Low', 'Close', 'y_pred', 'proba_long', 'rolling_proba',
 bm = bt.BacktestManager(**kw, strat=strat, df=df_pred[cols])
 bm.run()
 bm.print_final()
-bm.strat.wallet.plot_balance(logy=True)
+wallet = strat.wallet
+wallet.plot_balance(logy=True)
 trades = strat.trades
 t = trades[-1]
 
@@ -317,7 +326,7 @@ t = trades[-1]
 periods = 30 * 24
 # periods = 400
 startdate = dt(2021, 1, 4)
-# startdate = None
+startdate = None
 split_val = 0.5 if not regression else 0
 
 df_chart = df_pred[df_pred.index >= x_test.index[0]]
@@ -333,33 +342,35 @@ traces = [
     # dict(name='VolBTC', func=ch.bar),
 ]
 
-df_balance = strat.bm.account.df_balance
+df_balance = strat.wallet.df_balance
 # df_balance = None
 
 if not df_balance is None:
     traces.append(dict(name='balance', func=ch.scatter, color='#91ffff', stepped=True))
 
-    df_chart = df_chart.merge(right=df_balance, how='left', left_index=True, right_index=True) \
+    df_chart = df_chart \
+        .merge(right=df_balance, how='left', left_index=True, right_index=True) \
         .assign(balance=lambda x: x.balance.fillna(method='ffill'))
 
 
 # Add trade_side for trade entry indicators in chart
 df_trades = strat.df_trades()
-# df_trades = None
 
 if not df_trades is None:
     traces.append(dict(name='trades', func=ch.trades, row=1))
 
     rename_cols = dict(
-        Sts='trade_side',
-        PnlAcct='trade_pnl',
-        Entry='trade_entry',
-        Exit='trade_exit')
+        side='trade_side',
+        pnl='trade_pnl',
+        entry='trade_entry',
+        exit='trade_exit')
 
-    df_trades = df_trades.set_index('Timestamp') \
-        .rename(columns=rename_cols)[rename_cols.values()]
+    df_trades = df_trades \
+        .set_index('timestamp') \
+        .rename(columns=rename_cols)  # [rename_cols.values()]
 
-    df_chart = df_chart.merge(right=df_trades, how='left', left_index=True, right_index=True)
+    df_chart = df_chart \
+        .merge(right=df_trades, how='left', left_index=True, right_index=True)
 
 # enumerate row numbers
 # traces = [{**m, **dict(row=m.get('row', i+2))} for i, m in enumerate(traces)]

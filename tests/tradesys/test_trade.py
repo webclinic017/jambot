@@ -22,7 +22,7 @@ def trade(broker):
 def clock():
     df = data.default_df()
     clock = Clock(df=df)
-    # clock.attach(broker)
+    # clock.attach_listener(broker)
     return clock
 
 
@@ -32,8 +32,8 @@ def test_init(trade):
 
 def test_orders(trade, clock):
     """Test orders are added and removed correctly when filled"""
-    clock.attach(trade)
-    clock.attach(trade.broker)
+    clock.attach_listener(trade)
+    clock.attach_listener(trade.broker)
 
     order_specs = [
         dict(price=100, qty=1000, name='o1'),

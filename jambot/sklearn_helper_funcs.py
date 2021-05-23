@@ -518,12 +518,12 @@ def format_cell(bg, t='black'):
     return f'background-color: {bg};color: {t};'
 
 
-def bg(style, subset=None, rev=True, axis=0):
+def bg(style, subset=None, higher_better=True, axis=0):
     """Show style with highlights per column"""
     if subset is None:
         subset = style.data.columns
 
-    cmap = _cmap.reversed() if rev else _cmap
+    cmap = _cmap.reversed() if higher_better else _cmap
 
     return style \
         .background_gradient(cmap=cmap, subset=subset, axis=axis)
@@ -541,12 +541,12 @@ def get_style(df):
         .format('{:.3f}')
 
 
-def show_scores(df, rev=False):
+def show_scores(df, higher_better=False):
     subset = [col for col in df.columns if any(
         item in col for item in ('test', 'train')) and not 'std' in col]
 
     style = get_style(df) \
-        .pipe(bg, rev=rev) \
+        .pipe(bg, higher_better=higher_better) \
         .pipe(bg, subset=subset)
 
     display(style)

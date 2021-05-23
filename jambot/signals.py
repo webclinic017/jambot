@@ -85,7 +85,7 @@ drop
 
 
 class SignalManager(BaseEstimator, TransformerMixin):
-    def __init__(self, signals_list: list = None, target: str = None, prefix: str = None, add_slope: bool = False):
+    def __init__(self, signals_list: list = None, target: str = None, prefix: str = None, add_slope: int = 0):
         # df_orig = df.copy()
         signal_groups = {}
         features = {}  # map of {feature_name: signal_group}
@@ -224,7 +224,7 @@ class SignalGroup():
     def __init__(self, df=None, signals=None, fillna=True, prefix: str = None, **kw):
         drop_cols = []
         signals = self.init_signals(signals)
-        add_slope = False
+        add_slope = 0
         f.set_self(vars())
 
     def init_signals(self, signals):
@@ -303,8 +303,9 @@ class SignalGroup():
         # not super useful
         if self.add_slope and not 'target' in self.__class__.__name__.lower():
             # dont add slope for any Target classes
-            slope_signals = {f'dxy_{name}': lambda x: self.make_slope(
-                x[name].values) for name, s in final_signals.items()}
+            slope_signals = {
+                f'dxy_{name}': lambda x: self.make_slope(
+                    x[name].values, n_periods=self.add_slope) for name, s in final_signals.items()}
 
             final_signals.update(slope_signals)
 
@@ -375,7 +376,7 @@ class SignalGroup():
         tprev = tseries.iloc[i - 1]
         return not tnow == side and not tnow == tprev
 
-    def make_slope(self, s, n_periods: int = 2):
+    def make_slope(self, s, n_periods: int = 5):
         """Return series as slope of input series"""
         return (s - np.roll(s, n_periods, axis=0)) / n_periods
 
