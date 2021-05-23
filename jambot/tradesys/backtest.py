@@ -1,5 +1,5 @@
 from .__init__ import *
-from .base import Observer, SignalEvent
+from .base import Clock, Observer, SignalEvent
 from .strategies.base import StrategyBase
 
 # from .database import db
@@ -7,7 +7,7 @@ from .strategies.base import StrategyBase
 # from .tradesys.broker import Broker
 
 
-class BacktestManager(Observer):
+class BacktestManager(Clock):
     """Organize and run strategies over dataframe with signals"""
 
     def __init__(
@@ -19,7 +19,9 @@ class BacktestManager(Observer):
             u=None,
             **kw):
 
-        super().__init__(**kw)
+        super().__init__(df=df, **kw)
+
+        end_session = SignalEvent()
 
         # if not isinstance(strats, list): strats = [strats]
 
@@ -66,48 +68,62 @@ class BacktestManager(Observer):
 
     def run(self, prnt=True) -> None:
         """Top level step function"""
-        df = self.df
+        self.attach_listener(self.strat)
+        super().run()
+        self.end_session.emit()
 
-        if prnt:
-            idx = df.index
-            print(f'Test range: {idx[0]} - {idx[-1]}')
-
-        self.attach(self.strat)
-
-        for c in df.itertuples():
-            self._step(c)
-            # self.strat.decide(c)
-
-        # if self.partial:
-        #     self.strat.trades[-1].partial = True
+    @property
+    def summary_format(self):
+        """Dict to use for styling summary df"""
+        return dict(
+            start='{:%Y-%m-%d}',
+            end='{:%Y-%m-%d}',
+            dur='{:,.0f}',
+            min='{:.3f}',
+            max='{:.3f}',
+            final='{:.3f}',
+            drawdown='{:.1%}',
+            tpd='{:.2f}',
+            good='{:,.0f}',
+            total='{:,.0f}',
+            good_pct='{:.0%}'
+        )
 
     def print_final(self):
-        style = self.df_result.style.hide_index()
-        style.format({'min': '{:.3f}',
-                      'max': '{:.3f}',
-                      'final': '{:.3f}',
-                      'drawdown': '{:.2%}'})
+        """Style backtest summary df"""
+        style = self.df_result.style \
+            .format(self.summary_format) \
+            .hide_index()
+
         display(style)
 
     @property
     def df_result(self):
+        """df of backtest results"""
         strat = self.strat
         a = strat.wallet
 
         drawdown, drawdates = a.drawdown()
 
         data = dict(
-            symbol=self.symbol,
+            # symbol=self.symbol,
+            start=self.df.index[0],
+            end=self.df.index[-1],
+            dur=self.df.shape[0],
             min=a.min,
             max=a.max,
             final=a.balance,
             drawdown=drawdown,
-            period=drawdates,
-            goodtrades='{}/{}'.format(
-                strat.good_trades(),
-                strat.num_trades))
+            # period=drawdates,
+            tpd=strat.tpd,
+            good=strat.good_trades,
+            filled=strat.num_trades_filled,
+            total=strat.num_trades
+        )
 
-        return pd.DataFrame.from_dict(data, orient='index').T
+        return pd.DataFrame. \
+            from_dict(data, orient='index').T \
+            .assign(good_pct=lambda x: x.good / x.filled)
 
     # def write_csv(self):
     #     self.df.to_csv('dfout.csv')
