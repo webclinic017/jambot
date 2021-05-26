@@ -1,60 +1,32 @@
 import uuid
 from abc import ABCMeta
 
+from ..common import DictRepr, Serializable
 from .__init__ import *
 from .base import Observer, SignalEvent
 from .enums import OrderStatus, OrderType, TradeSide
 
+log = getlog(__name__)
 
-class Order(Observer, metaclass=ABCMeta):
+
+class BaseOrder(object, metaclass=ABCMeta):
+    """Base class to be inherited by backtest or live exchange orders"""
 
     def __init__(
-        self,
-        qty: int,
-        # ordtype: str,
-        price: float,
-        symbol: str = None,
-        # side: int = None,
-        # ordtype_bot: int = None,
-        # reduce_only: bool = False,
-        # trade: 'TradeBase' = None,
-        # bm: 'BacktestManager' = None,
-        order_id: str = None,
-        # activate: bool = False,
-        name: str = '',
-        # exec_inst: list = None,
-        # is_live: bool = False,
-        timeout: int = float('inf')
-    ):
+            self,
+            qty: int,
+            price: float,
+            symbol: str = SYMBOL,
+            order_id: str = None,
+            name: str = '',
+            **kw):
 
-        super().__init__()
-
-        filled = SignalEvent(int)
-        cancelled = SignalEvent()
-        # ammended = SignalEvent(float)
-        timedout = SignalEvent(object)
-
-        # give order unique id
-        if order_id is None:
-            order_id = str(uuid.uuid1())
-
-        status = OrderStatus.PENDING
-        # name = name.lower()
         price_original = price
-        # filled_time = None
 
         if pd.isna(qty) or qty == 0:
             raise ValueError(f'Order quantity cannot be {qty}')
 
-        # qty = int(qty)
-
-        # decimaldouble = float(f'1e-{decimal_figs}')
-
         f.set_self(vars())
-        # self.set_key()
-
-        # if is_live:
-        #     self.set_live_data()
 
     @property
     def qty(self):
@@ -66,14 +38,14 @@ class Order(Observer, metaclass=ABCMeta):
         self._qty = int(val)
         self._side = TradeSide(np.sign(val))
 
+    def increase_qty(self, qty: int):
+        """Increase absolute order quantity"""
+        self.qty += qty * self.side
+
     @property
     def side(self):
         """Return qty positive or negative"""
         return self._side
-
-    # @side.setter
-    # def side(self, val):
-    #     self._side = TradeSide(np.sign(val))
 
     @property
     def is_open(self):
@@ -84,108 +56,8 @@ class Order(Observer, metaclass=ABCMeta):
         return self.status == OrderStatus.FILLED
 
     @property
-    def is_expired(self):
-        """Check if order has reached its timeout duration"""
-        return self.duration >= self.timeout
-
-    def step(self):
-        """Check if execution price hit and fill"""
-        # pass
-        if self.duration >= self.timeout:
-            self.timedout.emit(self)
-
-    def fill(self):
-        """Decide if adding or subtracting qty"""
-        self.filled_time = self.timestamp
-        self.filled.emit(self.qty)  # NOTE not sure if qty needed
-        self.status = OrderStatus.FILLED
-        self.detach_listener()
-
-    def cancel(self):
-        """Cancel order"""
-        self.cancelled.emit()
-        self.status = OrderStatus.CANCELLED
-        self.detach_listener()
-
-    # def timeout(self):
-    #     """Emit timeout signal"""
-    #     # self.cancel()
-    #     self.timedout.emit(self)
-
-    def ordtype_str(self):
-        # v sketch
-        if self.filled:
-            ans = 'L' if not self.marketfilled else 'M'
-        else:
-            ans = pd.NA
-
-        return ans
-
-    def set_name(self, name):
-        self.name = name
-        self.set_key()
-
-    def set_key(self):
-        side = self.side if self.trade is None else self.trade.side
-
-        self.key = f.key(self.symbolbitmex, self.name, side, self.ordtype)
-        self.clOrdID = '{}-{}'.format(self.key, int(time()))
-
-    def set_live_data(self, exec_inst: list = None):
-        """Add exec inst to order for live trading
-        - TODO haven't tested this at all, needs to be fixed for live trading
-        """
-        if exec_inst is None:
-            exec_inst = []
-
-        if not isinstance(exec_inst, list):
-            exec_inst = [exec_inst]
-
-        if self.ordtype == 'Limit':
-            self.exec_inst.append('ParticipateDoNotInitiate')
-        if 'stop' in self.name:
-            self.exec_inst.append('IndexPrice')
-        if 'close' in self.name:
-            self.exec_inst.append('Close')
-
-    def stoppx(self):
-        return self.price * (1 + self.slippage * self.side)
-
-    def rescale_contracts(self, balance, conf=1):
-        self.qty = int(conf * f.get_contracts(
-            xbt=balance,
-            leverage=self.trade.strat.lev,
-            entry_price=self.price,
-            side=self.side,
-            isaltcoin=self.bm.altstatus))
-
-    def intake_live_data(self, livedata):
-        self.livedata = livedata
-        self.orderID = livedata['orderID']
-
-    def append_execinst(self, m):
-        if self.exec_inst:
-            if isinstance(self.exec_inst, list):
-                m['execInst'] = ','.join(self.exec_inst)
-            else:
-                m['execInst'] = self.exec_inst
-
-        return m
-
-    def amend_order(self):
-        m = {}
-        m['orderID'] = self.orderID
-        m['symbol'] = self.bm.symbolbitmex
-        m['orderQty'] = self.qty
-        m = self.append_execinst(m)
-
-        with f.Switch(self.ordtype) as case:
-            if case('Limit'):
-                m['price'] = self.price
-            elif case('Stop'):
-                m['stopPx'] = self.price
-
-        return m
+    def is_cancelled(self):
+        return self.status == OrderStatus.CANCELLED
 
     @property
     def is_limit(self) -> bool:
@@ -198,6 +70,16 @@ class Order(Observer, metaclass=ABCMeta):
     @property
     def is_stop(self) -> bool:
         return self.order_type == OrderType.STOP
+
+    @property
+    def trigger_switch(self):
+        """Switch to determine direction to sort for checking order price"""
+        if self.is_limit:
+            return 1
+        elif self.is_market:
+            return None
+        elif self.is_stop:
+            return -1
 
     @property
     def trigger_direction(self) -> int:
@@ -222,6 +104,14 @@ class Order(Observer, metaclass=ABCMeta):
         else:
             return (-1, float('-inf'))
 
+    # def rescale_contracts(self, balance, conf=1):
+    #     self.qty = int(conf * f.get_contracts(
+    #         xbt=balance,
+    #         leverage=self.trade.strat.lev,
+    #         entry_price=self.price,
+    #         side=self.side,
+    #         isaltcoin=self.bm.altstatus))
+
     def dict_stats(self) -> dict:
 
         return dict(
@@ -236,55 +126,249 @@ class Order(Observer, metaclass=ABCMeta):
         )
 
     def to_dict(self) -> dict:
+        ts = self.timestamp.strftime('%Y-%m-%d %H') if not self.timestamp is None else None
 
         return dict(
             # order_id=self.order_id,
-            ts=self.timestamp,
+            ts=ts,
             symbol=self.symbol,
             order_type=str(self.order_type),
             qty=f'{self.qty:+.0f}',
             price=self.price,
             status=self.status,
-            name=self.name
+            name=self.name)
+
+    def as_bitmex(self) -> 'BitmexOrder':
+        """Convert to BitmexOrder"""
+        return BitmexOrder.from_base_order(order=self)
+
+
+class BitmexOrder(BaseOrder, DictRepr, Serializable):
+    """Class to represent bitmex live-trading orders"""
+    order_type = ''
+
+    # dict to convert bitmex keys
+    m_conv = dict(
+        order_type='ordType',
+        status='ordStatus',
+        order_id='orderID',
+        qty='orderQty',
+        price='price',
+        stop_px='stopPx',
+        symbol='symbol',
+        key='clOrdID',
+        exec_inst='execInst',
+        timestamp='transactTime',
+        name='name',
+    )
+
+    def __init__(
+            self,
+            order_type: str,
+            status: str = None,
+            order_spec_raw: dict = None,
+            order_id: str = None,
+            timestamp: dt = None,
+            key: str = None,
+            **kw):
+        super().__init__(**kw)
+
+        order_type = OrderType(order_type)
+        status = OrderStatus(status or 'new')
+        is_bitmex = True
+
+        f.set_self(vars(), exclude=('order_spec',))
+
+    @classmethod
+    def from_dict(cls, order_spec: dict) -> 'BitmexOrder':
+        """Create order from bitmex order spec dict"""
+        m = {k: order_spec.get(cls.m_conv[k]) for k in cls.m_conv}
+        return cls(**m, order_spec_raw=order_spec)
+
+    @classmethod
+    def from_base_order(cls, order: 'Order') -> 'BitmexOrder':
+        """Create bitmex order from base order
+        - used to get final/expected orders from strategy and submit/amend
+        """
+
+        return cls(
+            order_type=order.order_type,
+            price=order.price,
+            symbol=order.symbol,
+            qty=order.qty,
+            name=order.name
         )
 
-    def new_order(self) -> dict:
-        m = {}
-        m['symbol'] = self.symbolbitmex
-        m['orderQty'] = self.qty
-        m['clOrdID'] = self.clOrdID
-        m['ordType'] = self.ordtype
-        m = self.append_execinst(m)
+    @property
+    def exec_inst(self):
+        # TODO will probably need to allow adding extra exec_inst specs
+        lst = []
+        if self.is_limit:
+            # prevents order from market filling if wrong side or price
+            lst.append('ParticipateDoNotInitiate')
 
-        with f.Switch(self.ordtype) as case:
-            if case('Limit'):
-                m['price'] = self.price
-            elif case('Stop'):
-                m['stopPx'] = self.price
-            elif case('Market'):
-                m['ordType'] = self.ordtype
+        if self.is_stop:
+            lst.append('IndexPrice')
 
-        return m
+        # NOTE kinda sketch
+        if 'close' in self.name:
+            lst.append('Close')
+
+        return lst
+
+    @property
+    def exec_inst_str(self):
+        return ','.join(self.exec_inst)
+
+    def __json__(self):
+        """Return order spec dict to make json serializeable"""
+        return self.order_spec
+
+    @property
+    def order_spec(self) -> dict:
+        """Create order spec dict to submit to bitmex
+        - TODO need to include order_id when ammending order
+        - NOTE could make this static only when vals change?
+        """
+        m = dict(
+            order_id=self.order_id,
+            symbol=self.symbol.upper(),
+            order_type=str(self.order_type).title(),
+            qty=self.qty,
+            key=self.key,
+            exec_inst=self.exec_inst_str
+        )
+
+        # market order doesn't have price
+        # stop needs stopPx only
+        if self.is_limit:
+            m['price'] = self.price
+        elif self.is_stop:
+            m['stop_px'] = self.price
+
+        # convert back to bitmex keys
+        return {self.m_conv.get(k, k): v for k, v in m.items() if not v is None}
+
+    @property
+    def order_spec_amend(self) -> dict:
+        """Subset of order_spec for amending only"""
+        keys = ('orderID', 'symbol', 'orderQty', 'price')
+        return {k: v for k, v in self.order_spec.items() if k in keys}
+
+    def raw_spec(self, key: str):
+        """Return val from raw order spec"""
+        if self.order_spec_raw:
+            try:
+                return self.order_spec_raw[key]
+            except KeyError:
+                log.warning(f'key "{key}" doesn\'t exist in order_spec_raw')
+                return None
+        else:
+            raise AttributeError('order_spec_raw not set.')
+
+    @property
+    def name(self):
+        if self._name == '':
+            self._name = 'temp'
+
+        return self._name
+
+    @name.setter
+    def name(self, val):
+        self._name = str(val).lower()
+
+    @property
+    def key_ts(self):
+        if not hasattr(self, '_key_ts'):
+            self._key_ts = int(time.time())
+
+        return self._key_ts
+
+    @key_ts.setter
+    def key_ts(self, val):
+        if not (val.isnumeric() and len(val) == 10):
+            raise ValueError(f'Key timestamp incorrect value: "{val}"')
+
+        self._key_ts = val
+
+    @property
+    def key(self):
+        """Create key for clOrdID from params"""
+        return '{}-{}'.format(
+            f.key(self.symbol, self.name, self.side, self.order_type),
+            self.key_ts)
+
+    @key.setter
+    def key(self, val):
+        """Only set key_ts"""
+        if not val is None:
+            self.key_ts = val.split('-')[-1]
+
+
+class Order(BaseOrder, Observer, metaclass=ABCMeta):
+    """Order base to simulate backtests"""
+
+    def __init__(
+            self,
+            order_id: str = None,
+            timeout: int = float('inf'),
+            **kw):
+
+        super().__init__(**kw)
+        Observer.__init__(self)
+
+        filled = SignalEvent(int)
+        cancelled = SignalEvent()
+        # ammended = SignalEvent(float)
+        timedout = SignalEvent(object)
+
+        # give order unique id
+        if order_id is None:
+            order_id = str(uuid.uuid1())
+
+        status = OrderStatus.PENDING
+
+        f.set_self(vars())
+
+    @property
+    def is_expired(self):
+        """Check if order has reached its timeout duration"""
+        return self.duration >= self.timeout
+
+    def step(self):
+        """Check if execution price hit and fill"""
+        if self.is_expired:
+            self.timedout.emit(self)
+
+    def fill(self):
+        """Decide if adding or subtracting qty"""
+        self.filled_time = self.timestamp
+        self.filled.emit(self.qty)  # NOTE not sure if qty needed
+        self.status = OrderStatus.FILLED
+        self.detach_from_parent()
+
+    def cancel(self):
+        """Cancel order"""
+        self.cancelled.emit()
+        self.status = OrderStatus.CANCELLED
+        self.detach_from_parent()
+
+    def stoppx(self):
+        return self.price * (1 + self.slippage * self.side)
 
 
 class LimitOrder(Order):
     """Limit order which can be set at price and wait to be filled"""
-    trigger_switch = 1
     order_type = OrderType.LIMIT
-
-    # def __init__(self, **kw):
-    #     super().__init__(**kw)
 
     @classmethod
     def example(cls):
-        return cls(qty=1000, price=8888)
+        return cls(qty=-1000, price=8888)
 
 
 class MarketOrder(Order):
     """Market order which will be executed immediately"""
-    trigger_switch = None
     order_type = OrderType.MARKET
-    # price = None
 
     def __init__(self, price: float = None, **kw):
         super().__init__(price=price, **kw)
@@ -292,11 +376,7 @@ class MarketOrder(Order):
 
 class StopOrder(Order):
     """Stop order which can be used to ender or exit positions"""
-    trigger_switch = -1
     order_type = OrderType.STOP
-
-    # def __init__(self, **kw):
-    #     super().__init__(**kw)
 
 
 def make_order(order_type: 'OrderType', **kw) -> Order:
@@ -319,17 +399,40 @@ def make_order(order_type: 'OrderType', **kw) -> Order:
     return cls(**kw)
 
 
-def make_orders(order_specs: list, **kw) -> list:
+def make_orders(order_specs: list, as_bitmex: bool = False, **kw) -> list:
     """Make multiple orders
 
     Parameters
     ----------
     order_specs : list
         list of order_specs dicts
+    as_bitmex : bool
+        convert to bitmex orders or not
 
     Returns
     -------
     list
         list of initialized Order objects
     """
-    return [make_order(**order_spec, **kw) for order_spec in order_specs]
+    orders = [make_order(**order_spec, **kw) for order_spec in order_specs]
+
+    if as_bitmex:
+        orders = [o.as_bitmex() for o in orders]
+
+    return orders
+
+
+def make_bitmex_orders(order_specs: list) -> List[BitmexOrder]:
+    """Create multiple bitmex orders from list of dicts
+
+    Parameters
+    ----------
+    order_specs : list
+        list of dicts, usually comes as response from bitmex
+
+    Returns
+    -------
+    List[BitmexOrder]
+    """
+
+    return [BitmexOrder.from_dict(order_spec) for order_spec in order_specs]
