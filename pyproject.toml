@@ -44,10 +44,14 @@ azure-functions = "^1.7.0"
 pytest = "^6.2.4"
 flake8 = "^3.9.2"
 autopep8 = "^1.5.7"
+isort = "^5.8.0"
 
 [tool.pytest.ini_options]
 testpaths = [
-    "tests"
+    "tests"]
+filterwarnings = [
+    "ignore:`np.long` is a deprecated",
+    "ignore:.*format is not registered"
 ]
 
 [build-system]
