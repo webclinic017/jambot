@@ -103,7 +103,7 @@ class Strategy(bt.Strategy):
 
         # stopbuy
         qty = f.get_contracts(
-            u.totalbalancewallet * weight,
+            u.total_balance_wallet * weight,
             self.lev,
             price,
             -1 * side,

@@ -1,11 +1,13 @@
-# General Functions module - don't rely on any other modules from jambot
+"""General Functions module - don't rely on any other modules from jambot"""
+
 import json
 import os
+import time
 from datetime import datetime as dt
 from datetime import timedelta as delta
 from pathlib import Path
 from sys import platform
-from time import time
+from typing import Iterable
 
 import pandas as pd
 import pyodbc
@@ -16,6 +18,14 @@ from pypika import functions as fn
 
 global topfolder
 topfolder = Path(__file__).parent
+
+
+def as_list(items: Iterable):
+    """Convert single item to list"""
+    if not isinstance(items, list):
+        items = [items]
+
+    return items
 
 
 def set_self(m, prnt=False, exclude=()):
@@ -68,7 +78,7 @@ def time_format(hrs=False, mins=False, secs=False):
 
 
 def print_time(start):
-    end = time()
+    end = time.time()
     duration = end - start
     if duration < 60:
         ans = '{:.3f}s'.format(duration)
@@ -142,6 +152,7 @@ def useful_keys(orders):
     # return only useful keys from bitmex orders in dict form
     keys = ('symbol', 'clOrdID', 'side', 'price', 'stopPx', 'ordType',
             'execInst', 'ordStatus', 'qty', 'name', 'manual', 'orderID')
+
     if not isinstance(orders, list):
         islist = False
         orders = [orders]

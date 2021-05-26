@@ -1,8 +1,8 @@
+from ... import signals as sg
 from .. import backtest as bt
-from .. import functions as f
-from .. import signals as sg
 from ..orders import Order
 from ..trade import Trade
+from .__init__ import *
 from .base import StrategyBase
 
 
@@ -99,7 +99,7 @@ class Strategy(StrategyBase):
         symbol = self.bm.symbolbitmex
         balance = u.balance() * weight
         pos = bt.Position(qty=u.get_position(symbol)['currentQty'])
-        pos.add_order(u.get_orders(symbol=symbol, manualonly=True))
+        pos.add_order(u.get_orders(symbol=symbol, manual_only=True))
 
         t_prev = self.trades[-2]
         t_current = self.trades[-1]

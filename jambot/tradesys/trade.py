@@ -209,7 +209,7 @@ class Trade(Observer):
             self.status = TradeStatus.CLOSED
             self.exit_balance = self.wallet.balance
             # self.closed.emit()
-            self.detach_listener()
+            self.detach_from_parent()
 
     def pnl_maxmin(self, maxmin, firstonly=False):
         return f.get_pnl(self.side, self.entry_price, self.extremum(self.side * maxmin, firstonly))

@@ -92,7 +92,7 @@ class Strategy(bt.Strategy):
 
     def final_orders(self, u, weight):
         lstOrders = []
-        balance = u.totalbalancewallet * weight
+        balance = u.total_balance_wallet * weight
         remainingcontracts = u.get_position(self.bm.symbolbitmex)['currentQty']
         # print(remainingcontracts)
 

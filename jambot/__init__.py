@@ -5,18 +5,26 @@ from typing import *
 
 from icecream import ic
 
+try:
+    from IPython.display import display
+except ModuleNotFoundError:
+    pass
+
 ic.configureOutput(prefix='')
 
-azure_env = os.getenv('AZURE_FUNCTIONS_ENVIRONMENT')
+AZURE_ENV = os.getenv('AZURE_FUNCTIONS_ENVIRONMENT')
+SYMBOL = 'XBTUSD'
 
-if not (azure_env or 'linux' in sys.platform):
+if not (AZURE_ENV or 'linux' in sys.platform):
     # when not running from packaged app, import all libraries for easy access in interactive terminal
     import cProfile
     import json
+    import time
+    from collections import defaultdict as dd
     from datetime import datetime as dt
     from datetime import timedelta as delta
+    from datetime import timezone as tz
     from pathlib import Path
-    from time import time
     from timeit import Timer
 
     import numpy as np

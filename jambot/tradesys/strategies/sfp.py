@@ -1,6 +1,7 @@
+from ... import signals as sg
 from .. import backtest as bt
-from .. import functions as f
-from .. import signals as sg
+from ..orders import Order
+from ..trade import Trade
 from .__init__ import *
 from .base import StrategyBase
 
@@ -54,8 +55,7 @@ class Strategy(StrategyBase):
 
             c = self.df.iloc[i]
 
-        cdl = Candle(row=c)
-        self.cdl = cdl
+        cdl = self.c
         stypes = self.stypes
         sfp = []
 
@@ -122,7 +122,7 @@ class Strategy(StrategyBase):
                 self.enter_trade(side=swingtype * -1, price=c.Close, c=c)
 
 
-class Trade(bt.Trade):
+class SFPTrade(Trade):
     def __init__(self):
         super().__init__()
 
