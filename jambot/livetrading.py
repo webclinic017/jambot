@@ -94,9 +94,9 @@ def refresh_gsheet_balance(u=None):
         if row.symbolshort in lst:
             syms.append(bt.BacktestManager(symbol=row.symbol, row=row))
 
-    if u is None:
-        u = User()
-    write_balance_google(syms, u, sht=sht, ws=ws, df=df)
+    # if u is None:
+    #     u = User()
+    # write_balance_google(syms, u, sht=sht, ws=ws, df=df)
 
 
 def check_sfp(df):
@@ -134,7 +134,8 @@ def check_sfp(df):
 
 def check_filled_orders(minutes=5, refresh=True, u=None):
     if u is None:
-        u = User()
+        # u = User()
+        u = None
     starttime = dt.utcnow() + delta(minutes=minutes * -1)
     orders = u.get_filled_orders(starttime=starttime)
 
@@ -266,7 +267,9 @@ def run_toploop(u=None, partial=False, dfall=None):
 
     # Bitmex - get user/position info
     if u is None:
-        u = User()
+        # u = User()
+        u = None
+
     u.set_positions()
     u.set_orders()
     u.reservedbalance = g_user['Reserved Balance']  # could just pass g_user to User()
