@@ -1,27 +1,9 @@
 from abc import ABCMeta, abstractmethod
 
+from ..common import DictRepr
 from .__init__ import *
 
 log = getlog(__name__)
-
-
-class DictRepr(object):
-    """Class to add better string rep with to_dict"""
-
-    def to_dict_str(self):
-        """TODO func to convert values of output dicts to string reprs based on dtype"""
-        pass
-
-    def __str__(self) -> str:
-        data = []
-
-        if hasattr(self, 'to_dict'):
-            data = ['{}={}'.format(k, v) for k, v in self.to_dict().items()]
-
-        return '<{}: {}>'.format(self.__class__.__name__, ', '.join(data))
-
-    def __repr__(self) -> str:
-        return str(self)
 
 
 class SignalEvent(object):
@@ -133,7 +115,7 @@ class Observer(DictRepr, metaclass=ABCMeta):
         obj.timestamp_start = self.timestamp
         obj.on_attach()
 
-    def detach_listener(self) -> None:
+    def detach_from_parent(self) -> None:
         """Detach self from parent's listeners"""
         if not self.parent is None:
             self.parent.listeners.remove(self)
