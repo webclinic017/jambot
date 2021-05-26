@@ -301,7 +301,7 @@ class BitmexOrder(BaseOrder, DictRepr, Serializable):
     @key.setter
     def key(self, val):
         """Only set key_ts"""
-        if not val is None:
+        if not val in ('', None):
             self.key_ts = val.split('-')[-1]
 
 
