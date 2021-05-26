@@ -54,6 +54,10 @@ filterwarnings = [
     "ignore:.*format is not registered"
 ]
 
+[tool.pyright]
+include = ["jambot", "tests"]
+ignore = ["working"]
+
 [build-system]
 requires = ["poetry-core>=1.0.0"]
 build-backend = "poetry.core.masonry.api"
