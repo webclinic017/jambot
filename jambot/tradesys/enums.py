@@ -1,26 +1,42 @@
-from enum import Enum, IntEnum
+# from enum import Enum, IntEnum
+from aenum import IntEnum, MultiValueEnum
 
 
-class OrderType(Enum):
-    """Enum for type of order (better readability)"""
+class CaseInsensitiveEnum(MultiValueEnum):
+    """Base enum to allow initialization with any case string"""
+
+    @classmethod
+    def _missing_(cls, name):
+        """Find matching member when case insensitve or multiple values"""
+        for member in cls:
+            if any(val.lower() == str(name).lower() for val in member.values):
+                return member
+
+    def __str__(self):
+        return str(self.value)
+
+
+class OrderType(CaseInsensitiveEnum):
+    """Enum for type of order"""
     LIMIT: str = 'limit'
     MARKET: str = 'market'
     STOP: str = 'stop'
 
-    def __str__(self):
-        return str(self.value)
 
-
-class OrderStatus(Enum):
-    """An enumeration for the status of an order."""
+class OrderStatus(CaseInsensitiveEnum):
+    """Enum for the status of an order"""
 
     PENDING: str = 'pending'
-    OPEN: str = 'open'
-    CANCELLED: str = 'cancelled'
+    OPEN: str = 'open', 'new'
+    CANCELLED: str = 'cancelled', 'canceled'
     FILLED: str = 'filled'
 
-    def __str__(self):
-        return str(self.value)
+
+class TradeStatus(CaseInsensitiveEnum):
+    """Enum for trade status"""
+    PENDING: str = 'pending'  # no orders filled yet
+    OPEN: str = 'open'  # first order filled
+    CLOSED: str = 'closed'  # all orders filled
 
 
 class TradeSide(IntEnum):
@@ -28,16 +44,6 @@ class TradeSide(IntEnum):
     LONG = 1
     NEUTRAL = 0
     SHORT = -1
-
-    def __str__(self):
-        return str(self.value)
-
-
-class TradeStatus(Enum):
-    """Enum for trade status"""
-    PENDING: str = 'pending'  # no orders filled yet
-    OPEN: str = 'open'  # first order filled
-    CLOSED: str = 'closed'  # all orders filled
 
     def __str__(self):
         return str(self.value)
