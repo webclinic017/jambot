@@ -35,5 +35,5 @@ __pycache__/
 *.py[cod]
 *$py.class
 Jambot.zip
-df.csv
+*df.csv
 *.pkl
