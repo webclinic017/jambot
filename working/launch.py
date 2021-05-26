@@ -8,7 +8,6 @@ if True:
     from datetime import datetime as dt
     from datetime import timedelta as delta
     from pathlib import Path
-    from time import time
     from timeit import Timer
 
     import numpy as np

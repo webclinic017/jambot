@@ -262,10 +262,17 @@ n_smooth = 6
 rolling_col = 'proba_long' if not regression else 'y_pred'
 
 if True:
-    df_pred = mm.add_predict_iter(df=df, name=name, pipe=mm.pipes[name], batch_size=24 * 2, max_train_size=None, regression=regression) \
+    df_pred = mm \
+        .add_predict_iter(
+            df=df,
+            name=name,
+            pipe=mm.pipes[name],
+            batch_size=24 * 2,
+            max_train_size=None,
+            regression=regression) \
         .pipe(sg.add_ema, p=n_smooth, c=rolling_col, col='rolling_proba') \
         .assign(
-        signal=lambda x: np.sign(np.diff(np.sign(x.rolling_proba - 0.5), prepend=np.array([0])))) \
+            signal=lambda x: np.sign(np.diff(np.sign(x.rolling_proba - 0.5), prepend=np.array([0])))) \
         .fillna(0)
     # df_pred = df_pred \
     #     .assign(rolling_proba=lambda x: x[rolling_col].rolling(n_smooth).mean())
