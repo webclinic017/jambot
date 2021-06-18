@@ -19,7 +19,9 @@ ic.configureOutput(prefix='')
 
 colors = dict(
     lightblue='#6df7ff',
-    lightred='#ff6d6d'
+    lightred='#ff6d6d',
+    darkgrey='#a0a0a0',
+    lightyellow='#FFFFCC'
 )
 
 
@@ -306,9 +308,9 @@ def trades(df, name, **kw):
 
     for name, (side, color) in m.items():
         df2 = df[df.trade_side == side]
-        m2 = {'': opr.gt, '-open': opr.lt}
+        oprs = [('', opr.gt), ('-open', opr.lt), ('-open', opr.eq)]
 
-        for shape_suff, op in m2.items():
+        for shape_suff, op in oprs:
             df3 = df2[op(df2.trade_pnl, 0)]
 
             # set hover label
@@ -319,6 +321,9 @@ def trades(df, name, **kw):
                 df3.trade_exit.apply(fmt, y='exit') + '<br>' + \
                 df3.trade_pnl.apply(lambda x: f'pnl: {x:.2%}') + '<br>' + \
                 df3.dur.apply(lambda x: f'dur: {x:.0f}')
+
+            if op is opr.eq:
+                color = colors['lightyellow']
 
             trace = go.Scatter(
                 name='trades',
