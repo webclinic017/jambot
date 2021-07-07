@@ -10,10 +10,17 @@ class DictRepr(object, metaclass=ABCMeta):
         pass
 
     def __str__(self) -> str:
+        """Create string representation of self from dict or list of strings"""
         data = []
 
         if hasattr(self, 'to_dict'):
-            data = ['{}={}'.format(k, v) for k, v in self.to_dict().items()]
+            m = self.to_dict()
+
+            # convert list to dict of self items
+            if isinstance(m, (list, tuple)):
+                m = {k: getattr(self, k) for k in m}
+
+            data = ['{}={}'.format(k, v) for k, v in m.items()]
 
         return '<{}: {}>'.format(self.__class__.__name__, ', '.join(data))
 
@@ -35,12 +42,14 @@ class Serializable(dict, metaclass=ABCMeta):
         return obj
 
     @abstractmethod
-    def __json__(self):
+    def __json__(self) -> dict:
         """Return a dict representation of self"""
         raise NotImplementedError('Must specify a "__json__" method.')
 
-    def items(self):
+    def items(self) -> dict:
+        """Called by json.dumps"""
         return self.__json__().items()
 
-    def to_json(self):
+    def to_json(self) -> str:
+        """Json dump self to string"""
         return json.dumps(self)
