@@ -13,7 +13,8 @@ Publish
 project.lock.json
 
 /App_Data
-jambot/data/ApiKeys/
+jambot/_res/secrets
+jambot/_unencrypted
 /docs/.exclude
 appsettings.json
 local.settings.json
