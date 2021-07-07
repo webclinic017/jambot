@@ -132,6 +132,9 @@ class Broker(Observer):
             elif order.is_expired:
                 self.cancel_order(order)
 
+                # NOTE not sure if broker should be the one to do this
+                order.timedout.emit(order)
+
     @property
     def df_orders(self):
         data = [o.dict_stats() for o in self.all_orders.values()]
