@@ -5,10 +5,11 @@ import warnings
 from bitmex import bitmex
 from swagger_spec_validator.common import SwaggerValidationWarning
 
-from ..tradesys import orders as ords
-from ..tradesys.orders import BitmexOrder
-from .__init__ import *
-from .exchange import Exchange
+from jambot.exchanges.exchange import Exchange
+from jambot.tradesys import orders as ords
+from jambot.tradesys.__init__ import *
+from jambot.tradesys.orders import BitmexOrder
+from jambot.utils.secrets import SecretsManager
 
 log = getlog(__name__)
 warnings.filterwarnings('ignore', category=Warning, message='.*format is not registered')
@@ -45,7 +46,8 @@ class Bitmex(Exchange):
 
     def load_creds(self, user: str):
         """Load creds from csv"""
-        df = pd.read_csv(f.topfolder / 'data/ApiKeys/bitmex.csv', index_col='user')
+        df = SecretsManager('bitmex.csv').load \
+            .set_index('user')
 
         if not user in df.index:
             raise RuntimeError(f'User "{user}" not in saved credentials.')

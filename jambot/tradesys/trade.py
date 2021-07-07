@@ -45,6 +45,12 @@ class Trade(Observer):
         self._side = TradeSide(val)
 
     @property
+    def side_planned(self):
+        """Get "theoretical" side of trade if all entry orders had filled"""
+        # NOTE kinda sketchy, just assume first order added was the side we wanted for now
+        return self.orders[0].side
+
+    @property
     def is_pending(self):
         return self.status == TradeStatus.PENDING
 
@@ -224,7 +230,7 @@ class Trade(Observer):
 
     def to_dict(self):
         return dict(
-            side=self.side,
+            side=self.side_planned,
             qty=sum(o.qty for o in self.entry_orders),
             entry_price=f'{self.entry_price:_.0f}',
             exit_price=f'{self.exit_price:_.0f}',
@@ -234,7 +240,7 @@ class Trade(Observer):
         """Dict of statistics, useful for creating a df of all trades"""
         return dict(
             timestamp=self.timestamp_start,
-            side=self.side,
+            side=self.side_planned,
             dur=self.duration,
             entry=self.entry_price,
             exit=self.exit_price,

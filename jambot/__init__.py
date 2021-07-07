@@ -3,19 +3,20 @@ import os
 import sys
 from typing import *
 
-from icecream import ic
-
 try:
+    from icecream import ic
     from IPython.display import display
+    ic.configureOutput(prefix='')
 except ModuleNotFoundError:
     pass
 
-ic.configureOutput(prefix='')
 
-AZURE_ENV = os.getenv('AZURE_FUNCTIONS_ENVIRONMENT')
+# Set environments
+AZURE_LOCAL = not os.getenv('AZURE_FUNCTIONS_ENVIRONMENT') is None
+AZURE_WEB = not os.getenv('WEBSITE_SITE_NAME') is None
 SYMBOL = 'XBTUSD'
 
-if not (AZURE_ENV or 'linux' in sys.platform):
+if not (AZURE_WEB or 'linux' in sys.platform):
     # when not running from packaged app, import all libraries for easy access in interactive terminal
     import cProfile
     import json
@@ -34,12 +35,6 @@ if not (AZURE_ENV or 'linux' in sys.platform):
     import sqlalchemy as sa
     import yaml
     from joblib import Parallel, delayed
-
-    # from . import (
-    #     functions as f,
-    #     livetrading as live,
-    #     backtest as bt)
-    # from .database import db
 
 
 def getlog(name: str):

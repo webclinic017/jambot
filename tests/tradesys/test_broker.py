@@ -3,10 +3,6 @@ from jambot.tradesys.broker import Broker
 
 from .__init__ import *
 
-# from .test_orders import orders
-
-# @mark.usefixtures('order')
-
 
 def test_boker(orders):
     """Test broker submits and sorts orders correctly"""

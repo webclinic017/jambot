@@ -26,7 +26,7 @@ class BacktestManager(Clock):
         # if not isinstance(strats, list): strats = [strats]
 
         # if row is None:
-        #     dfsym = pd.read_csv(f.topfolder / 'data/symbols.csv')
+        #     dfsym = pd.read_csv(f.p_res / 'symbols.csv')
         #     dfsym = dfsym[dfsym['symbol'] == symbol]
         #     row = list(dfsym.itertuples())[0]
 
@@ -116,11 +116,13 @@ class BacktestManager(Clock):
             drawdown=drawdown,
             # period=drawdates,
             tpd=strat.tpd,
+            lev=strat.lev,
             good=strat.good_trades,
             filled=strat.num_trades_filled,
             total=strat.num_trades
         )
 
+        # only count "good" as pct of filled trades, ignore unfilled
         return pd.DataFrame. \
             from_dict(data, orient='index').T \
             .assign(good_pct=lambda x: x.good / x.filled)

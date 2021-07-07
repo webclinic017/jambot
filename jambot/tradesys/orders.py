@@ -279,6 +279,7 @@ class BitmexOrder(BaseOrder, DictRepr, Serializable):
 
     @property
     def key_ts(self):
+        """Timestamp to make key unique (bitmex rejects duplicate clOrdIds)"""
         if not hasattr(self, '_key_ts'):
             self._key_ts = int(time.time())
 
@@ -336,9 +337,11 @@ class Order(BaseOrder, Observer, metaclass=ABCMeta):
         return self.duration >= self.timeout
 
     def step(self):
-        """Check if execution price hit and fill"""
-        if self.is_expired:
-            self.timedout.emit(self)
+        """"""
+        pass
+        # if self.is_expired:
+        #     print('TIMED OUT')
+        #     self.timedout.emit(self)
 
     def fill(self):
         """Decide if adding or subtracting qty"""

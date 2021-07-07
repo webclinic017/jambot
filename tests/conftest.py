@@ -21,7 +21,6 @@ def set_fixture_modules():
 
 
 pytest_plugins = set_fixture_modules()
-print(pytest_plugins)
 
 skip_github = mark.skipif(
     'GITHUB_ACTIONS' in os.environ,

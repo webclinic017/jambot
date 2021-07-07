@@ -89,7 +89,8 @@ def refresh_gsheet_balance(u=None):
     lst = list(df['Sym'].dropna())
     syms = []
 
-    df2 = pd.read_csv(os.path.join(f.topfolder, 'data/symbols.csv'))
+    p = f.p_res / 'symbols.csv'
+    df2 = pd.read_csv(p)
     for row in df2.itertuples():
         if row.symbolshort in lst:
             syms.append(bt.BacktestManager(symbol=row.symbol, row=row))
@@ -140,7 +141,8 @@ def check_filled_orders(minutes=5, refresh=True, u=None):
     orders = u.get_filled_orders(starttime=starttime)
 
     if orders:
-        df = pd.read_csv(Path(f.topfolder) / 'data/symbols.csv')
+        p = f.p_res / 'symbols.csv'
+        df = pd.read_csv(p)
 
         lst, syms, templist = [], [], []
         nonmarket = False
@@ -261,7 +263,8 @@ def run_toploop(u=None, partial=False, dfall=None):
     # Google - get user/position info
     sht = f.get_google_sheet()
     g_usersettings = sht.worksheet_by_title('UserSettings').get_all_records()
-    dfsym = pd.read_csv(Path(f.topfolder) / 'data/symbols.csv')
+    p = f.p_res / 'symbols.csv'
+    dfsym = pd.read_csv(p)
     g_user = g_usersettings[0]
     syms = []
 

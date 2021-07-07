@@ -13,7 +13,7 @@ from matplotlib import pyplot
 from plotly.subplots import make_subplots
 
 from . import functions as f
-from . import sklearn_helper_funcs as sf
+from . import sklearn_utils as sk
 
 ic.configureOutput(prefix='')
 

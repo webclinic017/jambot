@@ -28,7 +28,7 @@ def run_trend(symbol, startdate, df, against, wth, row, titles):
 
 def run_parallel():
     symbol = 'XBTUSD'
-    p = f.topfolder / 'data/symbols.csv'
+    p = f.p_res / 'symbols.csv'
     dfsym = pd.read_csv(p)
     dfsym = dfsym[dfsym.symbol == symbol]
     startdate, daterange = dt(2019, 1, 1), 365 * 3

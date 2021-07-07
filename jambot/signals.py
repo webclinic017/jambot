@@ -26,62 +26,8 @@ from ta.volume import (AccDistIndexIndicator, ChaikinMoneyFlowIndicator,
 
 from . import charts as ch
 from . import functions as f
-from . import sklearn_helper_funcs as sf
+from . import sklearn_utils as sk
 from .__init__ import *
-
-"""
-target classification
-- 3 classes
-- higher, lower, or same in x periods into future (10?)
-- same = (within x%, 0.5? > scale this based on daily volatility)
-- calc close price vs current price, x periods in future (rolling method)
-
-FEATURES
-- CANDLE
-    - cdl_size_full > size of total candle (% high - low) > relative to volatility
-    - cdl_size_body > size of candle body (% close - open)
-    - tail_size_low, tail_size_high > size of tails (% close - low, high - low) > scale to volatility?
-    - 200_v_high, 200_v_low > % proximity of candle low/high to 200ema
-        - close to support with large tail could mean reversal
-    - cdl_type > wether candle is red or green > (open - close)
-    - high_above_prevhigh, close_above_prevhigh
-    - low_below_prevlow, close_below_prevlow
-    - close vs mean in x periods, eg did we close at higher or lower end of current 'range'
-
-- SWING FAIL (6 cols)
-    - check 3 sfp with respect to prev rolling periods > 48, 96, 192
-    - sfp_low_48, spf_high_192 etc
-
-- EMA
-    - ema_slope > 50ema positive or neg
-    - ema_spread > % separation btwn ema50 and ema200
-    - ema_trend > wether 50ema is above 200 or not
-    - ema_conf > try it out, cant remember exactly
-- VOLATILITY
-    - vty_ema > ema of volatility (60 period rolling). should this still be normalized?
-- MACD
-    - macd_trend
-- RSI
-    - rsi (create from tech indicators or manually)
-    - stoch rsi.. not sure
-
-
-Potential ideas
-- low/high proximity to prev spikes low? > calc spikes with tsfresh?
-- number of prev spikes low, eg higher # of spikes up or down might mean support is starting to fail
-- remove all higher/lower indicators, only classify wether trend will continue or reverse?
-    - this simplifies everything, could lead to better convergence
-    - long term up/down trend may bias results otherwise, would be bad if long term trend switched
-- stacked entry > buy 1/3 every x periods > would probaly work better with trend
-
-ta lib
-
-
-drop
-- Open, High, Low, Close > don't care about absolute values
-- timestamp, just keep as index
-- drop anything still NA at beginning of series
-"""
 
 
 class SignalManager(BaseEstimator, TransformerMixin):
@@ -120,7 +66,7 @@ class SignalManager(BaseEstimator, TransformerMixin):
 
     def print_signal_params(self, **kw):
         m = self.get_signal_params(**kw)
-        sf.pretty_dict(m)
+        sk.pretty_dict(m)
 
     def get_signal_params(self, feature_names=None, **kw):
         """Return all optimizeable params from each signal feature"""
@@ -139,7 +85,12 @@ class SignalManager(BaseEstimator, TransformerMixin):
         return self.cols
         # return self.df.columns.to_list()
 
-    def add_signals(self, df, signals: list = None, signal_params: dict = None, **kw) -> pd.DataFrame:
+    def add_signals(
+            self,
+            df: pd.DataFrame,
+            signals: list = None,
+            signal_params: dict = None,
+            **kw) -> pd.DataFrame:
         """Add multiple initialized signals to dataframe"""
         # df = self.df
         if signals is None:
@@ -148,8 +99,8 @@ class SignalManager(BaseEstimator, TransformerMixin):
         # convert input dict/single str to list
         if isinstance(signals, dict):
             signals = list(signals.values())
-        if isinstance(signals, str):
-            signals = [signals]
+
+        signals = f.as_list(signals)
         signal_params = signal_params or {}
 
         # SignalGroup obj, not single column
@@ -179,7 +130,7 @@ class SignalManager(BaseEstimator, TransformerMixin):
                 else:
                     m[name].update({sig_name: ''})
 
-        sf.pretty_dict(m)
+        sk.pretty_dict(m)
 
     def replace_single_feature(self, df, feature_params: dict, **kw) -> pd.DataFrame:
         """Generator to replace single feature at a time with new values from params dict"""
@@ -300,14 +251,16 @@ class SignalGroup():
             final_signals = {f'{self.prefix}_{k}': v for k, v in final_signals.items()}
 
         # add simple rate of change for all signal columns
-        # not super useful
+        # dont add slope for any Target classes or drop_cols
         if self.add_slope and not 'target' in self.__class__.__name__.lower():
-            # dont add slope for any Target classes
             slope_signals = {
-                f'dxy_{name}': lambda x: self.make_slope(
-                    x[name].values, n_periods=self.add_slope) for name, s in final_signals.items()}
+                f'dyx_{c}': lambda x, c=c: self.make_slope(
+                    x[c].values, n_periods=self.add_slope) for c in final_signals if not c in self.drop_cols}
 
             final_signals.update(slope_signals)
+
+        # filter out signals that already exist in df
+        final_signals = {k: v for k, v in final_signals.items() if not k in df.columns}
 
         return df \
             .assign(**final_signals)
@@ -520,10 +473,20 @@ class EMA(SignalGroup):
             mla=lambda x: x.Low.rolling(wth).min().shift(offset),
             mlw=lambda x: x.Low.rolling(against).min().shift(offset),
             mln=lambda x: x.Low.rolling(neutral).min().shift(offset),
-            pxhigh=dict(row=1, func=lambda x: np.where(x.ema_trend == 0,
-                        x.mhn, np.where(x.ema_trend == 1, x.mha, x.mhw))),
-            pxlow=dict(row=1, func=lambda x: np.where(x.ema_trend == 0,
-                       x.mln, np.where(x.ema_trend == -1, x.mlw, x.mla))),
+            pxhigh=dict(row=1, func=lambda x: np.where(
+                x.ema_trend == 0,
+                x.mhn,
+                np.where(
+                    x.ema_trend == 1,
+                    x.mha,
+                    x.mhw))),
+            pxlow=dict(row=1, func=lambda x: np.where(
+                x.ema_trend == 0,
+                x.mln,
+                np.where(
+                    x.ema_trend == -1,
+                    x.mlw,
+                    x.mla))),
         )
 
         super().__init__(**kw)
@@ -680,12 +643,18 @@ class Candle(SignalGroup):
     """
 
     def __init__(self, **kw):
-
+        # TODO #5
         n_periods = 24  # used to cal relative position of close to prev range
         kw['signals'] = dict(
             cdl_side=lambda x: np.where(x.Close > x.Open, 1, -1),
-            cdl_size_full=lambda x: np.abs(x.High - x.Low) / x.Open,
-            cdl_size_body=lambda x: np.abs(x.Close - x.Open) / x.Open,
+            # cdl_size_full=lambda x: np.abs(x.High - x.Low) / x.Open,
+            # cdl_size_body=lambda x: np.abs(x.Close - x.Open) / x.Open,
+            cdl_size_full=lambda x: (x.High - x.Low) / x.Open,
+            cdl_size_body=lambda x: (x.Close - x.Open) / x.Open,
+            cdl_size_full_rel=lambda x: relative_self(x.cdl_size_full, n=n_periods),
+            cdl_size_body_rel_6=lambda x: relative_self(x.cdl_size_body, n=6),
+            cdl_size_body_rel_12=lambda x: relative_self(x.cdl_size_body, n=12),
+            cdl_size_body_rel_24=lambda x: relative_self(x.cdl_size_body, n=24),
             cdl_tail_size_high=lambda x: np.abs(x.High - x[['Close', 'Open']].max(axis=1)) / x.Open,
             cdl_tail_size_low=lambda x: np.abs(x.Low - x[['Close', 'Open']].min(axis=1)) / x.Open,
             ema200_v_high=lambda x: np.abs(x.High - x.ema200) / x.Open,
@@ -809,6 +778,24 @@ class TargetMean(TargetClass):
         f.set_self(vars())
 
 
+class TargetMaxMin(TargetClass):
+    """
+    Create two outputs - min_low, max_high
+    """
+
+    def __init__(self, n_periods, **kw):
+
+        items = [('max', 'High'), ('min', 'Low')]
+        kw['signals'] = {f'target_{fn}': lambda x, fn=fn, c=c: (
+            x[c]
+            .shift(-1 * n_periods)
+            .rolling(n_periods).__getattribute__(fn)() - x.Close) / x.Close for fn, c in items}
+
+        super().__init__(**kw)
+
+        f.set_self(vars())
+
+
 def add_emas(df, emas: list = None):
     """Convenience func to add both 50 and 200 emas"""
     if emas is None:
@@ -918,6 +905,11 @@ def _get_extrema(is_min, mom, momacc, h, window: int = 1):
     #     )
 
     return lst
+
+
+def relative_self(s: pd.Series, n: int = 24) -> pd.Series:
+    """Calculate column relative to its mean of previous n_periods"""
+    return s / np.abs(s).rolling(n).mean()
 
 # find peaks
 # is peak max of rolling previous n candles
