@@ -1,8 +1,10 @@
+code := jambot tests working
+
 .PHONY : format
 format:  ## autopep, isort, flake
-	@poetry run autopep8 --recursive --in-place jambot tests
-	@poetry run isort jambot tests
-	@poetry run flake8 jambot tests
+	@poetry run autopep8 --recursive --in-place $(code)
+	@poetry run isort $(code)
+	@poetry run flake8 $(code)
 
 .PHONY : app
 app:  ## push jambot app to azure
