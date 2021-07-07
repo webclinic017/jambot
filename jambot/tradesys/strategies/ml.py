@@ -1,8 +1,10 @@
+import warnings
+
 from sklearn.metrics import accuracy_score
 from sklearn.utils.validation import check_is_fitted
 
 from ... import signals as sg
-from ... import sklearn_helper_funcs as sf
+from ... import sklearn_utils as sk
 from ..backtest import BacktestManager
 from ..orders import LimitOrder, MarketOrder, StopOrder
 from ..trade import Trade
@@ -10,6 +12,7 @@ from .__init__ import *
 from .base import StrategyBase
 
 log = getlog(__name__)
+warnings.filterwarnings(action='ignore', category=FutureWarning)
 
 
 class Strategy(StrategyBase):
@@ -23,6 +26,7 @@ class Strategy(StrategyBase):
             num_disagree=0,
             min_agree_pct=0.8,
             regression=False,
+            market_on_timeout: bool = False,
             **kw):
         super().__init__(symbol=symbol, **kw)
 
@@ -57,17 +61,27 @@ class Strategy(StrategyBase):
     def market_open_late(self, order):
         # NOTE this is v messy still
         # limit order will have stepped forward one timestep from trade
-        self.broker.cancel(order)
+        # self.broker.cancel(order)
 
         trade = self.trade
         order = self.market_open(price=self.c.Close, side=order.side, name='market_open_late')
 
-        print(f'market_open_late - wallet balance: {self.wallet.balance:.3f}, c.Close: {self.c.Close}')
+        # print(f'market_open_late - wallet balance: {self.wallet.balance:.3f}, c.Close: {self.c.Close}')
 
         trade.add_order(order)
 
     def limit_open(self, price: float, side: int, offset: float) -> 'LimitOrder':
         """Create limit order with offset to enter"""
+
+        if hasattr(self.c, 'pred_max'):
+            minmax_col = {-1: 'pred_max', 1: 'pred_min'}.get(side)
+            offset = abs(getattr(self.c, minmax_col)) * -1 * 0.25
+
+            # minmax_col = {-1: 'target_max', 1: 'target_min'}.get(side)
+            # offset_true = abs(getattr(self.c, minmax_col)) * -1  #* 0.5
+
+            # print(round(abs(offset), 3), round(abs(offset_true), 3), offset > offset_true)
+
         limit_price = f.get_price(pnl=offset, entry_price=price, side=side)
         qty = self.wallet.available_quantity(price=limit_price)
 
@@ -78,8 +92,9 @@ class Strategy(StrategyBase):
             timeout=5,
             name='limit_open')
 
-        order.timedout.connect(self.market_open_late)
-        # print('limit added')
+        if self.market_on_timeout:
+            order.timedout.connect(self.market_open_late)
+
         return order
 
     def enter_trade(self, side: int, target_price: float):
@@ -88,14 +103,13 @@ class Strategy(StrategyBase):
         # qty = self.wallet.available_quantity(price=target_price)
 
         # order = self.market_open(target_price, side)
-        order = self.limit_open(target_price, side, -0.006)
-
+        order = self.limit_open(target_price, side, -0.005)
         trade.add_order(order)
 
     def step(self):
         # self.cdl = c
         # df = self.df
-        t = self.trade
+        # t = self.trade
         c = self.c
 
         # signal_side = c.y_pred
@@ -123,7 +137,8 @@ class StratScorer():
         """Show summary df of all backtest runs"""
         fmt = list(self.runs.values())[0].summary_format
 
-        higher = ['min', 'max', 'final', 'drawdown', 'good_pct']
+        higher = ['drawdown', 'good_pct']
+        higher_centered = ['min', 'max', 'final']  # centered at 1.0
 
         dfs = [bm.df_result for bm in self.runs.values()]
         df = pd.concat(dfs) \
@@ -131,8 +146,9 @@ class StratScorer():
 
         style = df \
             .style.format(fmt) \
-            .pipe(sf.bg, subset=higher, higher_better=True) \
-            .pipe(sf.bg, subset=['tpd'], higher_better=False)
+            .pipe(sk.bg, subset=higher, higher_better=True) \
+            .pipe(sk.bg, subset=['tpd'], higher_better=False) \
+            .apply(sk.background_grad_center, subset=higher_centered, higher_better=True, center=1.0) \
 
         df_tot = df.mean().to_frame().T
         style_tot = df_tot \
@@ -160,7 +176,7 @@ class StratScorer():
 
             df_pred = x \
                 .assign(y_pred=estimator.predict(x)) \
-                .join(sf.df_proba(df=x, model=estimator)) \
+                .join(sk.df_proba(df=x, model=estimator)) \
                 .pipe(sg.add_ema, p=n_smooth, c=rolling_col, col='rolling_proba') \
                 .assign(
                     signal=lambda x: np.sign(np.diff(np.sign(x.rolling_proba - 0.5), prepend=np.array([0])))) \
@@ -170,7 +186,8 @@ class StratScorer():
             strat = Strategy(
                 lev=3,
                 slippage=0,
-                regression=regression)
+                regression=regression,
+                market_on_timeout=False)
 
             kw_args = dict(
                 symbol='XBTUSD',
