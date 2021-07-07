@@ -2,7 +2,9 @@
 
 import json
 import os
+import pickle
 import time
+from datetime import date
 from datetime import datetime as dt
 from datetime import timedelta as delta
 from pathlib import Path
@@ -16,8 +18,43 @@ import yaml
 from dateutil.parser import parse
 from pypika import functions as fn
 
-global topfolder
-topfolder = Path(__file__).parent
+from jambot import AZURE_WEB
+from jambot.utils.secrets import SecretsManager
+
+p_proj = Path(__file__).parent  # jambot python files
+p_root = p_proj.parent  # root folter
+p_res = p_proj / '_res'
+p_sec = p_res / 'secrets'
+
+# set data dir for local vs azure
+p_data = p_root / 'data' if not AZURE_WEB else Path.home() / 'data'
+
+
+def check_path(p: Path) -> None:
+    """Create bath if doesn't exist"""
+    if not p.exists():
+        p.mkdir(parents=True)
+
+
+def left_merge(df: pd.DataFrame, df_right: pd.DataFrame) -> pd.DataFrame:
+    """Convenience func to left merge df on index
+
+    Parameters
+    ----------
+    df : pd.DataFrame
+    df_right : pd.DataFrame
+
+    Returns
+    -------
+    pd.DataFrame
+        df with df_right merged
+    """
+    return df \
+        .merge(
+            right=df_right,
+            how='left',
+            left_index=True,
+            right_index=True)
 
 
 def as_list(items: Iterable):
@@ -181,10 +218,10 @@ def col(df, col):
 
 
 def binance_creds():
-    p = topfolder / 'data/ApiKeys/binance.yaml'
+    return
+    p = p_sec / 'binance.yaml'
     with open(p) as file:
-        m = yaml.full_load(file)
-    return m
+        return yaml.full_load(file)
 
 
 def discord(msg, channel='jambot'):
@@ -192,7 +229,7 @@ def discord(msg, channel='jambot'):
     import requests
     from discord import File, RequestsWebhookAdapter, Webhook
 
-    p = Path(topfolder) / 'data/ApiKeys/discord.csv'
+    p = p_sec / 'discord.csv'
     r = pd.read_csv(p, index_col='channel').loc[channel]
     if channel == 'err':
         msg += '@here'
@@ -226,8 +263,14 @@ def send_error(msg='', prnt=False):
 # DATABASE
 def get_google_sheet():
     import pygsheets
-    p = topfolder / 'data/ApiKeys/gsheets.json'
-    return pygsheets.authorize(service_account_file=p).open('Jambot Settings')
+    from google.oauth2 import service_account
+    m = SecretsManager('gsheets.json').load
+    SCOPES = ('https://www.googleapis.com/auth/spreadsheets', 'https://www.googleapis.com/auth/drive')
+    my_credentials = service_account.Credentials.from_service_account_info(m, scopes=SCOPES)
+
+    # easiest way loading from json file
+    # return pygsheets.authorize(service_account_file=p).open('Jambot Settings')
+    return pygsheets.authorize(custom_credentials=my_credentials).open('Jambot Settings')
 
 
 def get_delta(interval=1):
@@ -235,6 +278,10 @@ def get_delta(interval=1):
         return delta(hours=1)
     elif interval == 15:
         return delta(minutes=15)
+
+
+def date_to_dt(d: date) -> dt:
+    return dt.combine(d, dt.min.time())
 
 
 def timenow(interval=1):
@@ -249,15 +296,20 @@ def round_minutes(dt, resolution):
     return dt + delta(minutes=new_minute - dt.minute)
 
 
-class Switch:
-    def __init__(self, value):
-        self.value = value
+def clean_cols(df: pd.DataFrame, cols: list) -> pd.DataFrame:
+    """Return cols if they exist in dataframe"""
+    cols = [c for c in cols if c in df.columns]
+    return df[cols]
 
-    def __enter__(self):
-        return self
 
-    def __exit__(self, type, value, traceback):
-        return False  # Allows a traceback to occur
+def save_pickle(obj: object, p: Path, name: str):
+    """Save object to pickle file"""
+    p = p / f'{name}.pkl'
+    with open(p, 'wb') as file:
+        pickle.dump(obj, file)
 
-    def __call__(self, *values):
-        return self.value in values
+
+def load_pickle(p: Path) -> object:
+    """Load pickle from file"""
+    with open(p, 'rb') as file:
+        return pickle.load(file)

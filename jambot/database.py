@@ -14,20 +14,18 @@ from pypika import CustomFunction as cf
 from pypika import Order, Query
 from pypika import functions as fn
 
-from . import functions as f
+from jambot import functions as f
+from jambot import getlog
+from jambot.exchanges.bitmex import Bitmex
+from jambot.utils.secrets import SecretsManager
 
 global db
 
-
-def get_db():
-    p = f.topfolder / 'data/ApiKeys/db.yaml'
-    with open(p) as file:
-        m = yaml.full_load(file)
-    return m
+log = getlog(__name__)
 
 
 def strConn():
-    m = get_db()
+    m = SecretsManager('db.yaml').load
     return ';'.join('{}={}'.format(k, v) for k, v in m.items())
 
 
@@ -38,6 +36,7 @@ def engine():
 
 class DB(object):
     def __init__(self):
+        log.info('Initializing database')
         self.__name__ = 'Jambot Database'
         self.df_unit = None
         self.conn = engine()
@@ -71,16 +70,17 @@ class DB(object):
              .groupby(a.Symbol, a.Interval)
              .orderby('Timestamp'))
 
-        df = pd.read_sql_query(sql=q.get_sql(), con=self.conn, parse_dates=['Timestamp'])
-        df.Interval = df.Interval.astype('int')
+        return pd \
+            .read_sql_query(
+                sql=q.get_sql(),
+                con=self.conn,
+                parse_dates=['Timestamp']) \
+            .assign(Interval=lambda x: x.Interval.astype(int))
 
-        return df
-
-    def update_all_symbols(self, u=None, interval=1):
+    def update_all_symbols(self, exch: 'Bitmex' = None, interval=1):
         lst = []
-        if u is None:
-            from .livetrading import User
-            u = User()
+        if exch is None:
+            exch = Bitmex.default(test=False, refresh=False)
 
         # loop query result, add all to dict with maxtime as KEY, symbols as LIST
         m = defaultdict(list)
@@ -93,7 +93,13 @@ class DB(object):
             if starttime < f.timenow(interval):
                 fltr = json.dumps(dict(symbol=m[maxdate]))  # filter symbols needed
 
-                dfcandles = u.get_candles(starttime=starttime, fltr=fltr, includepartial=False, interval=interval)
+                dfcandles = exch \
+                    .get_candles(
+                        starttime=starttime,
+                        fltr=fltr,
+                        includepartial=False,
+                        interval=interval)
+
                 lst.append(dfcandles)
 
         if lst:
@@ -118,17 +124,20 @@ class DB(object):
 
             startdate += delta(days=offset)
 
-        tbl = pk.Table('Bitmex')
-        q = (pk.Query.from_(tbl)
-             .select('Symbol', 'Timestamp', 'Open', 'High', 'Low', 'Close', 'VolBTC')
-             .where(tbl.Interval == interval)
-             .where(tbl.Timestamp >= startdate)
-             .orderby('Symbol', 'Timestamp'))
+        a = pk.Table('Bitmex')
+        cols = ['Symbol', 'Timestamp', 'Open', 'High', 'Low', 'Close', 'VolBTC']
+
+        q = pk.Query.from_(a) \
+            .select(*cols) \
+            .where(a.Interval == interval) \
+            .where(a.Timestamp >= startdate) \
+            .orderby('Symbol', 'Timestamp')
 
         if not symbol is None:
-            q = q.where(tbl.Symbol == symbol)
+            q = q.where(a.Symbol == symbol)
+
         if not enddate is None:
-            q = q.where(tbl.Timestamp <= enddate)
+            q = q.where(a.Timestamp <= enddate)
 
         df = pd.read_sql_query(sql=q.get_sql(), con=self.conn, parse_dates=['Timestamp']) \
             .set_index('Timestamp', drop=False)
@@ -136,5 +145,4 @@ class DB(object):
         return df
 
 
-print('{}: loading db'.format(__name__))
 db = DB()
