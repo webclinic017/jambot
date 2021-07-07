@@ -1,3 +1,9 @@
+import matplotlib.pyplot as plt
+from matplotlib import dates as mdates
+from matplotlib.collections import LineCollection
+from matplotlib.colors import BoundaryNorm, ListedColormap
+
+from ..sklearn_utils import _cmap
 from .__init__ import *
 from .base import DictRepr, Observer
 from .enums import TradeSide
@@ -291,18 +297,41 @@ class Wallet(Observer):
             .from_dict(
                 m,
                 orient='index',
-                columns=['balance']) \
-
+                columns=['balance'])
 
     def plot_balance(self, logy=True, title=None):
         """Show plot of account balance over time"""
-        self.df_balance.plot(
-            kind='line',
-            y='balance',
-            logy=logy,
-            linewidth=1,
-            title=title,
-            figsize=(12, 4))
+        df = self.df_balance
+
+        y = df.balance
+        dy = np.gradient(y)
+        _x = df.index
+        x = mdates.date2num(_x.to_pydatetime())
+        dx = np.gradient(x)
+        dydx = dy / dx
+
+        points = np.array([x, y]).T.reshape(-1, 1, 2)
+        segments = np.concatenate([points[:-1], points[1:]], axis=1)
+
+        # norm = plt.Normalize(dy.min(), dy.max())
+        norm = plt.Normalize(-0.5, 0.5)
+        lc = LineCollection(segments, cmap=_cmap.reversed(), norm=norm)
+
+        fig, ax = plt.subplots(figsize=(14, 5))
+
+        lc.set_array(dydx)
+        lc.set_linewidth(2)
+        line = ax.add_collection(lc)
+        # fig.colorbar(line, ax=ax)
+
+        ax.xaxis.set_major_locator(mdates.MonthLocator())
+        monthFmt = mdates.DateFormatter('%Y-%m-%d')
+        ax.xaxis.set_major_formatter(monthFmt)
+
+        ax.set_yscale('log')
+        ax.grid(axis='y', linewidth=0.1, which='both')
+        ax.autoscale_view()
+        plt.xticks(rotation=45)
 
     def print_txns(self):
         data = []
