@@ -9,11 +9,16 @@ class StrategyBase(Observer):
         super().__init__(**kw)
 
         trades = []
-        broker = Broker(parent_listener=self)
+        broker = Broker(self)
         wallet = broker.get_wallet(symbol)
-        wallet.lev = lev  # NOTE would prefer to init with this
+        wallet.lev = lev
 
         f.set_self(vars())
+
+    def on_attach(self):
+        """Market close last trade at end of session"""
+        self.get_parent('BacktestManager').end_session.connect(
+            lambda: self.get_trade(-1, open_only=True).market_close())
 
     def step(self):
         pass
@@ -35,9 +40,34 @@ class StrategyBase(Observer):
         return len([t for t in self.trades if abs(t.qty) > 0])
 
     @property
-    def trade(self) -> 'Trade':
+    def trade(self) -> Union['Trade', None]:
         """Return last (current) trade"""
         return self.trades[-1] if len(self.trades) > 0 else None
+
+    def get_trade(self, i: int, open_only: bool = False) -> Union['Trade', None]:
+        """Get trade by index
+
+        Parameters
+        ----------
+        i : int
+            trade index to return
+        open_only : bool, default False
+            only index trades with open orders
+
+        Returns
+        -------
+        Union['Trade', None]
+            Trade if exists
+        """
+        if open_only:
+            trades = [t for t in self.trades if t.is_open]
+        else:
+            trades = self.trades
+
+        try:
+            return trades[i]
+        except IndexError:
+            return
 
     @property
     def tpd(self):
@@ -56,6 +86,7 @@ class StrategyBase(Observer):
             broker=self.broker)
 
         self.add_trade(trade)
+        trade.trade_num = len(self.trades)
 
         return trade
 
@@ -92,14 +123,14 @@ class StrategyBase(Observer):
         style \
             .background_gradient(cmap=cmap, subset=['pnl'], vmin=-0.1, vmax=0.1) \
             .format({
-                'timestamp': '{:%Y-%m-%d %H}',
+                'timestamp': '{:%Y-%m-%d %H:%M}',
                 'qty': '{:,}',
                 'entry': price_format,
                 'exit': price_format,
                 #   'Conf': '{:.3f}',
                 'pnl': '{:.2%}',
                 #   'PnlAcct': '{:.2%}',
-                'bal': '{:.2f}'
+                'bal': '{:.2f}',
             })
 
         display(style)
@@ -112,3 +143,9 @@ class StrategyBase(Observer):
         return pd.DataFrame \
             .from_dict(data=data) \
             .assign(profitable=lambda x: x.pnl > 0)
+
+    def err_summary(self, last: int = 30) -> None:
+        self.broker.show_orders(last=last)
+        self.wallet.show_orders(last=last)
+        self.show_trades(last=last)
+        print('Time failed: ', self.timestamp)
