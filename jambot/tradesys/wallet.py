@@ -1,14 +1,17 @@
 import matplotlib.pyplot as plt
+import matplotlib.ticker as mticker
 from matplotlib import dates as mdates
 from matplotlib.collections import LineCollection
 from matplotlib.colors import BoundaryNorm, ListedColormap
+from seaborn import diverging_palette
 
-from ..sklearn_utils import _cmap
 from .__init__ import *
 from .base import DictRepr, Observer
-from .enums import TradeSide
+from .enums import OrderType, TradeSide
 from .exceptions import InsufficientBalance
 from .orders import Order
+
+_cmap = diverging_palette(240, 10, n=21, as_cmap=True)
 
 log = getlog(__name__)
 
@@ -43,8 +46,8 @@ class Wallet(Observer):
     - NOTE in future will expand this to have overall Portfolio manage multiple wallets
     """
 
-    def __init__(self, symbol: str):
-        super().__init__()
+    def __init__(self, symbol: str, **kw):
+        super().__init__(**kw)
         _balance = 1  # base instrument, eg XBT
         _default_balance = _balance
         _min_balance = 0.01
@@ -55,6 +58,9 @@ class Wallet(Observer):
         _qty = 0  # number of open qty
         _lev = 3.0
         price = 0  # entry price of current position
+        maker_fee = 0.00025
+        taker_fee = -0.00075
+        filled_orders = []
         f.set_self(vars())
 
     def step(self):
@@ -65,12 +71,22 @@ class Wallet(Observer):
         return TradeSide(np.sign(self.qty))
 
     @property
-    def qty(self):
+    def qty(self) -> int:
         return int(self._qty)
 
-    @qty.setter
-    def qty(self, val):
-        self._qty = int(val)
+    # @qty.setter
+    # def qty(self, val):
+    #     self._qty = int(val)
+    #     print(f'qty: {self._qty}')
+
+    @property
+    def qty_opp(self) -> int:
+        return self.qty * -1
+
+    @property
+    def is_zero(self) -> bool:
+        """If wallet has zero contracts open"""
+        return self.qty == 0
 
     @property
     def lev(self):
@@ -137,11 +153,17 @@ class Wallet(Observer):
             delta = self.get_profit(order.qty, price_pre, order.price)
             self.add_transaction(delta)
 
-        self.qty += order.qty
+        self._qty += order.qty
+        # print(f'order qty: {order.qty:+,.0f}, qty after fill: {self._qty:+,.0f}')
 
         if self.qty == 0:
             self.price = 0
 
+        # fees
+        fee = self.calc_fee(order.qty, order.price, order.order_type)
+        self._balance += fee
+
+        self.filled_orders.append(order)
         order.fill()
 
     def add_transaction(self, delta: float):
@@ -161,6 +183,28 @@ class Wallet(Observer):
 
         self.balance += delta
 
+    def calc_fee(self, qty: int, price: float, order_type: OrderType) -> float:
+        """Calculate fee in base instrument
+        - NOTE fees in this way not exact, but accurate to first 3 significant digits
+
+        Parameters
+        ----------
+        qty : int
+            quantity of contracts
+        price : float
+            price order executed at
+        order_type : OrderType
+            Limit orders get rebate, Market/Stop orders pay taker fee
+
+        Returns
+        -------
+        float
+            fee
+        """
+        # log.info(f'qty: {order.qty:+.0f}, px: {order.price:.0f}, fee: {fee:+.8f}, bal: {self._balance:.6f}')
+        fee_rate = self.maker_fee if order_type == OrderType.LIMIT else self.taker_fee
+        return (abs(qty) / price) * fee_rate
+
     def available_quantity(self, price: float) -> int:
         """Max available quantity to purchase of qty in base pair (eg XBT)
 
@@ -174,7 +218,11 @@ class Wallet(Observer):
         int
             quantity of qty
         """
-        qty = self.balance * self.lev * price
+
+        # add upnl xbt to available balance
+        upnl = f.get_pnl_xbt(self.qty, self.price, self.c.Close)
+
+        qty = (self.balance + upnl) * self.lev * price
         return int(qty)
 
     def adjust_price(self, price: float, order_price: float, qty: int, order_qty: int) -> float:
@@ -288,7 +336,7 @@ class Wallet(Observer):
         display(df)
 
     @property
-    def df_balance(self):
+    def df_balance(self) -> pd.DataFrame:
         """df of balance at all transactions"""
 
         m = {t.timestamp: t.balance_post for t in self.txns}
@@ -299,37 +347,42 @@ class Wallet(Observer):
                 orient='index',
                 columns=['balance'])
 
-    def plot_balance(self, logy=True, title=None):
-        """Show plot of account balance over time"""
+    def plot_balance(self, logy: bool = True, title: str = None) -> None:
+        """Show plot of account balance over time with red/blue color depending on slope"""
         df = self.df_balance
 
         y = df.balance
         dy = np.gradient(y)
-        _x = df.index
-        x = mdates.date2num(_x.to_pydatetime())
+
+        # hrs = df.index.to_series().diff().dt.total_seconds() / 3600
+        dyy = df.balance.pct_change()  # / hrs
+
+        x = mdates.date2num(df.index.to_pydatetime())
         dx = np.gradient(x)
         dydx = dy / dx
 
+        outer_bound = min(abs(dyy.min()), abs(dyy.max()))
+        # norm = plt.Normalize(dydx.min(), dydx.max())
+        norm = plt.Normalize(outer_bound * -1, outer_bound)
+
         points = np.array([x, y]).T.reshape(-1, 1, 2)
         segments = np.concatenate([points[:-1], points[1:]], axis=1)
-
-        # norm = plt.Normalize(dy.min(), dy.max())
-        norm = plt.Normalize(-0.5, 0.5)
         lc = LineCollection(segments, cmap=_cmap.reversed(), norm=norm)
 
         fig, ax = plt.subplots(figsize=(14, 5))
 
         lc.set_array(dydx)
         lc.set_linewidth(2)
-        line = ax.add_collection(lc)
-        # fig.colorbar(line, ax=ax)
+        ax.add_collection(lc)
 
         ax.xaxis.set_major_locator(mdates.MonthLocator())
         monthFmt = mdates.DateFormatter('%Y-%m-%d')
         ax.xaxis.set_major_formatter(monthFmt)
 
         ax.set_yscale('log')
-        ax.grid(axis='y', linewidth=0.1, which='both')
+        ax.yaxis.set_major_formatter(mticker.StrMethodFormatter('{x:.0f}'))
+
+        ax.grid(axis='y', linewidth=0.3, which='both')
         ax.autoscale_view()
         plt.xticks(rotation=45)
 
@@ -354,3 +407,11 @@ class Wallet(Observer):
         for i, t in enumerate(self.txns):
             df.loc[i] = [t.timestamp, t.balance_pre, t.percentchange]
         return df
+
+    @property
+    def df_filled_orders(self) -> pd.DataFrame:
+        data = [o.to_dict() for o in self.filled_orders]
+        return pd.DataFrame.from_dict(data)
+
+    def show_orders(self, last: int = 30) -> None:
+        display(self.df_filled_orders.iloc[-last:])
