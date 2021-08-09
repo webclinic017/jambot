@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import uuid
 from abc import ABCMeta
 
@@ -22,6 +24,7 @@ class BaseOrder(object, metaclass=ABCMeta):
             **kw):
 
         price_original = price
+        timestamp_filled = None
 
         if pd.isna(qty) or qty == 0:
             raise ValueError(f'Order quantity cannot be {qty}')
@@ -46,6 +49,11 @@ class BaseOrder(object, metaclass=ABCMeta):
     def side(self):
         """Return qty positive or negative"""
         return self._side
+
+    @property
+    def side_opp(self):
+        """Return qty positive or negative"""
+        return self.side * -1
 
     @property
     def is_open(self):
@@ -117,6 +125,7 @@ class BaseOrder(object, metaclass=ABCMeta):
         return dict(
             # order_id=self.order_id,
             ts=self.timestamp,
+            ts_filled=self.timestamp_filled,
             symbol=self.symbol,
             order_type=self.order_type,
             qty=self.qty,
@@ -125,18 +134,36 @@ class BaseOrder(object, metaclass=ABCMeta):
             name=self.name
         )
 
+    def format_ts(self, ts: dt) -> Union[str, None]:
+        """Format timestamp as str for dict repr
+
+        Parameters
+        ----------
+        ts : dt
+            timestamp to format
+
+        Returns
+        -------
+        Union[str, None]
+            ts or None
+        """
+        return ts.strftime('%Y-%m-%d %H:%M') if not ts is None else None
+
     def to_dict(self) -> dict:
-        ts = self.timestamp.strftime('%Y-%m-%d %H') if not self.timestamp is None else None
+
+        price = f'{self.price:,.0f}' if not self.price is None else None
 
         return dict(
             # order_id=self.order_id,
-            ts=ts,
+            ts=self.format_ts(self.timestamp_start),
+            ts_filled=self.format_ts(self.timestamp_filled),
             symbol=self.symbol,
             order_type=str(self.order_type),
-            qty=f'{self.qty:+.0f}',
-            price=self.price,
+            qty=f'{self.qty:+,.0f}',
+            price=price,
             status=self.status,
-            name=self.name)
+            name=self.name,
+            t_num=self.parent.trade_num)
 
     def as_bitmex(self) -> 'BitmexOrder':
         """Convert to BitmexOrder"""
@@ -320,7 +347,7 @@ class Order(BaseOrder, Observer, metaclass=ABCMeta):
 
         filled = SignalEvent(int)
         cancelled = SignalEvent()
-        # ammended = SignalEvent(float)
+        amended = SignalEvent()
         timedout = SignalEvent(object)
 
         # give order unique id
@@ -332,25 +359,41 @@ class Order(BaseOrder, Observer, metaclass=ABCMeta):
         f.set_self(vars())
 
     @property
-    def is_expired(self):
+    def is_expired(self) -> bool:
         """Check if order has reached its timeout duration"""
         return self.duration >= self.timeout
 
     def step(self):
-        """"""
         pass
         # if self.is_expired:
         #     print('TIMED OUT')
         #     self.timedout.emit(self)
 
-    def fill(self):
+    def add(self, trade) -> 'Order':
+        """Convenience func to add self to trade
+
+        Parameters
+        ----------
+        trade : Trade
+
+        Returns
+        -------
+        Order
+            self
+        """
+        if not trade is None:
+            trade.add_order(self)
+
+        return self
+
+    def fill(self) -> None:
         """Decide if adding or subtracting qty"""
-        self.filled_time = self.timestamp
-        self.filled.emit(self.qty)  # NOTE not sure if qty needed
+        self.timestamp_filled = self.timestamp
         self.status = OrderStatus.FILLED
+        self.filled.emit(self.qty)  # NOTE not sure if qty needed
         self.detach_from_parent()
 
-    def cancel(self):
+    def cancel(self) -> None:
         """Cancel order"""
         self.cancelled.emit()
         self.status = OrderStatus.CANCELLED
@@ -358,6 +401,11 @@ class Order(BaseOrder, Observer, metaclass=ABCMeta):
 
     def stoppx(self):
         return self.price * (1 + self.slippage * self.side)
+
+    def adjust_max_qty(self) -> None:
+        """Set qty to max available"""
+        qty = self.parent.wallet.available_quantity(price=self.price) * self.side
+        self.parent.broker.amend_order(order=self, qty=qty)
 
 
 class LimitOrder(Order):
@@ -380,6 +428,21 @@ class MarketOrder(Order):
 class StopOrder(Order):
     """Stop order which can be used to ender or exit positions"""
     order_type = OrderType.STOP
+
+    @classmethod
+    def from_order(cls, order: Order, stop_pct: float) -> StopOrder:
+        stop_price = f.get_price(
+            pnl=abs(stop_pct) * -1,
+            entry_price=order.price,
+            side=order.side)
+
+        stop_order = StopOrder(
+            symbol=order.symbol,
+            qty=order.qty * -1,
+            price=stop_price,
+            name='stop_close')
+
+        return stop_order
 
 
 def make_order(order_type: 'OrderType', **kw) -> Order:
