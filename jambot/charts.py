@@ -169,7 +169,7 @@ def add_traces(df, fig, traces):
 
     for m in traces:
         m['df'] = m.get('df', df)  # allow using different df (for balance)
-        traces = m['func'](**m)
+        traces = m.get('func', scatter)(**m)
         if isinstance(traces, list):
             for trace in traces:
                 _append_trace(trace, m)

@@ -55,7 +55,7 @@ def run_single(strattype, startdate, dfall, speed0, speed1, row=None, norm=None,
     if strattype == 'trendrev':
         strat = bt.Strat_TrendRev(speed=speed, norm=norm)
         strat.slippage = 0
-        strat.stoppercent = -0.03
+        strat.stop_pct = -0.03
 
     elif strattype == 'trend':
         speed = (row.against, row.withspeed)

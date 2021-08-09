@@ -17,10 +17,9 @@ def test_exch_is_test(exch):
 
 
 @fixture(scope='session')
-def last_close(exch):
+def last_close(exch) -> float:
     """Get last close price to use as base for creating new orders"""
-    price = exch.get_position(SYMBOL)['prevClosePrice']
-    price = f.get_price(pnl=-0.2, entry_price=price, side=-1)
+    price = f.get_price(pnl=-0.2, entry_price=exch.last_price(SYMBOL), side=-1)
     return round(price, 0)
 
 
@@ -56,10 +55,10 @@ def test_order_flow(exch, bitmex_orders):
 
             # amend order
             order_out.price += 100
-            order_out.increase_qty(10)
+            order_out.increase_qty(100)
 
         amend_orders = exch.amend_orders(out_orders)
-        assert all(order_amend.qty == -110 for order_amend in amend_orders)
+        assert all(order_amend.qty == -200 for order_amend in amend_orders)
 
     except Exception as e:
         pytest.fail(str(e))

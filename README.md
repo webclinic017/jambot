@@ -44,7 +44,7 @@ speed = (16, 6)
 norm = (0.004, 0.024)
 strat = bt.Strat_TrendRev(speed=speed, norm=norm)
 strat.slippage = 0
-strat.stoppercent = -0.03
+strat.stop_pct = -0.03
 strat.timeout = 40
 
 # BacktestManager strategy and plot balance

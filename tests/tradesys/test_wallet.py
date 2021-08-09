@@ -7,8 +7,9 @@ from .__init__ import *
 
 
 @fixture
-def wallet():
-    wallet = Wallet(symbol=SYMBOL)
+def wallet(clock):
+    wallet = Wallet(symbol=SYMBOL, parent_listener=clock)
+    clock.next()
     return wallet
 
 
@@ -32,7 +33,7 @@ def test_market_orders(wallet):
 
     assert wallet.qty == 0
     assert wallet.price == 0
-    assert math.isclose(wallet.balance, 1.38961, rel_tol=0.001)
+    assert math.isclose(wallet.balance, 1.38716, rel_tol=0.001), f'wallet balance is: {wallet.balance:.5f}'
     assert wallet.num_txns == 1
 
 

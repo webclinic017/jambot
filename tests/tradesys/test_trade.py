@@ -1,6 +1,4 @@
-from jambot import data
 from jambot.tradesys import orders as ords
-from jambot.tradesys.base import Clock
 from jambot.tradesys.broker import Broker
 from jambot.tradesys.enums import TradeSide, TradeStatus
 from jambot.tradesys.trade import Trade
@@ -9,21 +7,13 @@ from .__init__ import *
 
 
 @fixture
-def broker():
-    return Broker()
+def broker(clock):
+    return Broker(parent_listener=clock)
 
 
 @fixture
-def trade(broker):
-    return Trade(symbol=SYMBOL, broker=broker)
-
-
-@fixture
-def clock():
-    df = data.default_df()
-    clock = Clock(df=df)
-    # clock.attach_listener(broker)
-    return clock
+def trade(broker, clock):
+    return Trade(symbol=SYMBOL, broker=broker, parent_listener=clock)
 
 
 def test_init(trade):
@@ -32,8 +22,6 @@ def test_init(trade):
 
 def test_orders(trade, clock):
     """Test orders are added and removed correctly when filled"""
-    clock.attach_listener(trade)
-    clock.attach_listener(trade.broker)
 
     order_specs = [
         dict(price=100, qty=1000, name='o1'),

@@ -301,7 +301,7 @@ def run_toploop(u=None, partial=False, dfall=None):
             speed = (16, 6)
             norm = (0.004, 0.024)
             strat = trendrev.Strategy(speed=speed, norm=norm)
-            strat.stoppercent = -0.03
+            strat.stop_pct = -0.03
             strats = [strat]
 
             bm = bt.BacktestManager(symbol=symbol, startdate=startdate, strats=strats,

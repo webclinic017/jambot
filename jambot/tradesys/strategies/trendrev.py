@@ -10,7 +10,7 @@ class Strategy(StrategyBase):
     def __init__(self, speed=(8, 8), weight=1, norm=(0.004, 0.024), lev=5):
         super().__init__(weight, lev)
         self.name = 'trendrev'
-        self.stoppercent = -0.03
+        self.stop_pct = -0.03
         self.speed = speed
         self.norm = norm
         self.lasthigh, self.lastlow = 0, 0
@@ -183,13 +183,13 @@ class TradeRev(Trade):
 
     def enter(self):
         c = self.strat.cdl
-        self.stoppercent = self.strat.stoppercent
+        self.stop_pct = self.strat.stop_pct
         # self.enteroffset = self.strat.vty.final(i=c.Index)
         self.enteroffset = c.norm_ema
 
         limitbuyprice = self.entrytarget * (1 + self.enteroffset * self.side * -1)
         limitcloseprice = self.closeprice()
-        self.stoppx = f.get_price(self.stoppercent, limitbuyprice, self.side)
+        self.stoppx = f.get_price(self.stop_pct, limitbuyprice, self.side)
 
         qty = int(self.targetcontracts * self.conf)
 
