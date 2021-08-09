@@ -1,3 +1,5 @@
+from IPython.display import display
+
 from .__init__ import *
 from .base import Observer, SignalEvent
 from .enums import OrderStatus
@@ -11,8 +13,8 @@ class Broker(Observer):
     """Class to manage submitting and checking orders
     """
 
-    def __init__(self, **kw):
-        super().__init__(**kw)
+    def __init__(self, *args, **kw):
+        super().__init__(*args, **kw)
         all_orders = {}
         filled_orders = {}
         open_orders = {}
@@ -25,7 +27,7 @@ class Broker(Observer):
 
         f.set_self(vars())
 
-    def get_wallet(self, symbol: str):
+    def get_wallet(self, symbol: str) -> Wallet:
         """Get wallet for specific trade pair (symbol)
 
         Parameters
@@ -39,7 +41,7 @@ class Broker(Observer):
         """
         return self.wallets[symbol]
 
-    def submit(self, orders: Union[list, 'Order']):
+    def submit(self, orders: Union[list, Order]):
         """Submit single or multiple orders at once
 
         Parameters
@@ -48,17 +50,14 @@ class Broker(Observer):
             order(s) to submit
         """
 
-        if not isinstance(orders, list):
-            orders = [orders]
-
-        for order in orders:
+        for order in f.as_list(orders):
             self._submit_single(order=order)
 
         # sort after all added
         self.open_orders = {order.order_id: order for order in sorted(
             self.open_orders.values(), key=lambda x: x.sort_key)}
 
-    def _submit_single(self, order: 'Order'):
+    def _submit_single(self, order: Order):
         """Add order to open orders, fill market immediately
 
         Parameters
@@ -77,13 +76,13 @@ class Broker(Observer):
             order.status = OrderStatus.OPEN
             self.open_orders[order.order_id] = order
 
-    def cancel_order(self, order: 'Order'):
+    def cancel_order(self, order: Order) -> None:
         """Cancel order"""
         if order.order_id in self.open_orders:
             self.open_orders.pop(order.order_id)
             order.cancel()
 
-    def amend_order(self, order: 'Order', price: float = None, qty: int = None):
+    def amend_order(self, order: Order, price: float = None, qty: int = None) -> None:
         """Change order price or quantity
 
         Parameters
@@ -100,9 +99,9 @@ class Broker(Observer):
         if not qty is None:
             order.qty = qty
 
-        order.ammended.emit()
+        order.amended.emit()
 
-    def fill_order(self, order: 'Order'):
+    def fill_order(self, order: Order) -> None:
         """Execute order at specific price"""
         wallet = self.wallets[order.symbol]
         wallet.fill_order(order)
@@ -136,6 +135,9 @@ class Broker(Observer):
                 order.timedout.emit(order)
 
     @property
-    def df_orders(self):
-        data = [o.dict_stats() for o in self.all_orders.values()]
+    def df_orders(self) -> pd.DataFrame:
+        data = [o.to_dict() for o in self.all_orders.values()]
         return pd.DataFrame.from_dict(data)
+
+    def show_orders(self, last: int = 30) -> None:
+        display(self.df_orders.iloc[-last:])
