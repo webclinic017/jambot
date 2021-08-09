@@ -30,6 +30,7 @@ class Trade(Observer):
         status = TradeStatus.PENDING
         _side = TradeSide.NEUTRAL
         exit_balance = None
+        qty_filled = 0
 
         wallet = broker.get_wallet(symbol=symbol)
 
@@ -161,6 +162,9 @@ class Trade(Observer):
         order : Order
             order to connect
         """
+        if order is None:
+            raise ValueError('Order cannot be none!')
+
         self.attach_listener(order)
         self.orders.append(order)
         order.filled.connect(self.on_fill)
@@ -180,12 +184,13 @@ class Trade(Observer):
         # chose side based on first order filled
         # self.entry_price = self.wallet.entry_price
         # self.exit_price = round(self.wallet.exit_price, 1)
+        self.qty_filled += qty
 
         if self.is_pending:
             self.side = np.sign(qty)
             self.status = TradeStatus.OPEN
         elif self.is_open:
-            if self.wallet.qty == 0:
+            if self.wallet.is_zero:
                 self.close()
 
     def cancel_open_orders(self):
@@ -195,27 +200,32 @@ class Trade(Observer):
 
     def market_close(self):
         """Create order to market close all qty, submit to broker"""
+
+        qty = self.wallet.qty_opp
+
+        if not qty == 0:
+            order = MarketOrder(
+                qty=qty,
+                name='market_close',
+                symbol=self.symbol)
+
+            self.add_order(order)
+            order.filled.connect(lambda: print('market_close filled'))
+
+        self.close()
+
+    def close(self, *args):
+        """Close trade"""
         self.cancel_open_orders()
 
-        qty = self.wallet.qty * -1
-
-        if qty == 0:
-            return
-
-        order = MarketOrder(
-            qty=qty,
-            name='market_close',
-            symbol=self.symbol)
-
-        self.add_order(order)
-
-    def close(self):
-        """Close trade"""
         if not self.is_closed:
+            if not self.qty_filled == 0:
+                raise ValueError(f'Cant close trade [{self.trade_num}] with [{self.qty_filled}] contracts open!')
+
             self.status = TradeStatus.CLOSED
             self.exit_balance = self.wallet.balance
-            # self.closed.emit()
             self.detach_from_parent()
+            self.closed.emit()
 
     def pnl_maxmin(self, maxmin, firstonly=False):
         return f.get_pnl(self.side, self.entry_price, self.extremum(self.side * maxmin, firstonly))
@@ -225,10 +235,11 @@ class Trade(Observer):
         for order in self.orders:
             order.rescale_contracts(balance=balance, conf=self.conf)
 
-    def df(self):
+    def df(self) -> pd.DataFrame:
+        """Show df of candles for trade's duration"""
         return self.bm.df.iloc[self.i_enter:self.i_exit]
 
-    def to_dict(self):
+    def to_dict(self) -> dict:
         return dict(
             side=self.side_planned,
             qty=sum(o.qty for o in self.entry_orders),
@@ -236,15 +247,24 @@ class Trade(Observer):
             exit_price=f'{self.exit_price:_.0f}',
             pnl=f'{self.pnl:.2%}')
 
-    def dict_stats(self):
+    def dict_stats(self) -> dict:
         """Dict of statistics, useful for creating a df of all trades"""
         return dict(
-            timestamp=self.timestamp_start,
+            ts=self.timestamp_start,
             side=self.side_planned,
             dur=self.duration,
             entry=self.entry_price,
             exit=self.exit_price,
             qty=self.qty,
             pnl=self.pnl,
-            bal=self.exit_balance
-        )
+            bal=self.exit_balance,
+            status=self.status,
+            t_num=self.trade_num)
+
+    @property
+    def df_orders(self) -> pd.DataFrame:
+        data = [o.to_dict() for o in self.orders]
+        return pd.DataFrame.from_dict(data)
+
+    def show_orders(self) -> None:
+        display(self.df_orders)
