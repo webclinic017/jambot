@@ -58,16 +58,29 @@ class SignalEvent(object):
 class Observer(DictRepr, metaclass=ABCMeta):
     """Object which will be called every timestep when attached to main stream"""
 
-    def __init__(self, parent_listener=None):
+    def __init__(
+            self,
+            parent_listener: 'Observer' = None,
+            insert_before: bool = False):
+
         self._listeners = []
         self._duration = 0
         self.c = None
         self.parent = None
         self.timestamp_start = None
 
-        # NOTE might need to pass c here too?
+        # add as a listener, or swap parent/child order
         if not parent_listener is None:
-            parent_listener.attach_listener(self)
+            if not insert_before:
+                parent_listener.attach_listener(self)
+            else:
+                # NOTE this isn't used yet
+                parent_listener.detach_from_parent()
+
+                if parent_listener.has_parent:
+                    parent_listener.parent.attach_listener(self)
+
+                self.attach_listener(parent_listener)
 
     @property
     def timestamp(self):
@@ -90,6 +103,23 @@ class Observer(DictRepr, metaclass=ABCMeta):
     def has_parent(self):
         return not self.parent is None
 
+    def get_parent(self, name: str) -> 'Observer':
+        """Get parent in heirarchy by class name
+
+        Parameters
+        ----------
+        name : str
+            class name
+        """
+        if self.parent is None:
+            raise AttributeError(f'Couldn\'t find parent "{name}" in obj tree.')
+
+        cls_name = self.parent.__class__.__name__
+        if cls_name == name:
+            return self.parent
+        else:
+            return self.parent.get_parent(name)
+
     def on_attach(self):
         """Called by parent when child is attached
         - Perform any necessary actions on attach"""
@@ -107,6 +137,10 @@ class Observer(DictRepr, metaclass=ABCMeta):
         # NOTE this may be slower for the sake of cleaner code
         # if not hasattr(objs, '__iter__'):
         #     objs = (objs, )
+
+        # NOTE check, slower, not necessarily needed
+        if obj in self.listeners:
+            raise RuntimeError(f'Listener "{obj}" already attached!')
 
         # for obj in objs:
         self.listeners.append(obj)
@@ -126,7 +160,13 @@ class Observer(DictRepr, metaclass=ABCMeta):
         raise NotImplementedError('Must implement step in child class!')
 
     def step_clock(self, c: tuple) -> None:
-        """Update self and all listener clocks"""
+        """Update self and all listener clocks
+
+        Parameters
+        ----------
+        c : tuple
+            named tuple from dataframe.itertuples()
+        """
         self.c = c
         self._duration += 1
 
@@ -134,7 +174,7 @@ class Observer(DictRepr, metaclass=ABCMeta):
             listener.step_clock(c)
 
     def _step(self) -> None:
-        """perform actions, call all children's step method"""
+        """perform actions, call all children's step method in bottom -> top order"""
 
         for listener in self._listeners:
             listener._step()
