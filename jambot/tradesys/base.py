@@ -141,6 +141,25 @@ class Observer(DictRepr, metaclass=ABCMeta):
 
         self.step()
 
+    def listener_tree(self, max_depth: int, depth: int = 0) -> dict:
+        if depth >= max_depth:
+            return
+
+        return {str(self): [child.listener_tree(
+            max_depth=max_depth,
+            depth=depth + 1) for child in self.listeners]}
+
+    def show_tree(self, max_depth: int = 10) -> None:
+        """Show listener Tree
+
+        Parameters
+        ----------
+        max_depth : int, optional
+            max depth of listeners to print, by default 10
+        """
+        from jambot.sklearn_utils import pretty_dict
+        pretty_dict(self.listener_tree(max_depth=max_depth))
+
 
 class Clock(Observer):
     """Top level observer to send timesteps using dataframe index"""
