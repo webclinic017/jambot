@@ -63,12 +63,12 @@ class DB(object):
 
     def get_max_dates(self, interval=1):
         a = pk.Table('Bitmex')
-        q = (pk.Query.from_(a)
-             .select('Interval', 'Symbol', fn.Max(a.Timestamp)
-                     .as_('Timestamp'))
-             .where(a.Interval == interval)
-             .groupby(a.Symbol, a.Interval)
-             .orderby('Timestamp'))
+        q = pk.Query.from_(a) \
+            .select('Interval', 'Symbol', fn.Max(a.Timestamp)
+                    .as_('Timestamp')) \
+            .where(a.Interval == interval) \
+            .groupby(a.Symbol, a.Interval) \
+            .orderby('Timestamp')
 
         return pd \
             .read_sql_query(
@@ -77,14 +77,25 @@ class DB(object):
                 parse_dates=['Timestamp']) \
             .assign(Interval=lambda x: x.Interval.astype(int))
 
-    def update_all_symbols(self, exch: 'Bitmex' = None, interval=1):
+    def update_all_symbols(
+            self,
+            exch: 'Bitmex' = None,
+            interval: int = 1,
+            symbol: str = None) -> None:
+
         lst = []
         if exch is None:
             exch = Bitmex.default(test=False, refresh=False)
 
         # loop query result, add all to dict with maxtime as KEY, symbols as LIST
         m = defaultdict(list)
-        for _, row in self.get_max_dates(interval=interval).iterrows():
+        df_max = self.get_max_dates(interval=interval)
+
+        # filter single symbol to update (eg XTBUSD on 15 min)
+        if not symbol is None:
+            df_max = df_max.query('Symbol == @symbol')
+
+        for _, row in df_max.iterrows():
             m[row.Timestamp].append(row.Symbol)
 
         # loop dict and call bitmex for each list of syms in maxdate
