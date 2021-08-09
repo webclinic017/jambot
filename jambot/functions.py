@@ -3,13 +3,14 @@
 import json
 import os
 import pickle
+import re
 import time
 from datetime import date
 from datetime import datetime as dt
 from datetime import timedelta as delta
 from pathlib import Path
 from sys import platform
-from typing import Iterable
+from typing import Any
 
 import pandas as pd
 import pyodbc
@@ -57,8 +58,8 @@ def left_merge(df: pd.DataFrame, df_right: pd.DataFrame) -> pd.DataFrame:
             right_index=True)
 
 
-def as_list(items: Iterable):
-    """Convert single item to list"""
+def as_list(items: Any) -> list:
+    """Check item(s) is list, make list if not"""
     if not isinstance(items, list):
         items = [items]
 
@@ -84,6 +85,29 @@ def set_self(m, prnt=False, exclude=()):
 
 def filter_df(dfall, symbol):
     return dfall[dfall.Symbol == symbol].reset_index(drop=True)
+
+
+def filter_cols(df: pd.DataFrame, expr: str = '.', include: list = None) -> pd.DataFrame:
+    """Filter df cols based on regex
+
+    Parameters
+    ----------
+    df : pd.DataFrame
+    expr : str, optional
+        regex expr, by default '.'
+
+    Returns
+    -------
+    pd.DataFrame
+    """
+    cols = [c for c in df.columns if re.search(expr, c)]
+
+    # include other cols
+    if not include is None:
+        include = as_list(include)
+        cols += include
+
+    return df[cols]
 
 # DATETIME
 
@@ -148,15 +172,47 @@ def price_format(altstatus=False):
     return ans
 
 
-def get_price(pnl: float, entry_price: float, side: float) -> float:
-    """Get price at percentage offset"""
+def get_price(pnl: float, entry_price: float, side: int) -> float:
+    """Get price at percentage offset
+
+    Parameters
+    ----------
+    pnl : float
+        percent offset from entry_price
+    entry_price : float
+        price to offset from
+    side : int
+        order side
+
+    Returns
+    -------
+    float
+        price
+    """
     if side == 1:
         return pnl * entry_price + entry_price
     elif side == -1:
         return entry_price / (1 + pnl)
 
 
-def get_pnl_xbt(qty=0, entry_price=0, exit_price=0, isaltcoin=False) -> float:
+def get_pnl_xbt(qty: int, entry_price: float, exit_price: float, isaltcoin: bool = False) -> float:
+    """Get profit/loss in base currency (xbt) from entry/exit
+
+    Parameters
+    ----------
+    qty : int, optional
+        quantity of contracts
+    entry_price : float, optional
+    exit_price : float, optional
+    isaltcoin : bool, optional
+        alts calculated opposite, default False
+        # NOTE this should all be restructured to be relative to a base currency somehow
+
+    Returns
+    -------
+    float
+        amount of xbt gained/lossed
+    """
     if 0 in (entry_price, exit_price):
         return 0
     elif not isaltcoin:
