@@ -21,7 +21,7 @@ class BacktestManager(Clock):
 
         super().__init__(df=df, **kw)
 
-        end_session = SignalEvent()
+        self.end_session = SignalEvent()
 
         # if not isinstance(strats, list): strats = [strats]
 
@@ -60,6 +60,8 @@ class BacktestManager(Clock):
             # for strat in self.strats:
             # strat.init(bm=self, df=df)
 
+        self.attach_listener(strat)
+
         f.set_self(vars())
 
     def step(self):
@@ -68,7 +70,6 @@ class BacktestManager(Clock):
 
     def run(self, prnt=True) -> None:
         """Top level step function"""
-        self.attach_listener(self.strat)
         super().run()
         self.end_session.emit()
 
