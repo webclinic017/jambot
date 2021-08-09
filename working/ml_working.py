@@ -15,8 +15,6 @@ if True:
 
     import matplotlib as mpl
     import matplotlib.pyplot as plt
-    plt.style.use('dark_background')
-    plt.rcParams.update({'font.size': 14})
     import numpy as np
     import pandas as pd
     import seaborn as sns
@@ -25,6 +23,7 @@ if True:
     from lightgbm.sklearn import LGBMClassifier, LGBMRegressor
     from sklearn.compose import ColumnTransformer, make_column_transformer
     from sklearn.decomposition import PCA
+    from sklearn.discriminant_analysis import QuadraticDiscriminantAnalysis
     from sklearn.dummy import DummyClassifier
     from sklearn.ensemble import (AdaBoostClassifier,
                                   GradientBoostingClassifier,
@@ -40,6 +39,7 @@ if True:
                                          TimeSeriesSplit, cross_val_score,
                                          cross_validate, train_test_split)
     from sklearn.multioutput import MultiOutputRegressor
+    from sklearn.naive_bayes import GaussianNB
     from sklearn.pipeline import FeatureUnion, Pipeline, make_pipeline
     from sklearn.preprocessing import (MinMaxScaler, OneHotEncoder,
                                        OrdinalEncoder, PolynomialFeatures,
@@ -58,22 +58,29 @@ if True:
     from jambot.tradesys import backtest as bt
     from jambot.tradesys.strategies import ml
 
-    plt.rcParams.update({'figure.figsize': (12, 5)})
+    plt.rcParams.update({'figure.figsize': (12, 5), 'font.size': 14})
+    plt.style.use('dark_background')
+    pd.set_option('display.max_columns', 150)
+    colors = plt.rcParams['axes.prop_cycle'].by_key()['color']
+    blue, red = colors[3], colors[0]
 
 # %% - LOAD DF
 if True:
+    interval = 15
+
     kw = dict(
         symbol='XBTUSD',
         daterange=365 * 5,
         # startdate=dt(2018, 1, 1),
         startdate=dt(2017, 1, 1),
-        interval=1)
+        interval=interval)
 
     p = Path('df.csv')
     # if p.exists(): p.unlink()
 
     # read from db or csv
-    if not p.exists() or dt.fromtimestamp(p.stat().st_mtime) < dt.now() + delta(days=-1):
+    reload_df = False
+    if reload_df or not p.exists() or dt.fromtimestamp(p.stat().st_mtime) < dt.now() + delta(days=-1):
         print('Downloading from db')
         df = db.get_dataframe(**kw) \
             .drop(columns=['Timestamp', 'Symbol'])
@@ -86,18 +93,25 @@ if True:
 
 # %% - ADD SIGNALS
 
-sm = sg.SignalManager(add_slope=5)
+add_slope = 1
+add_sum = 12
+sm = sg.SignalManager(add_slope=add_slope, add_sum=add_sum)
 
 n_periods = 10
 p_ema = None  # 6
 # Target = sg.TargetMeanEMA
-Target = sg.TargetMean
+# Target = sg.TargetMean
+Target = sg.TargetUpsideDownside
 # regression = True
 regression = False
 # pct_min = 0.01
 # pct_min = 0.000000005 # long or short, no neutral
 pct_min = 0
-target_signal = Target(p_ema=p_ema, n_periods=n_periods, pct_min=pct_min, regression=regression)
+target_signal = Target(
+    p_ema=p_ema,
+    n_periods=n_periods,
+    pct_min=pct_min,
+    regression=regression)
 # target_signal = sg.TargetMaxMin(n_periods=4)
 
 signals = [
@@ -105,9 +119,8 @@ signals = [
     'Momentum',
     'Trend',
     'Candle',
-    # 'EMASlope',
-    # 'Volatility',
-    # 'Volume',
+    'Volatility',
+    'Volume',
     # 'MACD',
     # 'SFP',
     # 'CandlePatterns',
@@ -116,8 +129,9 @@ signals = [
 
 # drop last rows which we cant set proper target
 df = sm.add_signals(df=df, signals=signals) \
-    .iloc[:-1 * n_periods, :] \
+    .iloc[200:, :] \
     .fillna(0)
+# -1 * n_periods
 
 if not regression:
     sk.show_prop(df=df)
@@ -126,7 +140,7 @@ if not regression:
 if True:
     cols_ohlcv = ['Open', 'High', 'Low', 'Close', 'VolBTC']
     # , 'target_max', 'target_min', 'pred_max', 'pred_min']
-    drop_feats = cols_ohlcv + ['ema10', 'ema50', 'ema200', 'pxhigh', 'pxlow']
+    drop_feats = cols_ohlcv + ['ema_10', 'ema_50', 'ema_200', 'pxhigh', 'pxlow']
     # target = ['target_max', 'target_min']
     target = ['target']
 
@@ -155,17 +169,18 @@ if True:
     max_train_size = None
     cv = TimeSeriesSplit(n_splits=n_splits, max_train_size=max_train_size)
 
-    if not regression:
-        scorer = ml.StratScorer()
+    if regression:
+        scoring = dict(rmse='neg_root_mean_squared_error')
+    else:
+        scorer = ml.StratScorer(n_smooth=3)
         final_scorer = lambda *args: scorer.score(*args, _type='final')
         max_scorer = lambda *args: scorer.score(*args, _type='max')
 
         scoring = dict(
             acc='accuracy',
-            max=max_scorer,
-            final=final_scorer)
-    else:
-        scoring = dict(rmse='neg_root_mean_squared_error')
+            # max=max_scorer,
+            # final=final_scorer
+        )
 
     # NOTE modified fit in lgbm.sklearn to accept callable
     # fit_params = dict(
@@ -173,36 +188,40 @@ if True:
     fit_params = None
 
     cv_args = dict(cv=cv, n_jobs=1, return_train_score=True, scoring=scoring)
-    mm = sk.ModelManager(scoring=scoring, cv_args=cv_args)
+    mm = sk.ModelManager(scoring=scoring, cv_args=cv_args, scorer=scorer)
     ct = mm.make_column_transformer(features=features, encoders=encoders)
 
-    x_train, y_train, x_test, _ = mm.make_train_test(
+    x_train, y_train, x_test, y_test = mm.make_train_test(
         df=df,
         target=target,
+        # split_date=dt(2019, 11, 25),
         split_date=dt(2021, 1, 1),
         # train_size=train_size,
         # shuffle=False
     )
 
-# %% - MODELS
+# %% - CROSS VALIDATION
 LGBM = LGBMRegressor if regression else LGBMClassifier
 
 models = dict(
     # rnd_forest=RandomForestClassifier,
     # xgb=XGBClassifier,
     # ada=AdaBoostClassifier(),
+    # log=LogisticRegression(),
+    # svc=SVC(gamma=2, C=1, probability=True),
+    # nbayes=GaussianNB(),
+    # qda=QuadraticDiscriminantAnalysis(),
     # lgbm=LGBM,
-    lgbm=LGBM(num_leaves=50, n_estimators=50, max_depth=10, boosting_type='dart')
-    # lgbm=LGBM(num_leaves=50, n_estimators=50, max_depth=30, boosting_type='gbdt')
+    lgbm=LGBM(num_leaves=50, n_estimators=50, max_depth=30, boosting_type='dart')
+    # lgbm=LGBM(num_leaves=100, n_estimators=25, max_depth=10, boosting_type='gbdt')
 )
 
 steps = [
     (1, ('pca', PCA(n_components=20, random_state=0)))]
-# steps = None
+steps = None
 
-scorer.reset()
 mm.cross_val(models, steps=steps)
-scorer.show_summary()
+# scorer.show_summary()
 
 # %% - MAXMIN PREDS
 
@@ -222,17 +241,22 @@ if False:
 
 # %% - OPTIMIZE FEATURES
 if False:
-    feature_names = 'mnt_awesome'
-    params = sm.get_signal_params(feature_names=feature_names)
+    feature_names = 'vol_mfi'
+    # params = sm.get_signal_params(feature_names=feature_names)
 
-    windows = [2, 6, 12, 18, 24, 36, 48]
-    windows = [96]
-    params = dict(trend_trix=dict(window=windows))  # , window_slow=windows, cycle=windows))
+    windows = [2, 4, 6, 12, 18, 24, 36, 48]
+    # windows = [96]
+    params = dict(vol_mfi=dict(window=windows))  # , window_slow=windows, cycle=windows))
     # params = dict(trend_cci=dict(constant=[0.05, 0.01, 0.015, 0.02, 0.04, 0.05, 0.06]))
     sk.pretty_dict(params)
 
     name = 'lgbm'
-    mm.cross_val_feature_params(signal_manager=sm, name=name, model=models[name], feature_params=params)
+    mm.cross_val_feature_params(
+        signal_manager=sm,
+        name=name,
+        model=models[name],
+        feature_params=params,
+        train_size=train_size)
 
 # %% - GRID - LGBMClassifier
 
@@ -254,9 +278,9 @@ if best_est:
         name='lgbm',
         params=params,
         # search_type='grid',
-        # refit='acc',
+        refit='acc',
         # refit='rmse',
-        refit='final'
+        # refit='final'
     )
 
 # %% - CLASSIFICATION REPORT
@@ -279,6 +303,7 @@ if run_ada:
 # %% - RUN STRAT
 
 name = 'lgbm'
+# name = 'rnd_forest'
 # fit_params = sk.weighted_fit(name, n=mm.df_train.shape[0])
 fit_params = None
 
@@ -289,14 +314,14 @@ fit_params = None
 
 # TODO test iter_predict maxhigh/minlow
 
-if True:
+if False:
     # retrain every x hours (24 ish) and predict for the test set
     df_pred = mm \
         .add_predict_iter(
             df=df,
             name=name,
             pipe=mm.pipes[name],
-            batch_size=24 * 2,
+            batch_size=24 * 4 * 2,
             min_size=mm.df_train.shape[0],
             max_train_size=None,
             regression=regression)
@@ -312,7 +337,7 @@ else:
             proba=not regression,
             fit_params=fit_params)
 
-n_smooth = 6
+n_smooth = 3
 rolling_col = 'proba_long' if not regression else 'y_pred'
 
 df_pred = df_pred \
@@ -326,8 +351,8 @@ strat = ml.Strategy(
     lev=3,
     slippage=0,
     regression=regression,
-    # market_on_timeout=True,
-    # stoppercent=-0.025,
+    market_on_timeout=True,
+    # stop_pct=0.025,
 )
 
 idx = mm.df_test.index
@@ -339,8 +364,9 @@ kw = dict(
     # interval=1
 )
 
-cols = ['Open', 'High', 'Low', 'Close', 'y_pred', 'proba_long', 'rolling_proba',
-        'signal', 'pred_max', 'pred_min', 'target_max', 'target_min']
+cols = ['Open', 'High', 'Low', 'Close', 'y_pred', 'proba_long',
+        'rolling_proba', 'signal', 'pred_max', 'pred_min', 'target_max',
+        'target_min']
 bm = bt.BacktestManager(**kw, strat=strat, df=df_pred.pipe(f.clean_cols, cols))
 bm.run()
 bm.print_final()
@@ -351,11 +377,12 @@ t = trades[-1]
 
 # %% - PLOT
 
-periods = 30 * 24
+periods = 60 * 24
 # periods = 400
-startdate = dt(2021, 4, 15)
+startdate = dt(2021, 5, 1)
 startdate = dt(2021, 1, 1)
-# startdate = None
+# startdate = dt(2020, 3, 1)
+startdate = None
 split_val = 0.5 if not regression else 0
 
 df_chart = df_pred[df_pred.index >= x_test.index[0]]
@@ -365,9 +392,10 @@ traces = [
     # dict(name='buy_pressure', func=ch.bar, color=ch.colors['lightblue']),
     # dict(name='sell_pressure', func=ch.bar, color=ch.colors['lightred']),
     # dict(name='probas', func=ch.probas),
+    # dict(name='target'),
     dict(name=rolling_col, func=ch.split_trace, split_val=split_val),
     dict(name='rolling_proba', func=ch.split_trace, split_val=split_val),
-    # dict(name='vol_relative', func=ch.scatter),
+    # dict(name='mnt_rsi_2', func=ch.scatter),
     # dict(name='VolBTC', func=ch.bar),
 ]
 
@@ -395,8 +423,8 @@ if not df_trades is None:
         exit='trade_exit')
 
     df_trades = df_trades \
-        .set_index('timestamp') \
-        .rename(columns=rename_cols)  # [rename_cols.values()]
+        .set_index('ts') \
+        .rename(columns=rename_cols)
 
     df_chart = df_chart.pipe(f.left_merge, df_trades)
 
@@ -414,15 +442,62 @@ fig = ch.chart(
     regression=regression)
 fig.show()
 
+
+# %% - DENSITY PLOTS
+# % % time
+data = mm.ct.fit_transform(x_train)
+
+expr = 'vty'
+df_trans = sk.df_transformed(data=data, ct=mm.ct) \
+    .assign(target=y_train) \
+    .pipe(f.filter_cols, expr=expr, include='target')
+
+melt_cols = df_trans.columns[df_trans.columns != 'target']
+df_melted = df_trans \
+    .rename_axis('index') \
+    .reset_index() \
+    .melt(id_vars=['index', 'target'], value_vars=melt_cols)
+
+fg = sns.FacetGrid(
+    df_melted,
+    col='variable',
+    col_wrap=6,
+    hue='target',
+    palette=[blue, red],
+    sharex=False,
+    sharey=False,
+    height=2.5)
+
+fg \
+    .map(
+        sns.kdeplot,
+        'value',
+        shade=True,
+        label='Data')\
+    .add_legend()\
+    .set_titles('{col_name}')\
+    # .set_axis_labels('Feature Value', 'Density')
+
+plt.show()
+
 # %% - SHAP PLOT
 mm.shap_plot(name=name)
+
+# %%
+explainer, shap_values, x_sample, x_enc = sk \
+    .shap_explainer_values(x_test, y_test, mm.ct, mm.models['lgbm'])
+
+# %%
+shap.initjs()
+shap.force_plot(explainer.expected_value[1], shap_values[1][0, :], x_enc.iloc[0, :])
 
 # %% - RIDGE
 models = dict(
     lgbm_rfecv=mm.models['lgbm'])
 
-extra_steps = (1, ('rfecv', RFECV(Ridge())))  # must insert rfecv BEFORE other model
+extra_steps = (1, ('rfecv', RFE(Ridge())))  # must insert rfecv BEFORE other model
 mm.cross_val(models, steps=extra_steps)
+scorer.show_summary()
 
 # %% - RFECV SHOW FEATURES
 data = ct.fit_transform(x_train)
@@ -431,9 +506,12 @@ df_trans = sk.df_transformed(data=data, ct=ct).describe().T
 pipe_rfe = mm.pipes['lgbm_rfecv']
 pipe_rfe.fit(x_train, y_train)  # need fit pipe again outside of cross_validate
 rfecv = pipe_rfe.named_steps['rfecv']
-rfecv.n_features_
+print('n_features: ', rfecv.n_features_)
 
-pd.DataFrame(data=rfecv.support_, columns=['Included'], index=df_trans.index) \
+pd.DataFrame(
+    data=rfecv.support_,
+    columns=['Included'],
+    index=df_trans.index) \
     .style \
     .apply(sk.highlight_val, subset=['Included'], m={True: (ch.colors['lightblue'], 'black')})
 
