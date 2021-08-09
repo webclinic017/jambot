@@ -6,7 +6,7 @@ from sklearn.utils.validation import check_is_fitted
 from ... import signals as sg
 from ... import sklearn_utils as sk
 from ..backtest import BacktestManager
-from ..orders import LimitOrder, MarketOrder, StopOrder
+from ..orders import LimitOrder, MarketOrder, Order, StopOrder
 from ..trade import Trade
 from .__init__ import *
 from .base import StrategyBase
@@ -21,7 +21,7 @@ class Strategy(StrategyBase):
             symbol: str = 'XBTUSD',
             min_proba=0.5,
             min_agree=0,
-            stoppercent=None,
+            stop_pct=None,
             min_proba_enter=0.8,
             num_disagree=0,
             min_agree_pct=0.8,
@@ -30,104 +30,158 @@ class Strategy(StrategyBase):
             **kw):
         super().__init__(symbol=symbol, **kw)
 
-        use_stops = True if not stoppercent is None else False
+        use_stops = True if not stop_pct is None else False
         # split_val = 0 if regression else 0.5
 
         f.set_self(vars())
 
-    def on_attach(self):
-        """Market close last trade at end of session"""
-        self.parent.end_session.connect(self.exit_trade)
+    def limit_open(self, *args, **kw) -> LimitOrder:
+        return self.limit_order(name='open', *args, **kw)
 
-    def exit_trade(self):
-        """Market close trade"""
-        trade = self.trade
+    def limit_close(self, *args, **kw) -> LimitOrder:
+        return self.limit_order(name='close', *args, **kw)
 
-        if not trade is None:
-            trade.market_close()
-            # trade.cancel_open_orders()
-            trade.close()
+    def market_open(self, *args, **kw) -> MarketOrder:
+        return self.market_order(name='open', *args, **kw)
 
-    def market_open(self, price: float, side: int, qty: int = None, name: str = 'market_open') -> 'MarketOrder':
+    def market_close(self, *args, **kw) -> MarketOrder:
+        return self.market_order(name='close', *args, **kw)
+
+    def market_order(
+            self,
+            price: float,
+            side: int,
+            qty: int = None,
+            name: str = 'open',
+            trade: 'Trade' = None) -> MarketOrder:
         """Create market order to enter"""
-        if qty is None:
-            qty = self.wallet.available_quantity(price=price)
+        if name == 'open':
+            if qty is None:
+                qty = self.wallet.available_quantity(price=price) * side
+        else:
+            qty = self.wallet.qty_opp
 
-        return MarketOrder(
+        if qty == 0:
+            return
+
+        order = MarketOrder(
             symbol=self.symbol,
-            qty=qty * side,
-            name=name)
+            qty=qty,
+            name=f'market_{name}').add(trade)
 
-    def market_open_late(self, order):
-        # NOTE this is v messy still
-        # limit order will have stepped forward one timestep from trade
-        # self.broker.cancel(order)
+    def market_late(self, order: Order, name: str) -> None:
+        """Create market order after triggered by order expiry
 
-        trade = self.trade
-        order = self.market_open(price=self.c.Close, side=order.side, name='market_open_late')
+        Parameters
+        ----------
+        order : Order
+            order triggering late open
+        name : str
+            open/close
+        """
+        side = order.side if name == 'open' else order.side_opp
 
-        # print(f'market_open_late - wallet balance: {self.wallet.balance:.3f}, c.Close: {self.c.Close}')
+        trade = order.parent
+        order = self.market_order(
+            price=self.c.Close,
+            side=side,
+            name=name,
+            trade=trade)
 
-        trade.add_order(order)
+    def limit_order(
+            self,
+            price: float,
+            side: int,
+            offset: float,
+            name: str) -> LimitOrder:
+        """Create limit order with offset to enter or exit"""
 
-    def limit_open(self, price: float, side: int, offset: float) -> 'LimitOrder':
-        """Create limit order with offset to enter"""
+        # if hasattr(self.c, 'pred_max'):
+        #     minmax_col = {-1: 'pred_max', 1: 'pred_min'}.get(side)
+        #     offset = abs(getattr(self.c, minmax_col)) * -1 * 0.25
 
-        if hasattr(self.c, 'pred_max'):
-            minmax_col = {-1: 'pred_max', 1: 'pred_min'}.get(side)
-            offset = abs(getattr(self.c, minmax_col)) * -1 * 0.25
-
-            # minmax_col = {-1: 'target_max', 1: 'target_min'}.get(side)
-            # offset_true = abs(getattr(self.c, minmax_col)) * -1  #* 0.5
-
-            # print(round(abs(offset), 3), round(abs(offset_true), 3), offset > offset_true)
+        # minmax_col = {-1: 'target_max', 1: 'target_min'}.get(side)
+        # offset_true = abs(getattr(self.c, minmax_col)) * -1  #* 0.5
 
         limit_price = f.get_price(pnl=offset, entry_price=price, side=side)
-        qty = self.wallet.available_quantity(price=limit_price)
+
+        if name == 'open':
+            qty = self.wallet.available_quantity(price=limit_price) * side
+            timeout = 6
+        else:
+            # close any open contracts
+            timeout = 4
+            qty = self.wallet.qty_opp
 
         order = LimitOrder(
             symbol=self.symbol,
-            qty=qty * side,
+            qty=qty,
             price=limit_price,
-            timeout=5,
-            name='limit_open')
+            timeout=timeout,
+            name=f'limit_{name}')
 
-        if self.market_on_timeout:
-            order.timedout.connect(self.market_open_late)
+        if self.market_on_timeout or name == 'close':
+            order.timedout.connect(lambda order, name=name: self.market_late(order, name=name))
 
         return order
 
-    def enter_trade(self, side: int, target_price: float):
+    def exit_trade(self, side: int = None, target_price: float = None) -> bool:
+        """Market/Limit close trade"""
+        block_next = False
+        trade_prev = self.get_trade(-2)  # close trade_-2
+        trade = self.trade  # trade_-1
+
+        if not trade_prev is None:
+            # if older trade with same side is still open, just need to cancel
+            if trade_prev.is_pending:
+                trade_prev.close()
+
+            elif trade_prev.is_open:
+                # treat this as the new "current" trade, move to top of stack
+                trade_prev.cancel_open_orders()
+                self.add_trade(trade_prev)
+                block_next = True
+
+        if not trade is None:
+            if trade.is_open:
+                order = self.limit_close(target_price, side, -0.0005).add(trade)
+            elif trade.is_pending:
+                trade.close()
+
+        return block_next
+
+    def enter_trade(self, side: int, target_price: float) -> None:
 
         trade = self.make_trade()
-        # qty = self.wallet.available_quantity(price=target_price)
 
         # order = self.market_open(target_price, side)
-        order = self.limit_open(target_price, side, -0.005)
-        trade.add_order(order)
+        order = self.limit_open(target_price, side, -0.0005).add(trade)
+        trade_prev = self.get_trade(-2)
+
+        if not trade_prev is None:
+            trade_prev.closed.connect(order.adjust_max_qty)
+
+        if self.use_stops:
+            stop_order = StopOrder.from_order(order=order, stop_pct=self.stop_pct)
+            stop_order.filled.connect(trade.close)
+            trade.add_order(stop_order)
 
     def step(self):
-        # self.cdl = c
-        # df = self.df
-        # t = self.trade
         c = self.c
 
-        # signal_side = c.y_pred
-        # signal_side = c.y_pred # psar strat
-        # assign current side based on rolling proba
-
-        # signal_side = 1 if self.c.rolling_proba > self.split_val else -1
-
         if c.signal in (1, -1):
-            self.exit_trade()
-            self.enter_trade(side=c.signal, target_price=c.Close)
+            block_next = self.exit_trade(side=c.signal, target_price=c.Close)
+
+            if not block_next:
+                self.enter_trade(side=c.signal, target_price=c.Close)
 
 
 class StratScorer():
     """Obj to allow scoring only for cross_val test but not train"""
 
-    def __init__(self):
+    def __init__(self, n_smooth: int = 6):
         self.reset()
+        f.set_self(vars())
 
     def reset(self):
         self.m_train = dict(final=True, max=True)
@@ -150,14 +204,17 @@ class StratScorer():
             .pipe(sk.bg, subset=['tpd'], higher_better=False) \
             .apply(sk.background_grad_center, subset=higher_centered, higher_better=True, center=1.0) \
 
-        df_tot = df.mean().to_frame().T
+        ints = ('lev', 'good', 'filled', 'total')
+        df_tot = df.mean().to_frame().T \
+            .astype({k: int for k in ints})
+
         style_tot = df_tot \
             .style.format(fmt)
 
         display(style)
         display(style_tot)
 
-    def score(self, estimator, x, y_true, _type='final', regression=False, n_smooth=6, **kw):
+    def score(self, estimator, x, y_true, _type='final', regression=False, **kw):
         """Run strategy and return final balance
         - called for test then train for x number of splits
         """
@@ -177,11 +234,9 @@ class StratScorer():
             df_pred = x \
                 .assign(y_pred=estimator.predict(x)) \
                 .join(sk.df_proba(df=x, model=estimator)) \
-                .pipe(sg.add_ema, p=n_smooth, c=rolling_col, col='rolling_proba') \
-                .assign(
-                    signal=lambda x: np.sign(np.diff(np.sign(x.rolling_proba - 0.5), prepend=np.array([0])))) \
-                .fillna(0)
-            # .assign(rolling_proba=lambda x: x[rolling_col].rolling(n_smooth).mean()) \
+                .pipe(sg.add_ema, p=self.n_smooth, c=rolling_col, col='rolling_proba') \
+                .assign(signal=lambda x: sk.proba_to_signal(x.rolling_proba)) \
+                # .assign(rolling_proba=lambda x: x[rolling_col].rolling(n_smooth).mean()) \
 
             strat = Strategy(
                 lev=3,
@@ -201,8 +256,6 @@ class StratScorer():
 
         wallet = bm.strat.wallet
         if _type == 'final':
-            # print(f'final: {wallet.balance:.2f}')
             return wallet.balance  # final balance
         elif _type == 'max':
-            # print(f'max: {wallet.max:.2f}')
             return wallet.max
