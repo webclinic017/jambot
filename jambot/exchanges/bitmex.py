@@ -115,6 +115,22 @@ class Bitmex(Exchange):
             symbol = pos['symbol']
             self._positions[symbol.lower()] = pos
 
+    def last_price(self, symbol: str = 'XBTUSD') -> float:
+        """Get last price for symbol (used for testing)
+
+        Parameters
+        ----------
+        symbol : str
+            eg XBTUSD
+
+        Returns
+        -------
+        float
+            last price
+        """
+        m = self.client.Instrument.Instrument_get(symbol=symbol).result()[0][0]
+        return m['lastPrice']
+
     def open_contracts(self):
         """Open contracts for each position"""
         return {k: v['currentQty'] for k, v in self._positions.items()}
@@ -497,7 +513,9 @@ class Bitmex(Exchange):
                     ('Open', 'first'),
                     ('High', 'max'),
                     ('Low', 'min'),
-                    ('Close', 'last')])))
+                    ('Close', 'last'),
+                    ('Homenotional', 'sum'),
+                    ('Foreignnotional', 'sum')])))
 
         return pd.concat(lst).reset_index()
 
