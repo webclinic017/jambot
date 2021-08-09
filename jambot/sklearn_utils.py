@@ -6,6 +6,7 @@ import time
 from pathlib import Path
 from typing import *
 
+import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 from icecream import ic
@@ -57,6 +58,7 @@ class ModelManager(object):
             cv_args=None,
             random_state=0,
             target: str = 'target',
+            scorer=None,
             **kw):
         cv_args = cv_args if not cv_args is None else {}
         df_results = pd.DataFrame()
@@ -105,7 +107,9 @@ class ModelManager(object):
         data = self.ct.fit_transform(x_train)
         df_trans = df_transformed(data=data, ct=self.ct)
         print(df_trans.shape)
-        display(df_trans.describe().T)
+
+        with pd.option_context('display.max_rows', 200):
+            display(df_trans.describe().T)
 
     def get_model(self, name: str, best_est=False):
         if best_est:
@@ -113,7 +117,13 @@ class ModelManager(object):
         else:
             return self.models[name]
 
-    def cross_val_feature_params(self, signal_manager, name, model, feature_params: dict, train_size: float = 0.8):
+    def cross_val_feature_params(
+            self,
+            signal_manager,
+            name,
+            model,
+            feature_params: dict,
+            train_size: float = 0.8) -> None:
         """Run full cross val pipe with single replacement of each feature in feature_params"""
         df_scores_features = pd.DataFrame()
 
@@ -205,6 +215,10 @@ class ModelManager(object):
 
         if df_scores is None:
             df_scores = self.df_results
+
+        # reset StratScorer before each cross_val
+        if not self.scorer is None:
+            self.scorer.reset()
 
         for name, model in models.items():
 
@@ -335,7 +349,8 @@ class ModelManager(object):
             pipe.fit(
                 x_train,
                 y_train,
-                lgbm__sample_weight=np.linspace(0.5, 1, x_train.shape[0]))
+                **weighted_fit(name='lgbm', n=x_train.shape[0])
+            )
 
             # add preds to model
             x_test, _ = split(df_train.loc[idx], target=self.target)
@@ -1111,3 +1126,26 @@ def proba_to_signal(s: pd.Series) -> pd.Series:
 def weighted_fit(name: str, n: int) -> dict:
     """Create dict of weighted samples for fit params"""
     return {f'{name}__sample_weight': np.linspace(0.5, 1, n)}
+
+
+def plot_pred_dist(df: pd.DataFrame, cols: list = None) -> None:
+    """Show density plots of distribution target vs y_pred classes"""
+    if cols is None:
+        cols = ('target', 'y_pred')
+
+    fig, axs = plt.subplots(nrows=len(cols), sharex=True, figsize=(8, 10))
+
+    for col, ax in zip(cols, axs):
+        df[col].value_counts().sort_values() \
+            .plot(kind='bar', ax=ax, title=col)
+
+
+def plot_cols(df: pd.DataFrame, expr: str = '.') -> None:
+    """Plot all cols filtered by regex expr"""
+    cols = [c for c in df.columns if re.search(expr, c)]
+    ncols = len(cols)
+
+    fig, axs = plt.subplots(nrows=ncols, sharex=True, figsize=(12, 2 * ncols))
+
+    for col, ax in zip(cols, axs):
+        df[col].plot(title=col, ax=ax)
