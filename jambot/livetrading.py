@@ -246,11 +246,11 @@ def write_balance_google(syms, u, sht=None, ws=None, preservedf=False, df=None):
     bm = list(filter(lambda x: x.symbol == 'XBTUSD', syms))[0]
     if bm.strats:
         dfTrades = bm.strat.df_trades(last=10).drop(columns=['N', 'Contracts', 'Bal'])
-        dfTrades.Timestamp = dfTrades.Timestamp.dt.strftime('%Y-%m-%d %H')
+        dfTrades.timestamp = dfTrades.timestamp.dt.strftime('%Y-%m-%d %H')
         dfTrades.Pnl = dfTrades.Pnl.apply(lambda x: f.percent(x))
         dfTrades.PnlAcct = dfTrades.PnlAcct.apply(lambda x: f.percent(x))
     else:
-        dfTrades = ws.get_as_df(start='Q1', end='Y14')  # df.loc[:, 'Timestamp':'PnlAcct']
+        dfTrades = ws.get_as_df(start='Q1', end='Y14')  # df.loc[:, 'timestamp':'PnlAcct']
 
     df = pd.concat([df, u.df_orders(refresh=True), dfTrades], axis=1)
     ws.set_dataframe(df, (1, 1), nan='')
@@ -294,8 +294,8 @@ def run_toploop(u=None, partial=False, dfall=None):
             pos['percentbalance'] = weight
 
             symbol = row.symbol
-            # NOTE may need to set Timestamp/Symbol index when using more than just XBTUSD
-            df = dfall[dfall.Symbol == symbol]  # .reset_index(drop=True)
+            # NOTE may need to set timestamp/symbol index when using more than just XBTUSD
+            df = dfall[dfall.symbol == symbol]  # .reset_index(drop=True)
 
             # TREND_REV
             speed = (16, 6)
@@ -325,3 +325,23 @@ def run_toploop(u=None, partial=False, dfall=None):
             f.send_error(symbol)
 
     write_balance_google(syms, u, sht)
+
+
+def run_strat_live():
+    # trigger every 15min at 0sec
+
+    # update candles from bitmex to db
+    # need to query repeatedly till newest candle is available
+
+    # load raw data from db
+
+    # add signals to raw data
+
+    # load saved/trained models
+
+    # add predictions to signal data with model
+
+    # run strat in "live" mode to get expected state
+
+    # reconcile orders
+    return
