@@ -74,11 +74,6 @@ class Wallet(Observer):
     def qty(self) -> int:
         return int(self._qty)
 
-    # @qty.setter
-    # def qty(self, val):
-    #     self._qty = int(val)
-    #     print(f'qty: {self._qty}')
-
     @property
     def qty_opp(self) -> int:
         return self.qty * -1
@@ -220,7 +215,7 @@ class Wallet(Observer):
         """
 
         # add upnl xbt to available balance
-        upnl = f.get_pnl_xbt(self.qty, self.price, self.c.Close)
+        upnl = f.get_pnl_xbt(self.qty, self.price, self.c.close)
 
         qty = (self.balance + upnl) * self.lev * price
         return int(qty)
@@ -403,7 +398,7 @@ class Wallet(Observer):
         pd.options.display.max_rows = 100
 
     def get_df(self):
-        df = pd.DataFrame(columns=['Timestamp', 'Balance', 'PercentChange'])
+        df = pd.DataFrame(columns=['timestamp', 'Balance', 'PercentChange'])
         for i, t in enumerate(self.txns):
             df.loc[i] = [t.timestamp, t.balance_pre, t.percentchange]
         return df

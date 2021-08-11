@@ -3,9 +3,9 @@ from datetime import datetime as dt
 from datetime import timedelta as delta
 
 import azure.functions as func
-from __app__.jambot import functions as f
-from __app__.jambot import livetrading as live
-from __app__.jambot.database import db
+from __app__.jambot import functions as f  # type: ignore
+from __app__.jambot import livetrading as live  # type: ignore
+from __app__.jambot.database import db  # type: ignore
 
 
 def main(mytimer: func.TimerRequest) -> None:

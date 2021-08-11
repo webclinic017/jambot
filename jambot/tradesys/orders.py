@@ -239,7 +239,7 @@ class BitmexOrder(BaseOrder, DictRepr, Serializable):
 
         # NOTE kinda sketch
         if 'close' in self.name:
-            lst.append('Close')
+            lst.append('close')
 
         return lst
 

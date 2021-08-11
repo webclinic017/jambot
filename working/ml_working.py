@@ -83,7 +83,7 @@ if True:
     if reload_df or not p.exists() or dt.fromtimestamp(p.stat().st_mtime) < dt.now() + delta(days=-1):
         print('Downloading from db')
         df = db.get_dataframe(**kw) \
-            .drop(columns=['Timestamp', 'Symbol'])
+            .drop(columns=['timestamp', 'symbol'])
 
         df.to_csv(p)
     else:
@@ -138,7 +138,7 @@ if not regression:
 
 # %% - FEATURES, MODELMANAGER
 if True:
-    cols_ohlcv = ['Open', 'High', 'Low', 'Close', 'VolBTC']
+    cols_ohlcv = ['open', 'high', 'low', 'close', 'volume']
     # , 'target_max', 'target_min', 'pred_max', 'pred_min']
     drop_feats = cols_ohlcv + ['ema_10', 'ema_50', 'ema_200', 'pxhigh', 'pxlow']
     # target = ['target_max', 'target_min']
@@ -308,8 +308,8 @@ name = 'lgbm'
 fit_params = None
 
 # import talib as tb
-# df['psar'] = tb.SAR(df.High, df.Low, acceleration=0.02, maximum=0.2)
-# df['y_pred'] = np.where(df.Close > df.psar, -1, 1)
+# df['psar'] = tb.SAR(df.high, df.low, acceleration=0.02, maximum=0.2)
+# df['y_pred'] = np.where(df.close > df.psar, -1, 1)
 # df_pred = df.copy()
 
 # TODO test iter_predict maxhigh/minlow
@@ -364,7 +364,7 @@ kw = dict(
     # interval=1
 )
 
-cols = ['Open', 'High', 'Low', 'Close', 'y_pred', 'proba_long',
+cols = ['open', 'high', 'low', 'close', 'y_pred', 'proba_long',
         'rolling_proba', 'signal', 'pred_max', 'pred_min', 'target_max',
         'target_min']
 bm = bt.BacktestManager(**kw, strat=strat, df=df_pred.pipe(f.clean_cols, cols))
@@ -396,7 +396,7 @@ traces = [
     dict(name=rolling_col, func=ch.split_trace, split_val=split_val),
     dict(name='rolling_proba', func=ch.split_trace, split_val=split_val),
     # dict(name='mnt_rsi_2', func=ch.scatter),
-    # dict(name='VolBTC', func=ch.bar),
+    # dict(name='volume', func=ch.bar),
 ]
 
 df_balance = strat.wallet.df_balance
@@ -444,10 +444,10 @@ fig.show()
 
 
 # %% - DENSITY PLOTS
-# % % time
+# # %% time
 data = mm.ct.fit_transform(x_train)
 
-expr = 'vty'
+expr = 'mnt'
 df_trans = sk.df_transformed(data=data, ct=mm.ct) \
     .assign(target=y_train) \
     .pipe(f.filter_cols, expr=expr, include='target')

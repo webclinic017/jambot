@@ -38,10 +38,10 @@ class Strategy(bt.Strategy):
                 self.trade.exit_()
                 self.trade = None
         else:
-            if c.High >= c.chop_high:
+            if c.high >= c.chop_high:
                 self.status = -1
                 self.enter_trade(c.chop_high)
-            elif c.Low <= c.chop_low:
+            elif c.low <= c.chop_low:
                 self.status = 1
                 self.enter_trade(c.chop_low)
 
@@ -123,14 +123,14 @@ class Strategy(bt.Strategy):
 
     def print_trades(self, maxmin=0, maxlines=-1):
         data = []
-        cols = ['N', 'Timestamp', 'Sts', 'Dur', 'Anchor', 'Entry', 'Exit', 'Contracts', 'Filled', 'Pnl', 'Balance']
+        cols = ['N', 'timestamp', 'Sts', 'Dur', 'Anchor', 'Entry', 'Exit', 'Contracts', 'Filled', 'Pnl', 'Balance']
         for i, t in enumerate(self.trades):
             if not maxmin == 0 and maxmin * t.pnlfinal <= 0:
                 continue
 
             data.append([
                 t.tradenum,
-                '{:%Y-%m-%d %H}'.format(t.candles[0].Timestamp),
+                '{:%Y-%m-%d %H}'.format(t.candles[0].timestamp),
                 t.status,
                 t.duration(),
                 '{:,.0f}'.format(t.anchorstart),

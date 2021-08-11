@@ -276,26 +276,26 @@ class Candle():
 
     def dHC(self):
         c = self.row
-        return c.High - c.Close
+        return c.high - c.close
 
     def dLC(self):
         c = self.row
-        return c.Low - c.Close
+        return c.low - c.close
 
     def percentOCd(self):
         c = self.row
-        return (c.Close - c.Open) / c.Open
+        return (c.close - c.open) / c.open
 
     def percentOC(self):
         return f.percent(self.percentOCd())
 
     def size(self):
         c = self.row
-        return abs(c.High - c.Low)
+        return abs(c.high - c.low)
 
     def side(self):
         c = self.row
-        ans = 1 if c.Close > c.Open else -1
+        ans = 1 if c.close > c.open else -1
         return ans
 
     def tailpct(self, side):
@@ -307,13 +307,13 @@ class Candle():
         c = self.row
 
         if side == 1:
-            return c.High - max(c.Close, c.Open)
+            return c.high - max(c.close, c.open)
         elif side == -1:
-            return min(c.Close, c.Open) - c.Low
+            return min(c.close, c.open) - c.low
 
     def getmax(self, side):
         c = self.row
         if side == 1:
-            return c.High
+            return c.high
         else:
-            return c.Low
+            return c.low

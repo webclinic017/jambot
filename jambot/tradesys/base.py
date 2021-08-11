@@ -1,5 +1,7 @@
 from abc import ABCMeta, abstractmethod
 
+import pandas as pd
+
 from ..common import DictRepr
 from .__init__ import *
 

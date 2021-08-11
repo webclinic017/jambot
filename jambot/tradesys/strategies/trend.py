@@ -62,10 +62,10 @@ class Strategy(bt.Strategy):
             self.trade.check_orders(c)
 
             if self.trade.side == 1:
-                if c.Low < pxlow and c.Low < self.lastlow:
+                if c.low < pxlow and c.low < self.lastlow:
                     self.exit_trade()
             else:
-                if c.High > pxhigh and c.High > self.lasthigh:
+                if c.high > pxhigh and c.high > self.lasthigh:
                     self.exit_trade()
 
             if not self.trade.active:
@@ -76,9 +76,9 @@ class Strategy(bt.Strategy):
             pxhigh *= (1 + self.enteroffset)
             pxlow *= (1 - self.enteroffset)
 
-            if c.High > pxhigh:
+            if c.high > pxhigh:
                 self.enter_trade(1, pxhigh)
-            elif c.Low < pxlow:
+            elif c.low < pxlow:
                 self.enter_trade(-1, pxlow)
 
         self.lasthigh, self.lastlow = pxhigh, pxlow
@@ -153,7 +153,7 @@ class Trade(bt.Trade):
             ordtype_bot=2,
             ordtype='Stop',
             name='stopclose',
-            exec_inst='Close',
+            exec_inst='close',
             trade=self)
 
     def check_orders(self, c):

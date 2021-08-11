@@ -84,7 +84,7 @@ def set_self(m, prnt=False, exclude=()):
 
 
 def filter_df(dfall, symbol):
-    return dfall[dfall.Symbol == symbol].reset_index(drop=True)
+    return dfall[dfall.symbol == symbol].reset_index(drop=True)
 
 
 def filter_cols(df: pd.DataFrame, expr: str = '.', include: list = None) -> pd.DataFrame:
@@ -153,12 +153,12 @@ def print_time(start):
 
 def read_csv(startdate, daterange, symbol=None):
     p = Path.cwd().parent / 'Testing/df.csv'
-    df = pd.read_csv(p, parse_dates=['Timestamp'], index_col=0)
+    df = pd.read_csv(p, parse_dates=['timestamp'], index_col=0)
 
     if not symbol is None:
         df = filter_df(dfall=df, symbol=symbol)
 
-    mask = ((df['Timestamp'] >= startvalue(startdate)) & (df['Timestamp'] <= enddate(startdate, daterange)))
+    mask = ((df['timestamp'] >= startvalue(startdate)) & (df['timestamp'] <= enddate(startdate, daterange)))
     df = df.loc[mask].reset_index(drop=True)
     return df
 
@@ -340,7 +340,19 @@ def date_to_dt(d: date) -> dt:
     return dt.combine(d, dt.min.time())
 
 
-def timenow(interval=1):
+def timenow(interval: int = 1) -> dt:
+    """Get current time rounded to nearest 1hr/15min interval
+
+    Parameters
+    ----------
+    interval : int, optional
+        default 1
+
+    Returns
+    -------
+    dt
+        datetime rounded to interval
+    """
     if interval == 1:
         return dt.utcnow().replace(microsecond=0, second=0, minute=0)
     elif interval == 15:

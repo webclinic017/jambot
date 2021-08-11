@@ -37,8 +37,8 @@ def neg_red(s):
     return ['color: #ff8080' if v < 0 else '' for v in s]
 
 # Pandas plot on 2 axis
-# ax = bm.df.plot(kind='line', x='Timestamp', y=['ema50', 'ema200'])
-# bm.df.plot(kind='line', x='Timestamp', y='conf', secondary_y=True, ax=ax)
+# ax = bm.df.plot(kind='line', x='timestamp', y=['ema50', 'ema200'])
+# bm.df.plot(kind='line', x='timestamp', y='conf', secondary_y=True, ax=ax)
 
 # Charts
 
@@ -100,11 +100,11 @@ def chart_orders(t, pre=36, post=None, width=900, fast=50, slow=200):
     if post is None:
         post = dur if dur > 36 else 36
 
-    ts = t.candles[0].Timestamp
+    ts = t.candles[0].timestamp
     timelower = ts - delta(hours=pre)
     timeupper = ts + delta(hours=post)
 
-    mask = (df['Timestamp'] >= timelower) & (df['Timestamp'] <= timeupper)
+    mask = (df['timestamp'] >= timelower) & (df['timestamp'] <= timeupper)
     df = df.loc[mask].reset_index(drop=True)
 
     shapes, x, y, text = [], [], [], []
@@ -121,8 +121,8 @@ def chart_orders(t, pre=36, post=None, width=900, fast=50, slow=200):
 
     fig = go.Figure()
 
-    fig.add_trace(go.Scatter(x=df.Timestamp, y=df[f'ema{fast}'], line=dict(color='#18f27d', width=1)))
-    fig.add_trace(go.Scatter(x=df.Timestamp, y=df[f'ema{slow}'], line=dict(color='#9d19fc', width=1)))
+    fig.add_trace(go.Scatter(x=df.timestamp, y=df[f'ema{fast}'], line=dict(color='#18f27d', width=1)))
+    fig.add_trace(go.Scatter(x=df.timestamp, y=df[f'ema{slow}'], line=dict(color='#9d19fc', width=1)))
     fig.add_trace(candlestick(df))
     fig.add_trace(labels)
 
@@ -186,10 +186,10 @@ def candlestick(df, **kw):
     return go.Candlestick(
         name='candles',
         x=df.index,
-        open=df.Open,
-        high=df.High,
-        low=df.Low,
-        close=df.Close,
+        open=df.open,
+        high=df.high,
+        low=df.low,
+        close=df.close,
         increasing=dict(line=dict(color=colors['lightblue'])),
         decreasing=dict(line=dict(color=colors['lightred'])),
         line=dict(width=1),
@@ -232,13 +232,13 @@ def bar(df, name, color=None, **kw):
 
 def add_pred_trace(df, offset=2):
     # TODO this is so messy... 200 needs to be a %, not hard coded
-    s_offset = df.Low * offset * 0.01
+    s_offset = df.low * offset * 0.01
 
-    # df['sma_low'] = df.Low.rolling(10).mean() - s_offset
-    df['sma_low'] = (df.Low - s_offset).rolling(10).mean()
-    df['sma_low'] = df[['sma_low', 'Low']].min(axis=1)  # - s_offset
+    # df['sma_low'] = df.low.rolling(10).mean() - s_offset
+    df['sma_low'] = (df.low - s_offset).rolling(10).mean()
+    df['sma_low'] = df[['sma_low', 'low']].min(axis=1)  # - s_offset
     # df['sma_low'] = df['sma_low'].ewm(span=5).mean()
-    # df['sma_low'] = df[['sma_low', 'Low']].min(axis=1) - s_offset
+    # df['sma_low'] = df[['sma_low', 'low']].min(axis=1) - s_offset
     return df
 
 

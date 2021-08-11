@@ -83,7 +83,7 @@ def make_pipeline(name: str, df: pd.DataFrame) -> Pipeline:
     """
     cfg = get_model_params(name)
 
-    cols_ohlcv = ['Open', 'High', 'Low', 'Close', 'VolBTC']
+    cols_ohlcv = ['open', 'high', 'low', 'close', 'volume']
     ema_cols = ['ema50', 'ema200']
     drop_feats = cols_ohlcv + ema_cols + cfg.get('drop_cols')  # drop other target cols
     target = cfg.get('target')

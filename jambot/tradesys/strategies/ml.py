@@ -83,7 +83,7 @@ class Strategy(StrategyBase):
 
         trade = order.parent
         order = self.market_order(
-            price=self.c.Close,
+            price=self.c.close,
             side=side,
             name=name,
             trade=trade)
@@ -170,10 +170,10 @@ class Strategy(StrategyBase):
         c = self.c
 
         if c.signal in (1, -1):
-            block_next = self.exit_trade(side=c.signal, target_price=c.Close)
+            block_next = self.exit_trade(side=c.signal, target_price=c.close)
 
             if not block_next:
-                self.enter_trade(side=c.signal, target_price=c.Close)
+                self.enter_trade(side=c.signal, target_price=c.close)
 
 
 class StratScorer():
@@ -248,7 +248,7 @@ class StratScorer():
                 symbol='XBTUSD',
                 startdate=idx[0])
 
-            cols = ['Open', 'High', 'Low', 'Close', 'signal']
+            cols = ['open', 'high', 'low', 'close', 'signal']
             bm = BacktestManager(**kw_args, strat=strat, df=df_pred[cols])
             bm.run(prnt=False)
 

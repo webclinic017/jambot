@@ -1,4 +1,3 @@
-
 import itertools
 import warnings
 
@@ -465,11 +464,11 @@ class Bitmex(Exchange):
         timediff = 0
 
         if not self.partialcandle is None:
-            timediff = (self.partialcandle.Timestamp[0] - f.timenow()).seconds
+            timediff = (self.partialcandle.timestamp[0] - f.timenow()).seconds
 
         if (timediff > 7200
             or self.partialcandle is None
-                or not self.partialcandle.Symbol[0] == symbol):
+                or not self.partialcandle.symbol[0] == symbol):
             self.set_partial(symbol=symbol)
 
         return self.partialcandle
@@ -483,52 +482,75 @@ class Bitmex(Exchange):
         # partial not built to work with multiple symbols, need to add partials to dict
         # Append partialcandle df to df from SQL db
 
-        symbol = df.Symbol[0]
+        symbol = df.symbol[0]
         dfpartial = self.get_partial(symbol=symbol)
 
         return df.append(dfpartial, sort=False).reset_index(drop=True)
 
-    def resample(self, df, includepartial=False):
-        from collections import OrderedDict
+    def resample(self, df: pd.DataFrame, include_partial: bool = False, do: bool = True) -> pd.DataFrame:
+        """
+        Convert 5min candles to 15min
+            - need to only include groups of 3 > drop last 1 or 2 rows
+            - remove incomplete candles, split into groups first
+        """
+        if not do:
+            return df
 
-        # convert 5min candles to 15min
-        # need to only include groups of 3 > drop last 1 or 2 rows
-        # remove incomplete candles, split into groups first
-
-        gb = df.groupby('Symbol')
+        gb = df.groupby('symbol')
         lst = []
 
         for symbol in gb.groups:
             df = gb.get_group(symbol)
 
-            if not includepartial:
-                length = len(df)
-                cut = length - (length // 3) * 3
-                if cut > 0:
-                    df = df[:cut * -1]
+            rs = df \
+                .resample('15Min', on='timestamp')
 
-            lst.append(df.resample('15Min', on='Timestamp').agg(
-                OrderedDict([
-                    ('Symbol', 'first'),
-                    ('Open', 'first'),
-                    ('High', 'max'),
-                    ('Low', 'min'),
-                    ('Close', 'last'),
-                    ('Homenotional', 'sum'),
-                    ('Foreignnotional', 'sum')])))
+            df = rs \
+                .agg(dict(
+                    symbol='first',
+                    open='first',
+                    high='max',
+                    low='min',
+                    close='last',
+                    volume='sum')) \
+                .join(rs.timestamp.count().rename('num'))
 
-        return pd.concat(lst).reset_index()
+            if not include_partial:
+                df = df.query('num == 3')
+
+            lst.append(df)
+
+        return pd.concat(lst) \
+            .reset_index() \
+            .drop(columns=['num'])
+
+    def last_candle(self, interval: int = 1, **kw) -> pd.DataFrame:
+        """Return last candle only (for checking most recent avail time)
+
+        Parameters
+        ----------
+        interval : int, optional
+            default 1
+
+        Returns
+        -------
+        pd.DataFrame
+            df of last candle
+        """
+        count = {1: 1, 15: 5}.get(interval, 1)
+        return self.get_candles(interval=interval, reverse=True, count=count, include_partial=False, **kw)
 
     def get_candles(
             self,
             symbol: str = '',
-            starttime=None,
-            fltr='',
-            retainpartial=False,
-            includepartial=True,
-            interval=1,
-            count=1000,
-            pages=100):
+            starttime: dt = None,
+            fltr: str = '',
+            retain_partial: bool = False,
+            include_partial: bool = True,
+            interval: int = 1,
+            count: int = 1000,
+            pages: int = 100,
+            reverse: bool = False) -> pd.DataFrame:
 
         if interval == 1:
             binsize = '1h'
@@ -543,42 +565,45 @@ class Bitmex(Exchange):
         resultcount = float('inf')
         start = 0
         lst = []
+        cols = ['symbol', 'timestamp', 'open', 'high', 'low', 'close', 'volume']
 
         while resultcount >= 1000 and start // 1000 <= pages:
-            result = self.client.Trade.Trade_getBucketed(
+            request = self.client.Trade.Trade_getBucketed(
                 binSize=binsize,
                 symbol=symbol,
                 startTime=starttime,
                 filter=fltr,
                 count=count,
                 start=start,
-                reverse=False,
-                partial=includepartial).response().result
+                reverse=reverse,
+                partial=include_partial,
+                columns=json.dumps(cols))
+
+            response = request.response()
+            result = response.result
+            ratelim_remaining = int(response.metadata.headers['x-ratelimit-remaining'])
 
             resultcount = len(result)
             lst.extend(result)
             start += 1000
 
+            if ratelim_remaining <= 1:
+                log.info('Ratelimit reached. Sleeping 10 seconds.')
+                time.sleep(10)
+
         # convert bitmex dict to df
-        df = pd.json_normalize(lst)
-        df.columns = [x.capitalize() for x in df.columns]
-        df.Timestamp = df.Timestamp.astype('datetime64[ns]') + offset * -1
+        # bitmex gives closetime, tradingview shows opentime, offset to match open
+        # keep all volume in terms of BTC - NOTE should probs change this to only Foreignnotional
 
-        if interval == 15:
-            df = self.resample(df=df, includepartial=includepartial)
+        df = pd.json_normalize(lst) \
+            .assign(timestamp=lambda x: x.timestamp.astype('datetime64[ns]') + offset * -1) \
+            .pipe(self.resample, include_partial=include_partial, do=interval == 15) \
+            .assign(interval=interval)[['interval'] + cols]
 
-        # keep all volume in terms of BTC
-        cols = ['Interval', 'Symbol', 'Timestamp', 'Open', 'High', 'Low', 'Close', 'VolBTC']
-
-        df = df \
-            .assign(
-                Interval=interval,
-                VolBTC=lambda x: np.where(x.Symbol == 'XBTUSD', x.Homenotional, x.Foreignnotional))[cols]
-
-        if includepartial:
+        if include_partial:
             self.partialcandle = df.tail(1).copy().reset_index(drop=True)  # save last as df
 
-            if not retainpartial:
+            if not retain_partial:
                 df.drop(df.index[-1], inplace=True)
 
         return df

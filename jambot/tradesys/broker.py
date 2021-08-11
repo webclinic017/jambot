@@ -1,5 +1,3 @@
-from IPython.display import display
-
 from .__init__ import *
 from .base import Observer, SignalEvent
 from .enums import OrderStatus
@@ -70,7 +68,7 @@ class Broker(Observer):
         # TODO need to mock filling?
         if order.is_market and not self.c is None:
             # fill immediately
-            order.price = self.c.Close
+            order.price = self.c.close
             self.fill_order(order)
         else:
             order.status = OrderStatus.OPEN
@@ -121,10 +119,10 @@ class Broker(Observer):
 
             if order.is_market:
                 # NOTE cant adjust market order price without adjusting price
-                order.price = self.c.Close
+                order.price = self.c.close
 
             # fill if order lies in current candle's range
-            if self.c.Low <= order.price <= self.c.High:
+            if self.c.low <= order.price <= self.c.high:
 
                 self.fill_order(order)
 

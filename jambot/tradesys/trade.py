@@ -215,7 +215,7 @@ class Trade(Observer):
         self.close()
 
     def close(self, *args):
-        """Close trade"""
+        """close trade"""
         self.cancel_open_orders()
 
         if not self.is_closed:

@@ -14,5 +14,5 @@ def default_df():
     return pd \
         .read_csv(
             p,
-            parse_dates=['Timestamp'],
-            index_col='Timestamp')
+            parse_dates=['timestamp'],
+            index_col='timestamp')

@@ -165,11 +165,11 @@ class SignalGroup():
     """Base class for ta indicators"""
     # Default OHLCV cols for df, used to pass to ta signals during init
     m_default = dict(
-        open='Open',
-        high='High',
-        low='Low',
-        close='Close',
-        volume='VolBTC')
+        open='open',
+        high='high',
+        low='low',
+        close='close',
+        volume='volume')
 
     def __init__(self, df=None, signals=None, fillna=True, prefix: str = None, **kw):
         drop_cols, no_slope_cols, no_sum_cols, normal_slope_cols = [], [], [], []
@@ -452,8 +452,8 @@ class Volume(SignalGroup):
     def __init__(self, **kw):
         prefix = 'vol'
         kw['signals'] = dict(
-            # relative=lambda x: x.VolBTC / x.VolBTC.shift(6).rolling(24).mean(),
-            relative=lambda x: relative_self(x.VolBTC, n=24 * 7),
+            # relative=lambda x: x.volume / x.volume.shift(6).rolling(24).mean(),
+            relative=lambda x: relative_self(x.volume, n=24 * 7),
             # mom=lambda x: x.vol_relative * x.pct,
             chaik=dict(cls=ChaikinMoneyFlowIndicator, ta_func='chaikin_money_flow', window=4),
             mfi=dict(cls=MFIIndicator, ta_func='money_flow_index', window=48),
@@ -471,8 +471,8 @@ class Volatility(SignalGroup):
         prefix = 'vty'
         kw['signals'] = dict(
             ulcer=dict(cls=UlcerIndex, ta_func='ulcer_index', window=2),
-            maxhigh=lambda x: x.High.rolling(48).max(),
-            minlow=lambda x: x.Low.rolling(48).min(),
+            maxhigh=lambda x: x.high.rolling(48).max(),
+            minlow=lambda x: x.low.rolling(48).min(),
             spread=lambda x: abs(x.vty_maxhigh - x.vty_minlow) / x[['vty_maxhigh', 'vty_minlow']].mean(axis=1),
             ema=lambda x: x.vty_spread.ewm(span=60, min_periods=60).mean(),
             sma=lambda x: x.vty_spread.rolling(300).mean(),
@@ -621,7 +621,7 @@ class SFP(SignalGroup):
         offset = 6
         periods = [self.period_base * 2 ** i for i in range(3)]
 
-        m = dict(High=['max', 1], Low=['min', -1])
+        m = dict(high=['max', 1], low=['min', -1])
 
         for period in periods:
             for extrema, v in m.items():
@@ -631,13 +631,13 @@ class SFP(SignalGroup):
                 s = df[extrema].rolling(period)
 
                 df[check_extrema] = getattr(s, agg_func)().shift(offset)  # min() or max()
-                # df[f'low_{period}'] = df.Low.rolling(period).min().shift(offset)
+                # df[f'low_{period}'] = df.low.rolling(period).min().shift(offset)
 
                 # calc candle is swing fail or not
                 # minswing means tail must also be greater than min % of candle full size
                 df[f'sfp_{check_extrema}'] = np.where(
                     (side * (df[extrema] - df[check_extrema]) > 0) &
-                    (side * (df.Close - df[check_extrema] < 0)) &
+                    (side * (df.close - df[check_extrema] < 0)) &
                     (df[f'cdl_tail_size_{extrema.lower()}'] / df.cdl_full > self.minswing),
                     1, 0)
 
@@ -665,28 +665,28 @@ class Candle(SignalGroup):
         # TODO #5
         n_periods = 24  # used to cal relative position of close to prev range
         kw['signals'] = dict(
-            pct=lambda x: x.Close.pct_change(24),
-            # min_n=lambda x: x.Low.rolling(n_periods).min(),
-            # range_n=lambda x: (x.High.rolling(n_periods).max() - x.min_n),
-            cdl_side=lambda x: np.where(x.Close > x.Open, 1, -1),
-            cdl_full=lambda x: (x.High - x.Low) / x.Open,
-            cdl_body=lambda x: (x.Close - x.Open) / x.Open,
+            pct=lambda x: x.close.pct_change(24),
+            # min_n=lambda x: x.low.rolling(n_periods).min(),
+            # range_n=lambda x: (x.high.rolling(n_periods).max() - x.min_n),
+            cdl_side=lambda x: np.where(x.close > x.open, 1, -1),
+            cdl_full=lambda x: (x.high - x.low) / x.open,
+            cdl_body=lambda x: (x.close - x.open) / x.open,
             cdl_full_rel=lambda x: relative_self(x.cdl_full, n=n_periods),
             cdl_body_rel_6=lambda x: relative_self(x.cdl_body, n=6),
             cdl_body_rel_12=lambda x: relative_self(x.cdl_body, n=12),
             cdl_body_rel_24=lambda x: relative_self(x.cdl_body, n=24),
-            cdl_tail_high=lambda x: np.abs(x.High - x[['Close', 'Open']].max(axis=1)) / x.Open,
-            cdl_tail_low=lambda x: np.abs(x.Low - x[['Close', 'Open']].min(axis=1)) / x.Open,
-            ema200_v_high=lambda x: np.abs(x.High - x.ema_200) / x.Open,
-            ema200_v_low=lambda x: np.abs(x.Low - x.ema_200) / x.Open,
-            pxhigh=lambda x: x.High.rolling(n_periods).max().shift(1),
-            pxlow=lambda x: x.Low.rolling(n_periods).min().shift(1),
-            high_above_prevhigh=lambda x: np.where(x.High > x.pxhigh, 1, 0),
-            close_above_prevhigh=lambda x: np.where(x.Close > x.pxhigh, 1, 0),
-            low_below_prevlow=lambda x: np.where(x.Low < x.pxlow, 1, 0),
-            close_below_prevlow=lambda x: np.where(x.Close < x.pxlow, 1, 0),
-            # buy_pressure=lambda x: (x.Close - x.Low.rolling(2).min().shift(1)) / x.Close,
-            # sell_pressure=lambda x: (x.Close - x.High.rolling(2).max().shift(1)) / x.Close,
+            cdl_tail_high=lambda x: np.abs(x.high - x[['close', 'open']].max(axis=1)) / x.open,
+            cdl_tail_low=lambda x: np.abs(x.low - x[['close', 'open']].min(axis=1)) / x.open,
+            ema200_v_high=lambda x: np.abs(x.high - x.ema_200) / x.open,
+            ema200_v_low=lambda x: np.abs(x.low - x.ema_200) / x.open,
+            pxhigh=lambda x: x.high.rolling(n_periods).max().shift(1),
+            pxlow=lambda x: x.low.rolling(n_periods).min().shift(1),
+            high_above_prevhigh=lambda x: np.where(x.high > x.pxhigh, 1, 0),
+            close_above_prevhigh=lambda x: np.where(x.close > x.pxhigh, 1, 0),
+            low_below_prevlow=lambda x: np.where(x.low < x.pxlow, 1, 0),
+            close_below_prevlow=lambda x: np.where(x.close < x.pxlow, 1, 0),
+            # buy_pressure=lambda x: (x.close - x.low.rolling(2).min().shift(1)) / x.close,
+            # sell_pressure=lambda x: (x.close - x.high.rolling(2).max().shift(1)) / x.close,
         )
 
         # close v range
@@ -713,14 +713,14 @@ class Candle(SignalGroup):
     def close_v_range(self, df, n_periods=24) -> pd.Series:
         # col = f'close_v_range_{n_periods}'
         # dont really need to use .shift(1) here
-        min_n = df.Low.rolling(n_periods).min()
-        range_n = (df.High.rolling(n_periods).max() - min_n)
-        s = (df.Close - min_n) / range_n
+        min_n = df.low.rolling(n_periods).min()
+        range_n = (df.high.rolling(n_periods).max() - min_n)
+        s = (df.close - min_n) / range_n
         s = s.fillna(s.mean())
         return s
 
     def add_all_signals(self, df):
-        # NOTE could be kinda wrong div by Open, possibly try div by SMA?
+        # NOTE could be kinda wrong div by open, possibly try div by SMA?
         # TODO NEED candle body sizes relative to current rolling volatility
 
         # .pipe(lambda df: df.fillna(value=dict(
@@ -738,7 +738,7 @@ class CandlePatterns(SignalGroup):
         cdl_names = tb.get_function_groups()['Pattern Recognition']
 
         kw['signals'] = {c.lower().replace('cdl', 'cdp_'): lambda x, c=c: getattr(tb, c)
-                         (x.Open, x.High, x.Low, x.Close) for c in cdl_names}
+                         (x.open, x.high, x.low, x.close) for c in cdl_names}
 
         super().__init__(**kw)
 
@@ -775,7 +775,7 @@ class TargetMeanEMA(TargetClass):
         # TODO ^ definitely needs to be scaled to daily volatility
 
         predict_col = self.ema_col
-        # predict_col = 'Close'
+        # predict_col = 'close'
 
         return df \
             .pipe(add_ema, p=self.p_ema) \
@@ -795,7 +795,7 @@ class TargetMean(TargetClass):
 
         if not regression:
             kw['signals'] = dict(
-                pct_future=lambda x: (x.Close.shift(-1 * n_periods).rolling(n_periods).mean() - x.Close),
+                pct_future=lambda x: (x.close.shift(-1 * n_periods).rolling(n_periods).mean() - x.close),
                 target=lambda x: np.where(x.pct_future > pct_min, 1, -1),
             )
             drop_cols = ['pct_future']
@@ -803,7 +803,7 @@ class TargetMean(TargetClass):
         else:
             # just use % diff for regression instead of -1/1 classification
             kw['signals'] = dict(
-                target=lambda x: (x.Close.shift(-1 * n_periods).rolling(n_periods).mean() - x.Close) / x.Close)
+                target=lambda x: (x.close.shift(-1 * n_periods).rolling(n_periods).mean() - x.close) / x.close)
 
         super().__init__(**kw)
 
@@ -817,11 +817,11 @@ class TargetMaxMin(TargetClass):
 
     def __init__(self, n_periods, **kw):
 
-        items = [('max', 'High'), ('min', 'Low')]
+        items = [('max', 'high'), ('min', 'low')]
         kw['signals'] = {f'target_{fn}': lambda x, fn=fn, c=c: (
             x[c]
             .shift(-1 * n_periods)
-            .rolling(n_periods).__getattribute__(fn)() - x.Close) / x.Close for fn, c in items}
+            .rolling(n_periods).__getattribute__(fn)() - x.close) / x.close for fn, c in items}
 
         super().__init__(**kw)
 
@@ -859,8 +859,8 @@ def add_emas(df, emas: list = None):
     return df
 
 
-def add_ema(df, p, c='Close', col=None, overwrite=True):
-    """Add ema from Close price to df if column doesn't already exist (more than one signal may add an ema"""
+def add_ema(df, p, c='close', col=None, overwrite=True):
+    """Add ema from close price to df if column doesn't already exist (more than one signal may add an ema"""
     if col is None:
         col = f'ema_{p}'
 
@@ -912,13 +912,13 @@ def add_extrema(df, side):
 
     if side == 1:
         name = 'maxima'
-        col = 'High'
+        col = 'high'
         func = 'max'
         op = opr.gt
         is_min = False
     else:
         name = 'minima'
-        col = 'Low'
+        col = 'low'
         func = 'min'
         op = opr.lt
         is_min = True

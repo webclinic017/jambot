@@ -22,12 +22,12 @@ class Strategy(trend.Strategy):
         self.trend = sg.Trend(df=df, offset=6, signals=[df.ema_trend], speed=self.speed)
 
     def enter_trade(self, side, c):
-        self.trade = self.init_trade(trade=Trade(), side=side, entry_price=c.Close, conf=self.get_confidence(side=side))
+        self.trade = self.init_trade(trade=Trade(), side=side, entry_price=c.close, conf=self.get_confidence(side=side))
         self.trade.add_candle(c)
 
     def exit_trade(self):
         t, c = self.trade, self.cdl
-        t.marketclose.fill(c=c, price=c.Close)
+        t.marketclose.fill(c=c, price=c.close)
         t.exit_trade()
 
     def decide(self, c):
@@ -41,10 +41,10 @@ class Strategy(trend.Strategy):
             t.add_candle(c)
 
             if t.side == 1:
-                if c.Close < pxlow:
+                if c.close < pxlow:
                     self.exit_trade()
             else:
-                if c.Close > pxhigh:
+                if c.close > pxhigh:
                     self.exit_trade()
 
             if not t.active:
@@ -55,9 +55,9 @@ class Strategy(trend.Strategy):
             pxhigh *= (1 + self.enteroffset)
             pxlow *= (1 - self.enteroffset)
 
-            if c.Close > pxhigh:
+            if c.close > pxhigh:
                 self.enter_trade(side=1, c=c)
-            elif c.Close < pxlow:
+            elif c.close < pxlow:
                 self.enter_trade(side=-1, c=c)
 
         # self.lasthigh, self.lastlow = pxhigh, pxlow
@@ -89,7 +89,7 @@ class Trade(bt.Trade):
             ordtype_bot=6,
             ordtype='Market',
             name='marketclose',
-            exec_inst='Close',
+            exec_inst='close',
             trade=self)
 
         self.marketopen.fill(c=self.cdl)

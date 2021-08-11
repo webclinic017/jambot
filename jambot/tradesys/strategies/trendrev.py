@@ -44,7 +44,7 @@ class Strategy(StrategyBase):
 
         if not t.stopped and t.limitopen.filled and not t.limitclose.filled:
             t.stop.cancel()
-            t.limitclose.fill(c=c, price=c.Close)
+            t.limitclose.fill(c=c, price=c.close)
             self.unfilledtrades += 1
 
         t.exit_trade()
@@ -70,10 +70,10 @@ class Strategy(StrategyBase):
             t = self.trade
 
             if t.side == 1:
-                if c.High > max(pxhigh, self.lasthigh):
+                if c.high > max(pxhigh, self.lasthigh):
                     t.active = False
             else:
-                if c.Low < min(pxlow, self.lastlow):
+                if c.low < min(pxlow, self.lastlow):
                     t.active = False
 
             t.check_orders(c)
@@ -88,9 +88,9 @@ class Strategy(StrategyBase):
         enterhigh, enterlow = self.lasthigh, self.lastlow
         # enterhigh, enterlow = pxhigh, pxlow
         if self.trade is None:
-            if c.High > enterhigh:
+            if c.high > enterhigh:
                 self.enter_trade(-1, enterhigh)
-            elif c.Low < enterlow:
+            elif c.low < enterlow:
                 self.enter_trade(1, enterlow)
 
         self.lasthigh, self.lastlow = pxhigh, pxlow
@@ -247,7 +247,7 @@ class TradeRev(Trade):
                     and self.active
                     and self.duration() == 4
                         and not o.filled):
-                    o.fill(c=c, price=c.Close)
+                    o.fill(c=c, price=c.close)
 
                 if o.filled:
                     if o.ordtype_bot == 1:

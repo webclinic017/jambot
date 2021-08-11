@@ -130,7 +130,7 @@ def load_df(d_lower: dt, symbol: str = 'XBTUSD') -> pd.DataFrame:
         interval=1)
 
     return db.get_dataframe(**kw) \
-        .drop(columns=['Timestamp', 'Symbol'])
+        .drop(columns=['timestamp', 'symbol'])
 
 
 def fit_save_models(df: pd.DataFrame = None, d_lower: dt = None, reset_hour: int = 18):

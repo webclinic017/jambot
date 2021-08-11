@@ -29,8 +29,8 @@ class Strategy(StrategyBase):
         for i in range(3):
             period = period_base * 2 ** i
 
-            df[f'sfp_high{i}'] = df.High.rolling(period).max().shift(offset)
-            df[f'sfp_low{i}'] = df.Low.rolling(period).min().shift(offset)
+            df[f'sfp_high{i}'] = df.high.rolling(period).max().shift(offset)
+            df[f'sfp_low{i}'] = df.low.rolling(period).min().shift(offset)
 
         ema = sg.EMA(weight=1)
         df = df.pipe(ema.add_signal)
@@ -42,10 +42,10 @@ class Strategy(StrategyBase):
 
     def check_swing(self, side, swingval, cdl):
         c = cdl.row
-        px_max = c.High if side == 1 else c.Low
+        px_max = c.high if side == 1 else c.low
 
         if (side * (px_max - swingval) > 0 and
-                side * (c.Close - swingval) < 0):
+                side * (c.close - swingval) < 0):
             return True
 
     def is_swingfail(self, c=None, i=None):
@@ -98,7 +98,7 @@ class Strategy(StrategyBase):
             t = self.trade
             t.add_candle(c)
             if t.duration() == 12:
-                self.exit_trade(price=c.Close)
+                self.exit_trade(price=c.close)
 
         # ENTER Trade
         # if swing fail, then enter in opposite direction at close
@@ -119,7 +119,7 @@ class Strategy(StrategyBase):
                 else:
                     swingtype = stypes[list(m2)[0]]
 
-                self.enter_trade(side=swingtype * -1, price=c.Close, c=c)
+                self.enter_trade(side=swingtype * -1, price=c.close, c=c)
 
 
 class SFPTrade(Trade):
