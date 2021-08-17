@@ -1,4 +1,9 @@
-code := jambot tests working
+code := jambot tests working az_*
+
+# Azure commands
+# func azure functionapp fetch-app-settings jambot-app
+
+# az functionapp config appsettings set --name jambot-app --resource-group jambot-app --settings AzureWebJobs.OneHour.Disabled=true
 
 .PHONY : format
 format:  ## autopep, isort, flake
@@ -8,7 +13,19 @@ format:  ## autopep, isort, flake
 
 .PHONY : app
 app:  ## push jambot app to azure
-	@func azure functionapp publish jambot-app
+	@func azure functionapp publish jambot-app --build-native-deps
+
+.PHONY : run-app-local
+run-app-local:  ## run app for local testing
+	@func host start
+
+.PHONY : testfunc
+testfunc:  ## Test trigger azure function running on localhost
+	@curl --request POST -H "Content-Type:application/json" --data '{"input":""}' http://localhost:7071/admin/functions/az_RetrainModel
+
+.PHONY : reqs
+reqs:  ## make requirements.txt for function app
+	@poetry export -f requirements.txt --output requirements.txt --without-hashes
 
 .PHONY : test
 test: ## run tests
