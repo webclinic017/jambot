@@ -22,6 +22,7 @@ host.json
 .funcignore
 errlog.txt
 *.stats
+fil-result
 
 
 # Local python packages

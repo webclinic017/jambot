@@ -37,7 +37,7 @@ startdate = dt(2019, 1, 1)
 interval = 1
 
 # Load OHLC data from Azure-hosted SQL server 
-df = db.get_dataframe(symbol=symbol, startdate=startdate, daterange=daterange, interval=interval)
+df = db.get_df(symbol=symbol, startdate=startdate, daterange=daterange, interval=interval)
 
 # Init TrendRev strategy
 speed = (16, 6)
