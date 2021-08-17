@@ -1,8 +1,11 @@
-from . import functions as f
-from .__init__ import *
-from .database import db
-from .tradesys import backtest as bt
-from .tradesys.strategies import sfp, trendrev
+from jambot import *
+from jambot import config as cf
+from jambot import functions as f
+from jambot.exchanges.bitmex import Bitmex
+from jambot.ml import models as md
+from jambot.ml.storage import ModelStorageManager
+from jambot.tradesys import backtest as bt
+from jambot.tradesys.strategies import ml, sfp, trendrev
 
 
 def compare_state(strat, pos):
@@ -89,7 +92,7 @@ def refresh_gsheet_balance(u=None):
     lst = list(df['Sym'].dropna())
     syms = []
 
-    p = f.p_res / 'symbols.csv'
+    p = cf.p_res / 'symbols.csv'
     df2 = pd.read_csv(p)
     for row in df2.itertuples():
         if row.symbolshort in lst:
@@ -141,7 +144,7 @@ def check_filled_orders(minutes=5, refresh=True, u=None):
     orders = u.get_filled_orders(starttime=starttime)
 
     if orders:
-        p = f.p_res / 'symbols.csv'
+        p = cf.p_res / 'symbols.csv'
         df = pd.read_csv(p)
 
         lst, syms, templist = [], [], []
@@ -259,11 +262,12 @@ def write_balance_google(syms, u, sht=None, ws=None, preservedf=False, df=None):
 
 def run_toploop(u=None, partial=False, dfall=None):
     # run every 1 hour, or when called by check_filled_orders()
+    from jambot.database import db
 
     # Google - get user/position info
     sht = f.get_google_sheet()
     g_usersettings = sht.worksheet_by_title('UserSettings').get_all_records()
-    p = f.p_res / 'symbols.csv'
+    p = cf.p_res / 'symbols.csv'
     dfsym = pd.read_csv(p)
     g_user = g_usersettings[0]
     syms = []
@@ -282,7 +286,7 @@ def run_toploop(u=None, partial=False, dfall=None):
     # Only using XBTUSD currently
     startdate = f.timenow() + delta(days=-15)
     if dfall is None:
-        dfall = db.get_dataframe(symbol='XBTUSD', startdate=startdate, interval=1)
+        dfall = db.get_df(symbol=SYMBOL, startdate=startdate, interval=1)
 
     for row in dfsym.itertuples():
         if not row.symbol == 'XBTUSD':
@@ -327,21 +331,48 @@ def run_toploop(u=None, partial=False, dfall=None):
     write_balance_google(syms, u, sht)
 
 
-def run_strat_live():
+def run_strat_live(exch: Bitmex = None, test: bool = False):
+    # TODO add errlog wrapper
+    from jambot.database import db
+
     # trigger every 15min at 0sec
+    interval = 15
+    symbol = SYMBOL
+    name = 'lgbm'
 
     # update candles from bitmex to db
     # need to query repeatedly till newest candle is available
+    # if not test:
+    #     exch.wait_candle_avail(interval=interval)
 
     # load raw data from db
-
     # add signals to raw data
+    offset = {1: 16, 15: 4}.get(interval)
+    startdate = f.timenow(interval) + delta(days=-offset)
+    df = db.get_df(symbol=symbol, startdate=startdate, interval=interval) \
+        .pipe(md.add_signals, name=name)
 
-    # load saved/trained models
-
-    # add predictions to signal data with model
+    # load saved/trained models from blob storage and add pred signals
+    df_pred = ModelStorageManager() \
+        .df_pred_from_models(df=df, name=name)
 
     # run strat in "live" mode to get expected state
+    strat = ml.make_strat(live=True)
+
+    cols = ['open', 'high', 'low', 'close', 'signal']
+    bm = bt.BacktestManager(
+        symbol=symbol,
+        startdate=df.index[0],
+        strat=strat,
+        df=df_pred[cols])
+
+    bm.run()
 
     # reconcile orders
+    return
+
+
+def retrain_model():
+    """Run every 24? hours, retrain model and save"""
+    # TODO need new az_TrainModel, trigger 24 hrs + 5 mins or something
     return
