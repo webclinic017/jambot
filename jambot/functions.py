@@ -1,7 +1,5 @@
 """General Functions module - don't rely on any other modules from jambot"""
 
-import json
-import os
 import pickle
 import re
 import time
@@ -10,25 +8,13 @@ from datetime import datetime as dt
 from datetime import timedelta as delta
 from pathlib import Path
 from sys import platform
-from typing import Any
+from typing import Any, Union
 
 import pandas as pd
-import pyodbc
-import pypika as pk
 import yaml
 from dateutil.parser import parse
-from pypika import functions as fn
 
-from jambot import AZURE_WEB
-from jambot.utils.secrets import SecretsManager
-
-p_proj = Path(__file__).parent  # jambot python files
-p_root = p_proj.parent  # root folter
-p_res = p_proj / '_res'
-p_sec = p_res / 'secrets'
-
-# set data dir for local vs azure
-p_data = p_root / 'data' if not AZURE_WEB else Path.home() / 'data'
+from jambot import config as cf
 
 
 def check_path(p: Path) -> None:
@@ -87,7 +73,24 @@ def filter_df(dfall, symbol):
     return dfall[dfall.symbol == symbol].reset_index(drop=True)
 
 
-def filter_cols(df: pd.DataFrame, expr: str = '.', include: list = None) -> pd.DataFrame:
+def filter_cols(df: pd.DataFrame, expr: str = '.') -> list:
+    """Return list of cols in df based on regex expr
+
+    Parameters
+    ----------
+    df : pd.DataFrame
+    expr : str, optional
+        default '.'
+
+    Returns
+    -------
+    list
+        list of cols which match expression
+    """
+    return [c for c in df.columns if re.search(expr, c)]
+
+
+def select_cols(df: pd.DataFrame, expr: str = '.', include: list = None) -> pd.DataFrame:
     """Filter df cols based on regex
 
     Parameters
@@ -100,7 +103,7 @@ def filter_cols(df: pd.DataFrame, expr: str = '.', include: list = None) -> pd.D
     -------
     pd.DataFrame
     """
-    cols = [c for c in df.columns if re.search(expr, c)]
+    cols = filter_cols(df, expr)
 
     # include other cols
     if not include is None:
@@ -108,6 +111,70 @@ def filter_cols(df: pd.DataFrame, expr: str = '.', include: list = None) -> pd.D
         cols += include
 
     return df[cols]
+
+
+def drop_cols(df: pd.DataFrame, expr: str = '.') -> pd.DataFrame:
+    """Filter df cols based on regex
+
+    Parameters
+    ----------
+    df : pd.DataFrame
+    expr : str, optional
+        regex expr, by default '.'
+
+    Returns
+    -------
+    pd.DataFrame
+    """
+    return df.drop(columns=filter_cols(df, expr))
+
+
+def clean_cols(df: pd.DataFrame, cols: list) -> pd.DataFrame:
+    """Return cols if they exist in dataframe"""
+    cols = [c for c in cols if c in df.columns]
+    return df[cols]
+
+
+def safe_drop(df: pd.DataFrame, cols: Union[str, list], do: bool = True) -> pd.DataFrame:
+    """Drop columns from dataframe if they exist
+
+    Parameters
+    ----------
+    df : pd.DataFrame
+    cols : Union[str, list]
+        list of cols or str
+
+    Returns
+    -------
+    pd.DataFrame
+        df with cols dropped
+    """
+    if not do:
+        return df
+
+    cols = [c for c in as_list(cols) if c in df.columns]
+    return df.drop(columns=cols)
+
+
+def reduce_dtypes(df: pd.DataFrame, dtypes: dict) -> pd.DataFrame:
+    """Change dtypes from {select: to}
+
+    Parameters
+    ----------
+    df : pd.DataFrame
+    dtypes : dict
+        dict eg {np.float32: np.float16}
+
+    Returns
+    -------
+    pd.DataFrame
+        df with dtypes changed
+    """
+    dtype_cols = {}
+    for d_from, d_to in dtypes.items():
+        dtype_cols |= {c: d_to for c in df.select_dtypes(d_from).columns}
+
+    return df.astype(dtype_cols)
 
 # DATETIME
 
@@ -275,17 +342,23 @@ def col(df, col):
 
 def binance_creds():
     return
-    p = p_sec / 'binance.yaml'
+    p = cf.p_sec / 'binance.yaml'
     with open(p) as file:
         return yaml.full_load(file)
 
 
-def discord(msg, channel='jambot'):
-    import discord
-    import requests
-    from discord import File, RequestsWebhookAdapter, Webhook
+def discord(msg: str, channel: str = 'jambot') -> None:
+    """Send message to discord channel
 
-    p = p_sec / 'discord.csv'
+    Parameters
+    ----------
+    msg : str
+    channel : str, optional
+        discord channel, default 'jambot'
+    """
+    from discord import RequestsWebhookAdapter, Webhook
+
+    p = cf.p_sec / 'discord.csv'
     r = pd.read_csv(p, index_col='channel').loc[channel]
     if channel == 'err':
         msg += '@here'
@@ -320,6 +393,8 @@ def send_error(msg='', prnt=False):
 def get_google_sheet():
     import pygsheets
     from google.oauth2 import service_account
+
+    from jambot.utils.secrets import SecretsManager
     m = SecretsManager('gsheets.json').load
     SCOPES = ('https://www.googleapis.com/auth/spreadsheets', 'https://www.googleapis.com/auth/drive')
     my_credentials = service_account.Credentials.from_service_account_info(m, scopes=SCOPES)
@@ -329,11 +404,20 @@ def get_google_sheet():
     return pygsheets.authorize(custom_credentials=my_credentials).open('Jambot Settings')
 
 
-def get_delta(interval=1):
-    if interval == 1:
-        return delta(hours=1)
-    elif interval == 15:
-        return delta(minutes=15)
+def get_offset(interval: int = 1) -> delta:
+    """Get single period offset for 1hr or 15m
+
+    Parameters
+    ----------
+    interval : int, optional
+        default 1 hr
+
+    Returns
+    -------
+    datetime.timedelta
+        offset for selected interval
+    """
+    return {1: delta(hours=1), 15: delta(minutes=15)}.get(interval)
 
 
 def date_to_dt(d: date) -> dt:
@@ -341,7 +425,7 @@ def date_to_dt(d: date) -> dt:
 
 
 def timenow(interval: int = 1) -> dt:
-    """Get current time rounded to nearest 1hr/15min interval
+    """Get current utc time rounded down to nearest 1hr/15min interval
 
     Parameters
     ----------
@@ -362,12 +446,6 @@ def timenow(interval: int = 1) -> dt:
 def round_minutes(dt, resolution):
     new_minute = (dt.minute // resolution) * resolution
     return dt + delta(minutes=new_minute - dt.minute)
-
-
-def clean_cols(df: pd.DataFrame, cols: list) -> pd.DataFrame:
-    """Return cols if they exist in dataframe"""
-    cols = [c for c in cols if c in df.columns]
-    return df[cols]
 
 
 def save_pickle(obj: object, p: Path, name: str):
