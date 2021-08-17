@@ -1,45 +1,40 @@
 import copy
 import inspect
 import operator as opr
-import re
 import sys
 from collections import defaultdict as dd
 
 import numpy as np
 import pandas as pd
-import peakutils
-import ta
-import talib as tb
-from findiff import FinDiff
-from sklearn.base import BaseEstimator, TransformerMixin
 from sklearn.preprocessing import MinMaxScaler
-from ta.momentum import (AwesomeOscillatorIndicator, KAMAIndicator,
+from ta.momentum import (AwesomeOscillatorIndicator, KAMAIndicator,  # noqa
                          PercentageVolumeOscillator, ROCIndicator,
                          RSIIndicator, StochasticOscillator, StochRSIIndicator,
                          TSIIndicator, UltimateOscillator)
-from ta.trend import (ADXIndicator, AroonIndicator, CCIIndicator, DPOIndicator,
-                      EMAIndicator, KSTIndicator, MassIndex, PSARIndicator,
-                      STCIndicator, TRIXIndicator)
-from ta.volatility import UlcerIndex
-from ta.volume import (AccDistIndexIndicator, ChaikinMoneyFlowIndicator,
-                       EaseOfMovementIndicator, ForceIndexIndicator,
-                       MFIIndicator)
+from ta.trend import (ADXIndicator, AroonIndicator, CCIIndicator,  # noqa
+                      DPOIndicator, EMAIndicator, KSTIndicator, MassIndex,
+                      PSARIndicator, STCIndicator, TRIXIndicator)
+from ta.volatility import UlcerIndex  # noqa
+from ta.volume import AccDistIndexIndicator  # noqa
+from ta.volume import MFIIndicator  # noqa
+from ta.volume import ChaikinMoneyFlowIndicator
 
-from . import charts as ch
-from . import functions as f
-from . import sklearn_utils as sk
+from jambot import functions as f
+from jambot import sklearn_utils as sk
+
 from .__init__ import *
 
 log = getlog(__name__)
 
 
-class SignalManager(BaseEstimator, TransformerMixin):
+class SignalManager():
     def __init__(
             self,
             signals_list: list = None,
             target: str = None,
-            add_slope: int = 0,
-            add_sum: int = 0):
+            slope: int = 0,
+            sum: int = 0,
+            cut_periods: int = 200):
 
         signal_groups = {}
         features = {}  # map of {feature_name: signal_group}
@@ -95,6 +90,8 @@ class SignalManager(BaseEstimator, TransformerMixin):
 
         signals = f.as_list(signals)
         signal_params = signal_params or {}
+        final_signals = {}
+        drop_cols = []
 
         # SignalGroup obj, not single column
         for signal_group in signals or []:
@@ -106,13 +103,23 @@ class SignalManager(BaseEstimator, TransformerMixin):
             self.signal_groups[signal_group.class_name] = signal_group
 
             signal_group.df = df  # NOTE kinda sketch
-            signal_group.add_slope = self.add_slope  # sketch too
-            signal_group.add_sum = self.add_sum
-            df = df.pipe(signal_group.add_all_signals, **kw)
+            signal_group.slope = self.slope  # sketch too
+            signal_group.sum = self.sum
+            # df = df.pipe(signal_group.add_all_signals, **kw)
+            final_signals |= signal_group.assign_signals(df=df, **kw)
+            signal_group.df = None
+            drop_cols += signal_group.drop_cols
 
-        self.df = df
+        # self.df = df
+        # remove first rows that can't be set with 200ema accurately
+        dtypes = {np.float32: np.float16}
 
-        return df
+        # .astype(np.float64) \
+        return df.assign(**final_signals) \
+            .pipe(f.safe_drop, cols=drop_cols) \
+            .pipe(f.reduce_dtypes, dtypes=dtypes) \
+            .iloc[self.cut_periods:, :] \
+            .fillna(0)
 
     def show_signals(self):
         m = dd(dict)
@@ -152,6 +159,7 @@ class SignalManager(BaseEstimator, TransformerMixin):
 
     def plot_signal_group(self, name, **kw):
         """Convenience func to show plot with a full group of signals"""
+        from jambot import charts as ch
         fig = ch.chart(
             df=self.df,
             traces=self.make_plot_traces(name=name),
@@ -174,7 +182,7 @@ class SignalGroup():
     def __init__(self, df=None, signals=None, fillna=True, prefix: str = None, **kw):
         drop_cols, no_slope_cols, no_sum_cols, normal_slope_cols = [], [], [], []
         signals = self.init_signals(signals)
-        add_slope = 0
+        slope = 0
         class_name = self.__class__.__name__.lower()
         f.set_self(vars())
 
@@ -194,8 +202,8 @@ class SignalGroup():
             m['name'] = name
 
             # assign scatter as default plot
-            if m.get('plot', None) is None:
-                m['plot'] = ch.scatter
+            # if m.get('plot', None) is None:
+            #     m['plot'] = ch.scatter
 
             signals[name] = m
 
@@ -219,20 +227,19 @@ class SignalGroup():
         return feature_name in self.signals
 
     def add_all_signals(self, df, **kw):
-        """Convenience base wrapper to work with ta/non-ta signals"""
-        df = df.pipe(self.assign_signals, **kw)
-
-        drop_cols = [col for col in self.drop_cols if col in df.columns]
-
+        """Convenience base wrapper to work with ta/non-ta signals
+        NOTE not used with SignalManager now, but could be used for individual SignalGroup
+        """
         return df \
-            .drop(columns=drop_cols)
+            .pipe(self.assign_signals, **kw) \
+            .pipe(f.safe_drop, cols=self.drop_cols)
 
     def assign_signals(
             self,
             df: pd.DataFrame,
             params: dict = None,
             names: list = None,
-            force_overwrite: bool = False) -> pd.DataFrame:
+            force_overwrite: bool = False) -> dict:
         """loop self.signal_groups, init, call correct func and assign to df column
 
         Parameters
@@ -244,6 +251,11 @@ class SignalGroup():
             init only specific signals by name
         force_overwrite : bool, default false
             overwrite final signals (for optimization testing)
+
+        Returns
+        -------
+        dict
+            dict of final signals to be used with .assign()
         """
 
         final_signals = {}
@@ -251,10 +263,7 @@ class SignalGroup():
 
         # filter specific names to init specific signals only
         if not names is None:
-            if isinstance(names, str):
-                names = [names]
-
-            signals = {k: v for k, v in signals.items() if k in names}
+            signals = {k: v for k, v in signals.items() if k in f.as_list(names)}
 
         for feature_name, m in signals.items():
 
@@ -264,7 +273,7 @@ class SignalGroup():
 
             if 'cls' in m:
                 # init ta signal
-                final_signals.update(self.make_signal(**m))
+                final_signals |= self.make_signal(**m)
                 # final_signals[feature_name] = self.make_signal(**m)
             elif 'func' in m:
                 final_signals[feature_name] = m['func']
@@ -275,36 +284,62 @@ class SignalGroup():
         if self.prefix:
             final_signals = {f'{self.prefix}_{k}': v for k, v in final_signals.items()}
 
-        # add simple rate of change for all signal columns
         # dont add slope for any Target classes, drop_cols, or no_slope_cols
-        if self.add_slope and not 'target' in self.class_name:
-            exclude = self.drop_cols + self.no_slope_cols
-
-            slope_signals = {
-                f'dyx_{c}': lambda x, c=c: self.make_slope(
-                    s=x[c],
-                    n_periods=self.add_slope,
-                    normal_slope=c in self.normal_slope_cols) for c in final_signals if not c in exclude}
-
-            final_signals.update(slope_signals)
+        if self.slope and not 'target' in self.class_name:
+            final_signals |= self.add_slope(signals=final_signals)
 
         # NOTE coud be more dry
-        if self.add_sum and not 'target' in self.class_name:
-            exclude = self.drop_cols + self.no_sum_cols
-            sum_signals = {
-                f'sum_{c}': lambda x, c=c: x[c].rolling(self.add_sum).sum() for c in final_signals if not c in exclude}
-
-            final_signals.update(sum_signals)
+        if self.sum and not 'target' in self.class_name:
+            final_signals |= self.add_sum(signals=final_signals)
 
         # filter out signals that already exist in df
         if not force_overwrite:
             final_signals = {k: v for k, v in final_signals.items() if not k in df.columns}
 
-        return df \
-            .assign(**final_signals)
+        return final_signals
+
+    def add_slope(self, signals: dict) -> dict:
+        """Create dict of slope siglals for all input signals
+        - add simple rate of change for all signal columns
+
+        Parameters
+        ----------
+        signals : dict
+            signals to calc slope on
+
+        Returns
+        -------
+        dict
+            slope signals
+        """
+        exclude = self.drop_cols + self.no_slope_cols
+
+        return {
+            f'dyx_{c}': lambda x, c=c: self.make_slope(
+                s=x[c],
+                n_periods=self.slope,
+                normal_slope=c in self.normal_slope_cols) for c in signals if not c in exclude}
+
+    def add_sum(self, signals: dict) -> dict:
+        """Create dict of sum siglals for all input signals
+
+        Parameters
+        ----------
+        signals : dict
+            signals to calc slope on
+
+        Returns
+        -------
+        dict
+            slope signals
+        """
+        exclude = self.drop_cols + self.no_sum_cols
+        return {
+            f'sum_{c}': lambda x, c=c:
+                x[c].rolling(self.sum).sum().astype(np.float32) for c in signals if not c in exclude}
 
     @property
-    def default_cols(self) -> dict:
+    def default_cols(self) -> Dict[str, pd.Series]:
         """Convert default dict of strings to pd.Series for default cols"""
         df = self.df
         if df is None:
@@ -339,8 +374,7 @@ class SignalGroup():
         """
 
         # most will be single string, but allow list of multiple
-        if not isinstance(ta_func, list):
-            ta_func = [ta_func]
+        ta_func = f.as_list(ta_func)
 
         kw['fillna'] = kw.get('fillna', self.fillna)
         good_kw = self.filter_valid_kws(cls=cls, **kw)
@@ -355,17 +389,9 @@ class SignalGroup():
 
             # use dict as ordered set here
             key = '_'.join({k: 1 for k in key.split('_')}.keys())  # remove duplicates for multi cols per signal
-            m[key] = getattr(signal, func)()
+            m[key] = lambda x: getattr(signal, func)().astype(np.float32)
 
         return m
-        # return getattr(cls(**good_kw), ta_func)()
-
-    def trend_changed(self, df, i, side):
-        """NOTE Not sure if this used"""
-        tseries = df[self.trendseries]
-        tnow = tseries.iloc[i]
-        tprev = tseries.iloc[i - 1]
-        return not tnow == side and not tnow == tprev
 
     def make_slope(self, s: pd.Series, n_periods: int = 1, normal_slope: bool = True) -> pd.Series:
         """Return series as slope of input series
@@ -387,9 +413,9 @@ class SignalGroup():
         """
         # return (s - np.roll(s, n_periods, axis=0)) / n_periods
         if normal_slope:
-            return s.pct_change(n_periods) / n_periods
+            return (s.pct_change(n_periods) / n_periods).astype(np.float32)
         else:
-            return s.diff(n_periods) / n_periods
+            return (s.diff(n_periods) / n_periods).astype(np.float32)
 
 
 class FeatureInteraction(SignalGroup):
@@ -473,9 +499,10 @@ class Volatility(SignalGroup):
             ulcer=dict(cls=UlcerIndex, ta_func='ulcer_index', window=2),
             maxhigh=lambda x: x.high.rolling(48).max(),
             minlow=lambda x: x.low.rolling(48).min(),
-            spread=lambda x: abs(x.vty_maxhigh - x.vty_minlow) / x[['vty_maxhigh', 'vty_minlow']].mean(axis=1),
-            ema=lambda x: x.vty_spread.ewm(span=60, min_periods=60).mean(),
-            sma=lambda x: x.vty_spread.rolling(300).mean(),
+            spread=lambda x: (abs(x.vty_maxhigh - x.vty_minlow) /
+                              x[['vty_maxhigh', 'vty_minlow']].mean(axis=1)).astype(np.float32),
+            ema=lambda x: x.vty_spread.ewm(span=60, min_periods=60).mean().astype(np.float32),
+            sma=lambda x: x.vty_spread.rolling(300).mean().astype(np.float32),
             # norm_ema=lambda x: np.interp(x.vty_ema, (0, 0.25), (norm[0], norm[1])),
             # norm_sma=lambda x: np.interp(x.vty_sma, (0, 0.25), (norm[0], norm[1])),
         )
@@ -574,7 +601,7 @@ class EMA(SignalGroup):
 
         y = side * (a * x ** b + d * x ** g) / (aLim * a * x ** b + aLim * d * x ** g + c)
 
-        return round(y, 6)
+        return y.astype(np.float32)
 
 
 class MACD(SignalGroup):
@@ -631,21 +658,18 @@ class SFP(SignalGroup):
                 s = df[extrema].rolling(period)
 
                 df[check_extrema] = getattr(s, agg_func)().shift(offset)  # min() or max()
-                # df[f'low_{period}'] = df.low.rolling(period).min().shift(offset)
 
                 # calc candle is swing fail or not
                 # minswing means tail must also be greater than min % of candle full size
                 df[f'sfp_{check_extrema}'] = np.where(
                     (side * (df[extrema] - df[check_extrema]) > 0) &
                     (side * (df.close - df[check_extrema] < 0)) &
-                    (df[f'cdl_tail_size_{extrema.lower()}'] / df.cdl_full > self.minswing),
+                    (df[f'cdl_tail_{extrema.lower()}'] / df.cdl_full > self.minswing),
                     1, 0)
 
-        drop_cols = [col for col in df.columns if any(item in col for item in (
-            'high_', 'low_')) and not any(item in col for item in ('sfp', 'prevhigh', 'prevlow'))]
-
         return df \
-            .drop(columns=drop_cols)
+            .pipe(f.drop_cols, expr=r'^(high|low)_\d+') \
+            .assign(**self.add_sum(signals=f.filter_cols(df, 'sfp')))
 
 
 class Candle(SignalGroup):
@@ -668,7 +692,7 @@ class Candle(SignalGroup):
             pct=lambda x: x.close.pct_change(24),
             # min_n=lambda x: x.low.rolling(n_periods).min(),
             # range_n=lambda x: (x.high.rolling(n_periods).max() - x.min_n),
-            cdl_side=lambda x: np.where(x.close > x.open, 1, -1),
+            cdl_side=lambda x: np.where(x.close > x.open, 1, -1).astype(np.int8),
             cdl_full=lambda x: (x.high - x.low) / x.open,
             cdl_body=lambda x: (x.close - x.open) / x.open,
             cdl_full_rel=lambda x: relative_self(x.cdl_full, n=n_periods),
@@ -681,10 +705,10 @@ class Candle(SignalGroup):
             ema200_v_low=lambda x: np.abs(x.low - x.ema_200) / x.open,
             pxhigh=lambda x: x.high.rolling(n_periods).max().shift(1),
             pxlow=lambda x: x.low.rolling(n_periods).min().shift(1),
-            high_above_prevhigh=lambda x: np.where(x.high > x.pxhigh, 1, 0),
-            close_above_prevhigh=lambda x: np.where(x.close > x.pxhigh, 1, 0),
-            low_below_prevlow=lambda x: np.where(x.low < x.pxlow, 1, 0),
-            close_below_prevlow=lambda x: np.where(x.close < x.pxlow, 1, 0),
+            high_above_prevhigh=lambda x: np.where(x.high > x.pxhigh, 1, 0).astype(bool),
+            close_above_prevhigh=lambda x: np.where(x.close > x.pxhigh, 1, 0).astype(bool),
+            low_below_prevlow=lambda x: np.where(x.low < x.pxlow, 1, 0).astype(bool),
+            close_below_prevlow=lambda x: np.where(x.close < x.pxlow, 1, 0).astype(bool),
             # buy_pressure=lambda x: (x.close - x.low.rolling(2).min().shift(1)) / x.close,
             # sell_pressure=lambda x: (x.close - x.high.rolling(2).max().shift(1)) / x.close,
         )
@@ -717,9 +741,9 @@ class Candle(SignalGroup):
         range_n = (df.high.rolling(n_periods).max() - min_n)
         s = (df.close - min_n) / range_n
         s = s.fillna(s.mean())
-        return s
+        return s.astype(np.float32)
 
-    def add_all_signals(self, df):
+    def _add_all_signals(self, df):
         # NOTE could be kinda wrong div by open, possibly try div by SMA?
         # TODO NEED candle body sizes relative to current rolling volatility
 
@@ -735,6 +759,7 @@ class Candle(SignalGroup):
 
 class CandlePatterns(SignalGroup):
     def __init__(self, **kw):
+        import talib as tb
         cdl_names = tb.get_function_groups()['Pattern Recognition']
 
         kw['signals'] = {c.lower().replace('cdl', 'cdp_'): lambda x, c=c: getattr(tb, c)
@@ -796,7 +821,7 @@ class TargetMean(TargetClass):
         if not regression:
             kw['signals'] = dict(
                 pct_future=lambda x: (x.close.shift(-1 * n_periods).rolling(n_periods).mean() - x.close),
-                target=lambda x: np.where(x.pct_future > pct_min, 1, -1),
+                target=lambda x: np.where(x.pct_future > pct_min, 1, -1).astype(np.int8),
             )
             drop_cols = ['pct_future']
 
@@ -831,13 +856,14 @@ class TargetMaxMin(TargetClass):
 class TargetUpsideDownside(TargetMaxMin):
     """
     Create two outputs - min_low, max_high
+    - NOTE last n_periods of target will be -1, not NaN > need to make sure to drop
     """
 
     def __init__(self, n_periods, **kw):
         super().__init__(n_periods=n_periods, **kw)
 
         self.signals |= dict(
-            target=lambda x: np.where(np.abs(x.target_max) > np.abs(x.target_min), 1, -1)
+            target=lambda x: np.where(np.abs(x.target_max) > np.abs(x.target_min), 1, -1).astype(np.int8)
         )
 
         drop_cols = ['target_max', 'target_min']
@@ -872,7 +898,7 @@ def add_ema(df, p, c='close', col=None, overwrite=True):
 
 
 def get_mom_acc(s: pd.Series, size: int = 1):
-
+    from findiff import FinDiff
     d_dx = FinDiff(0, size, 1)
     d2_dx2 = FinDiff(0, size, 2)
     arr = np.asarray(s)
@@ -909,7 +935,7 @@ def get_extrema(is_min, mom, momacc, s, window: int = 1):
 
 
 def add_extrema(df, side):
-
+    import peakutils
     if side == 1:
         name = 'maxima'
         col = 'high'
@@ -961,32 +987,4 @@ def _get_extrema(is_min, mom, momacc, h, window: int = 1):
 
 def relative_self(s: pd.Series, n: int = 24) -> pd.Series:
     """Calculate column relative to its mean of previous n_periods"""
-    return s / np.abs(s).rolling(n).mean()
-
-# find peaks
-# is peak max of rolling previous n candles
-# filter on momentum value too?
-# check current price's proximity to
-# weight x previous peaks based on momentum?
-
-# def test_peaks():
-#     periods = 500
-#     start = -1000
-#     df2 = df.iloc[start: start + periods] \
-#         .pipe(sg.add_extrema, side=1) \
-#         .pipe(sg.add_extrema, side=-1)
-
-#     df2
-
-#     traces = [
-#         dict(name='maxima', func=ch.trace_extrema, row=1),
-#         dict(name='minima', func=ch.trace_extrema, row=1),
-#         # dict(name='mom_max', func=ch.scatter, row=2),
-#         # dict(name='mom_acc_max', func=ch.scatter, row=2),
-#         # dict(name='mom_min', func=ch.scatter, row=3),
-#         # dict(name='mom_acc_min', func=ch.scatter, row=3)
-#         ]
-
-
-#     fig = ch.chart(df=df2, periods=periods, traces=traces, secondary_row_width=0.3)
-#     fig.show()
+    return (s / np.abs(s).rolling(n).mean()).astype(np.float32)
