@@ -2,17 +2,14 @@ import json
 from collections import defaultdict
 from datetime import datetime as dt
 from datetime import timedelta as delta
-from pathlib import Path
+from typing import Tuple
 from urllib import parse
 
+import numpy as np
 import pandas as pd
 import pyodbc
 import pypika as pk
 import sqlalchemy as sa
-import yaml
-from pypika import Case, Criterion
-from pypika import CustomFunction as cf
-from pypika import Order, Query
 from pypika import functions as fn
 
 from jambot import functions as f
@@ -25,19 +22,11 @@ global db
 log = getlog(__name__)
 
 
-# def strConn():
-#     m = SecretsManager('db.yaml').load
-#     return ';'.join('{}={}'.format(k, v) for k, v in m.items())
-
 def str_conn():
     m = SecretsManager('db.yaml').load
     db_string = ';'.join('{}={}'.format(k, v) for k, v in m.items())
     params = parse.quote_plus(db_string)
     return f'mssql+pyodbc:///?odbc_connect={params}'
-
-# def engine():
-#     params = parse.quote_plus(strConn())
-#     return sa.create_engine(f'mssql+pyodbc:///?odbc_connect={params}', fast_executemany=True)
 
 
 def _create_engine():
@@ -153,7 +142,7 @@ class DB(object):
 
         # loop dict and call bitmex for each list of syms in maxdate
         for maxdate, symbols in m.items():
-            starttime = maxdate + f.get_delta(interval)
+            starttime = maxdate + f.get_offset(interval)
             if starttime < f.timenow(interval):
                 fltr = json.dumps(dict(symbol=symbols))  # filter symbols needed
 
@@ -166,18 +155,23 @@ class DB(object):
 
                 lst.append(df_cdls)
 
+        nrows = 0
         if lst:
-            pd.concat(lst).to_sql(name='Bitmex', con=self.engine, if_exists='append', index=False)
+            df = pd.concat(lst)
+            nrows = df.shape[0]
+            df.to_sql(name='Bitmex', con=self.engine, if_exists='append', index=False)
 
-    def get_dataframe(
+        log.info(f'Imported [{nrows}] rows to db.')
+
+    def get_df(
             self,
-            symbol=None,
-            period=300,
-            startdate=None,
-            enddate=None,
-            daterange=None,
-            interval=1,
-            offset=-15):
+            symbol: str,
+            period: int = 300,
+            startdate: dt = None,
+            enddate: dt = None,
+            daterange: Tuple[dt] = None,
+            interval: int = 1,
+            offset: int = -15):
 
         if startdate is None:
             startdate = f.timenow(interval=interval) + delta(hours=abs(period) * -1)
@@ -188,7 +182,9 @@ class DB(object):
             startdate += delta(days=offset)
 
         a = pk.Table('Bitmex')
-        cols = ['symbol', 'timestamp', 'open', 'high', 'low', 'close', 'volume']
+        cols = ['timestamp', 'open', 'high', 'low', 'close', 'volume']
+        dtypes = {c: np.float32 for c in cols[1:]}
+        dtypes['volume'] = pd.Int64Dtype()
 
         q = pk.Query.from_(a) \
             .select(*cols) \
@@ -202,10 +198,9 @@ class DB(object):
         if not enddate is None:
             q = q.where(a.timestamp <= enddate)
 
-        df = pd.read_sql_query(sql=q.get_sql(), con=self.engine, parse_dates=['timestamp']) \
-            .set_index('timestamp', drop=False)
-
-        return df
+        return pd.read_sql_query(sql=q.get_sql(), con=self.engine, parse_dates=['timestamp']) \
+            .set_index('timestamp', drop=True) \
+            .astype(dtypes)
 
 
 db = DB()
