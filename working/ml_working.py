@@ -55,12 +55,13 @@ if True:
     from jambot import signals as sg
     from jambot import sklearn_utils as sk
     from jambot.database import db
+    from jambot.ml import models as md
     from jambot.tradesys import backtest as bt
     from jambot.tradesys.strategies import ml
 
     plt.rcParams.update({'figure.figsize': (12, 5), 'font.size': 14})
     plt.style.use('dark_background')
-    pd.set_option('display.max_columns', 150)
+    pd.set_option('display.max_columns', 200)
     colors = plt.rcParams['axes.prop_cycle'].by_key()['color']
     blue, red = colors[3], colors[0]
 
@@ -70,7 +71,7 @@ if True:
 
     kw = dict(
         symbol='XBTUSD',
-        daterange=365 * 5,
+        # daterange=365 * 6,
         # startdate=dt(2018, 1, 1),
         startdate=dt(2017, 1, 1),
         interval=interval)
@@ -82,8 +83,7 @@ if True:
     reload_df = False
     if reload_df or not p.exists() or dt.fromtimestamp(p.stat().st_mtime) < dt.now() + delta(days=-1):
         print('Downloading from db')
-        df = db.get_dataframe(**kw) \
-            .drop(columns=['timestamp', 'symbol'])
+        df = db.get_df(**kw)
 
         df.to_csv(p)
     else:
@@ -93,9 +93,8 @@ if True:
 
 # %% - ADD SIGNALS
 
-add_slope = 1
-add_sum = 12
-sm = sg.SignalManager(add_slope=add_slope, add_sum=add_sum)
+name = 'lgbm'
+sm = sg.SignalManager(slope=1, sum=12)
 
 n_periods = 10
 p_ema = None  # 6
@@ -112,7 +111,6 @@ target_signal = Target(
     n_periods=n_periods,
     pct_min=pct_min,
     regression=regression)
-# target_signal = sg.TargetMaxMin(n_periods=4)
 
 signals = [
     'EMA',
@@ -128,41 +126,13 @@ signals = [
 ]
 
 # drop last rows which we cant set proper target
-df = sm.add_signals(df=df, signals=signals) \
-    .iloc[200:, :] \
-    .fillna(0)
-# -1 * n_periods
+df = sm.add_signals(df=df, signals=signals)
 
 if not regression:
     sk.show_prop(df=df)
 
 # %% - FEATURES, MODELMANAGER
 if True:
-    cols_ohlcv = ['open', 'high', 'low', 'close', 'volume']
-    # , 'target_max', 'target_min', 'pred_max', 'pred_min']
-    drop_feats = cols_ohlcv + ['ema_10', 'ema_50', 'ema_200', 'pxhigh', 'pxlow']
-    # target = ['target_max', 'target_min']
-    target = ['target']
-
-    features = dict(
-        target=target,
-        drop=drop_feats,
-        # passthrough=['ema_trend', 'ema_slope', 'cdl_side', 'macd_trend']
-    )
-
-    # features['passthrough'] = features['passthrough'] + \
-    #     [col for col in df.columns if any(item in col for item in ('sfp', 'prevhigh', 'prevlow'))]
-
-    features['numeric'] = sk.all_except(df, features.values())
-
-    # remove any cols not in df
-    features = {name: [col for col in cols if col in df.columns] for name, cols in features.items()}
-
-    encoders = dict(
-        drop='drop',
-        # passthrough='passthrough',
-        numeric=MinMaxScaler(feature_range=(0, 1)))
-
     n_splits = 5
     train_size = 0.9
     # max_train_size = int(df.shape[0] * train_size / n_splits)
@@ -178,27 +148,22 @@ if True:
 
         scoring = dict(
             acc='accuracy',
-            # max=max_scorer,
-            # final=final_scorer
+            max=max_scorer,
+            final=final_scorer
         )
 
-    # NOTE modified fit in lgbm.sklearn to accept callable
+    # NOTE modified fit in lgbm.sklearn to accept callable... old?
     # fit_params = dict(
     #     lgbm__sample_weight=lambda x: np.linspace(0.5, 1, x.shape[0]))
     fit_params = None
 
     cv_args = dict(cv=cv, n_jobs=1, return_train_score=True, scoring=scoring)
-    mm = sk.ModelManager(scoring=scoring, cv_args=cv_args, scorer=scorer)
-    ct = mm.make_column_transformer(features=features, encoders=encoders)
+    mm = md.make_model_manager(name=name, df=df) \
+        .init_cv(scoring=scoring, cv_args=cv_args, scorer=scorer)
 
     x_train, y_train, x_test, y_test = mm.make_train_test(
         df=df,
-        target=target,
-        # split_date=dt(2019, 11, 25),
-        split_date=dt(2021, 1, 1),
-        # train_size=train_size,
-        # shuffle=False
-    )
+        split_date=dt(2021, 1, 1))
 
 # %% - CROSS VALIDATION
 LGBM = LGBMRegressor if regression else LGBMClassifier
@@ -212,16 +177,17 @@ models = dict(
     # nbayes=GaussianNB(),
     # qda=QuadraticDiscriminantAnalysis(),
     # lgbm=LGBM,
-    lgbm=LGBM(num_leaves=50, n_estimators=50, max_depth=30, boosting_type='dart')
+    lgbm=LGBM(
+        num_leaves=50, n_estimators=50, max_depth=10, boosting_type='dart', learning_rate=0.1)
     # lgbm=LGBM(num_leaves=100, n_estimators=25, max_depth=10, boosting_type='gbdt')
 )
 
-steps = [
-    (1, ('pca', PCA(n_components=20, random_state=0)))]
+# steps = [
+#     (1, ('pca', PCA(n_components=20, random_state=0)))]
 steps = None
 
 mm.cross_val(models, steps=steps)
-# scorer.show_summary()
+scorer.show_summary()
 
 # %% - MAXMIN PREDS
 
@@ -263,10 +229,11 @@ if False:
 best_est = True
 if best_est:
     params = dict(
-        boosting_type=['gbdt', 'dart'],  # 'goss' , 'rf'
-        n_estimators=[25, 50, 100],
-        max_depth=[-1, 5, 10, 20, 30],
+        boosting_type=['dart', 'goss'],
+        n_estimators=[25, 50, 100, 200],
+        max_depth=[-1, 5, 10, 20, 30, 40],
         num_leaves=[5, 10, 20, 40, 100],
+        learning_rate=[0.1, 0.2, 0.5, 0.75]
     )
 
     # ridge
@@ -278,9 +245,9 @@ if best_est:
         name='lgbm',
         params=params,
         # search_type='grid',
-        refit='acc',
+        # refit='acc',
         # refit='rmse',
-        # refit='final'
+        refit='final'
     )
 
 # %% - CLASSIFICATION REPORT
@@ -341,11 +308,7 @@ n_smooth = 3
 rolling_col = 'proba_long' if not regression else 'y_pred'
 
 df_pred = df_pred \
-    .pipe(sg.add_ema, p=n_smooth, c=rolling_col, col='rolling_proba') \
-    .assign(signal=lambda x: sk.proba_to_signal(x.rolling_proba)) \
-    # .pipe(sk.add_preds_minmax, features, encoders, train_size)
-
-# df_pred[['pred_max', 'pred_min']] = df_pred[['pred_max', 'pred_min']].rolling(12).mean()
+    .pipe(md.add_proba_trade_signal)
 
 strat = ml.Strategy(
     lev=3,
@@ -447,10 +410,10 @@ fig.show()
 # # %% time
 data = mm.ct.fit_transform(x_train)
 
-expr = 'mnt'
+expr = 'sfp'
 df_trans = sk.df_transformed(data=data, ct=mm.ct) \
     .assign(target=y_train) \
-    .pipe(f.filter_cols, expr=expr, include='target')
+    .pipe(f.select_cols, expr=expr, include='target')
 
 melt_cols = df_trans.columns[df_trans.columns != 'target']
 df_melted = df_trans \
