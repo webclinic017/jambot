@@ -2,8 +2,7 @@ import pandas as pd
 
 from .. import backtest as bt
 from .. import functions as f
-from .. import signals as sg
-from ..backtest import OrdArray, Order
+from ..backtest import OrdArray
 
 try:
     from IPython.display import display

@@ -1,5 +1,5 @@
 import json
-from abc import ABCMeta, abstractclassmethod, abstractmethod
+from abc import ABCMeta, abstractmethod
 
 
 class DictRepr(object, metaclass=ABCMeta):

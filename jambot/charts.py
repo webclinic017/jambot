@@ -1,7 +1,5 @@
 import inspect
 import operator as opr
-import sys
-from datetime import datetime as dt
 from datetime import timedelta as delta
 
 import numpy as np
@@ -13,7 +11,6 @@ from matplotlib import pyplot
 from plotly.subplots import make_subplots
 
 from . import functions as f
-from . import sklearn_utils as sk
 
 ic.configureOutput(prefix='')
 

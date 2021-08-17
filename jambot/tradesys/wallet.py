@@ -1,17 +1,8 @@
-import matplotlib.pyplot as plt
-import matplotlib.ticker as mticker
-from matplotlib import dates as mdates
-from matplotlib.collections import LineCollection
-from matplotlib.colors import BoundaryNorm, ListedColormap
-from seaborn import diverging_palette
-
 from .__init__ import *
 from .base import DictRepr, Observer
 from .enums import OrderType, TradeSide
 from .exceptions import InsufficientBalance
 from .orders import Order
-
-_cmap = diverging_palette(240, 10, n=21, as_cmap=True)
 
 log = getlog(__name__)
 
@@ -58,8 +49,10 @@ class Wallet(Observer):
         _qty = 0  # number of open qty
         _lev = 3.0
         price = 0  # entry price of current position
-        maker_fee = 0.00025
-        taker_fee = -0.00075
+        maker_fee = 0.0001
+        taker_fee = -0.0005
+        # maker_fee = 0.00025
+        # taker_fee = -0.00075
         filled_orders = []
         f.set_self(vars())
 
@@ -344,6 +337,13 @@ class Wallet(Observer):
 
     def plot_balance(self, logy: bool = True, title: str = None) -> None:
         """Show plot of account balance over time with red/blue color depending on slope"""
+        import matplotlib.pyplot as plt
+        import matplotlib.ticker as mticker
+        from matplotlib import dates as mdates
+        from matplotlib.collections import LineCollection
+        from seaborn import diverging_palette
+        _cmap = diverging_palette(240, 10, n=21, as_cmap=True)
+
         df = self.df_balance
 
         y = df.balance

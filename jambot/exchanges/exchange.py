@@ -1,7 +1,5 @@
 from abc import ABCMeta, abstractmethod
 
-from .__init__ import *
-
 
 class Exchange(object, metaclass=ABCMeta):
     """Base object to represent an exchange connection"""

@@ -7,6 +7,7 @@ import pandas as pd
 import yaml
 from cryptography.fernet import Fernet
 
+from jambot import config as cf
 from jambot import functions as f
 from jambot.__init__ import getlog
 
@@ -37,9 +38,9 @@ class SecretsManager(object):
     """
 
     def __init__(self, load_filename=None):
-        p_secret = f.p_sec
+        p_secret = cf.p_sec
         p_key = p_secret / 'jambot.key'
-        p_unencrypt = f.p_proj / '_unencrypted'
+        p_unencrypt = cf.p_proj / '_unencrypted'
 
         f.set_self(vars())
 

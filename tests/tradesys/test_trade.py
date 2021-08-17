@@ -1,6 +1,6 @@
 from jambot.tradesys import orders as ords
 from jambot.tradesys.broker import Broker
-from jambot.tradesys.enums import TradeSide, TradeStatus
+from jambot.tradesys.enums import TradeSide
 from jambot.tradesys.trade import Trade
 
 from .__init__ import *

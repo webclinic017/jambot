@@ -1,11 +1,13 @@
-from ..base import Observer, SignalEvent
-from ..broker import Broker
-from ..trade import Trade
-from .__init__ import *
+from jambot import functions as f
+from jambot.tradesys.base import Observer
+from jambot.tradesys.broker import Broker
+from jambot.tradesys.trade import Trade
+
+from .__init__ import *  # noqa
 
 
 class StrategyBase(Observer):
-    def __init__(self, symbol: str, weight=1, lev=5, slippage=0.02, **kw):
+    def __init__(self, symbol: str, weight=1, lev=5, slippage=0.02, live: bool = False, **kw):
         super().__init__(**kw)
 
         trades = []
@@ -16,9 +18,14 @@ class StrategyBase(Observer):
         f.set_self(vars())
 
     def on_attach(self):
-        """Market close last trade at end of session"""
-        self.get_parent('BacktestManager').end_session.connect(
-            lambda: self.get_trade(-1, open_only=True).market_close())
+        """Market close last trade at end of session (if not live trading)"""
+        if not self.live:
+            self.get_parent('BacktestManager').end_session.connect(self.final_market_close)
+
+    def final_market_close(self):
+        t = self.get_trade(-1, open_only=True)
+        if not t is None:
+            t.market_close()
 
     def step(self):
         pass

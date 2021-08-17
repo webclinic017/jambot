@@ -2,10 +2,8 @@
 Azure Blob storage
 """
 
-import os
-import uuid
-
-from azure.storage.blob import BlobClient, BlobServiceClient, ContainerClient
+from azure.storage.blob import (BlobClient, BlobServiceClient,  # noqa
+                                ContainerClient)
 
 from jambot.utils.secrets import SecretsManager
 

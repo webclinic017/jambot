@@ -1,2 +1,2 @@
-from .. import functions as f
-from ..__init__ import *
+from .. import functions as f  # noqa
+from ..__init__ import *  # noqa

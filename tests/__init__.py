@@ -1,6 +1,6 @@
-import pytest
-from pytest import fixture, mark, raises
+import pytest  # noqa
+from pytest import fixture, mark, raises  # noqa
 
-from jambot import functions as f
+from jambot import functions as f  # noqa
 
 SYMBOL = 'XBTUSD'

@@ -1,10 +1,7 @@
-from .__init__ import *
-from .base import Clock, Observer, SignalEvent
-from .strategies.base import StrategyBase
+from jambot.tradesys.base import Clock, SignalEvent
+from jambot.tradesys.strategies.base import StrategyBase
 
-# from .database import db
-# from .tradesys.trade import Trade
-# from .tradesys.broker import Broker
+from .__init__ import *
 
 
 class BacktestManager(Clock):
@@ -26,7 +23,7 @@ class BacktestManager(Clock):
         # if not isinstance(strats, list): strats = [strats]
 
         # if row is None:
-        #     dfsym = pd.read_csv(f.p_res / 'symbols.csv')
+        #     dfsym = pd.read_csv(cf.p_res / 'symbols.csv')
         #     dfsym = dfsym[dfsym['symbol'] == symbol]
         #     row = list(dfsym.itertuples())[0]
 
@@ -48,7 +45,7 @@ class BacktestManager(Clock):
             df = df[df.index >= startdate]
 
             # if df is None:
-            #     df = db.get_dataframe(symbol=symbol, startdate=startdate, daterange=daterange)
+            #     df = db.get_df(symbol=symbol, startdate=startdate, daterange=daterange)
 
             # if partial:
             #     if u is None:

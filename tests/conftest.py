@@ -5,7 +5,7 @@ import os
 from pathlib import Path
 
 import pytest
-from pytest import mark, raises
+from pytest import mark, raises  # noqa
 
 
 def set_fixture_modules():

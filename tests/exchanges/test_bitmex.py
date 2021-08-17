@@ -1,8 +1,9 @@
 from jambot.exchanges.bitmex import Bitmex
 from jambot.tradesys import orders as ords
-from jambot.tradesys.orders import LimitOrder
 
 from .__init__ import *
+
+# from jambot.tradesys.orders import LimitOrder
 
 
 @fixture(scope='session')

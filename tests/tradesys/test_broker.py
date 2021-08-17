@@ -1,7 +1,6 @@
-from jambot.tradesys import orders as ords
 from jambot.tradesys.broker import Broker
 
-from .__init__ import *
+from .__init__ import *  # noqa
 
 
 def test_boker(orders):

@@ -1,12 +1,11 @@
 from datetime import datetime as dt
-from datetime import timedelta as delta
-from pathlib import Path
 
 import pandas as pd
 from joblib import Parallel, delayed
 
-from . import backtest as bt
-from . import functions as f
+from jambot import backtest as bt
+from jambot import config as cf
+from jambot import functions as f
 
 
 def run_trend(symbol, startdate, df, against, wth, row, titles):
@@ -28,7 +27,7 @@ def run_trend(symbol, startdate, df, against, wth, row, titles):
 
 def run_parallel():
     symbol = 'XBTUSD'
-    p = f.p_res / 'symbols.csv'
+    p = cf.p_res / 'symbols.csv'
     dfsym = pd.read_csv(p)
     dfsym = dfsym[dfsym.symbol == symbol]
     startdate, daterange = dt(2019, 1, 1), 365 * 3
@@ -44,7 +43,7 @@ def run_parallel():
 
 
 def run_single(strattype, startdate, dfall, speed0, speed1, row=None, norm=None, symbol=None):
-    import backtest as bt
+    from jambot.tradesys import backtest as bt
 
     if not row is None:
         symbol = row.symbol

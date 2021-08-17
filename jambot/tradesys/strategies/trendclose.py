@@ -1,5 +1,4 @@
 from .. import backtest as bt
-from .. import functions as f
 from .. import signals as sg
 from ..backtest import Order
 from . import trend
