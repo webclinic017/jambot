@@ -524,6 +524,32 @@ class Bitmex(Exchange):
             .reset_index() \
             .drop(columns=['num'])
 
+    def wait_candle_avail(self, interval: int = 1, symbol: str = SYMBOL) -> None:
+        """Wait till last period candle is available from bitmex
+            - rest api latency is ~15s
+            - Just for testing, not used for anything
+
+        Parameters
+        ----------
+        interval : int, optional
+            default 1
+        """
+
+        # set current lower time bin to check for
+        dnow = f.timenow(interval) - f.get_offset(interval)
+
+        _time_last = lambda: self.last_candle(interval, symbol=symbol).timestamp.iloc[0]
+        time_last = _time_last()
+
+        i = 0
+        max_tries = 30
+
+        while time_last < dnow and i < max_tries:
+            log.info(dt.utcnow())
+            time.sleep(1)
+            time_last = _time_last()
+            i += 1
+
     def last_candle(self, interval: int = 1, **kw) -> pd.DataFrame:
         """Return last candle only (for checking most recent avail time)
 
