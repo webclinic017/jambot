@@ -1,9 +1,8 @@
 [flake8]
-ignore = W503, W504, E713, E714, E722, E731, F401, F403, F405, F841 # unused imports, * imports
+ignore = W503, W504, E713, E714, E722, E731, F403, F405, F841 # unused imports, * imports
 max-line-length = 120
 exclude = 
     docs*
     .python_packages*
-    launch.py
-    ml_testing.py
+    working/*
     *archive.py
