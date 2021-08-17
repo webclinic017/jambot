@@ -1,9 +1,12 @@
 from datetime import datetime as dt
 from datetime import timedelta as delta
 
+import numpy as np
 import pandas as pd
+from sklearn.base import BaseEstimator
 
 from jambot import SYMBOL
+from jambot import config as cf
 from jambot import functions as f
 from jambot import getlog
 from jambot import sklearn_utils as sk
@@ -21,14 +24,37 @@ class ModelStorageManager(DictRepr):
             self,
             batch_size: int = 24,
             n_models: int = 3,
-            d_lower: dt = None):
+            d_lower: dt = None,
+            interval: int = 15,
+            reset_hour: int = 18):
+        """
+
+        Parameters
+        ----------
+        batch_size : int, optional
+            number of hours to retrain after, default 24
+        n_models : int, optional
+            number of models to train at once, default 3
+        d_lower : dt, optional
+            trim df to lower date, by default None
+        interval : int, optional
+            interval 1hr/15min
+        reset_hour : int, optional
+            filter training df to constant hour per day for consistency (11 pst = 18 utc)
+        """
 
         dt_format = '%Y-%m-%d-%H'
-        p_model = f.p_data / 'models'
+        batch_size_cdls = batch_size
+
+        if interval == 15:
+            batch_size_cdls = batch_size_cdls * 4
+            dt_format = f'{dt_format}-%M'
+
+        p_model = cf.p_data / 'models'
         f.check_path(p_model)
 
         if d_lower is None:
-            d_lower = dt(2017, 1, 1)
+            d_lower = cf.config['d_lower']
 
         f.set_self(vars())
 
@@ -37,44 +63,82 @@ class ModelStorageManager(DictRepr):
         for p in self.p_model.glob('*'):
             p.unlink()
 
-    def fit_save(self, df: pd.DataFrame, name: str, estimator) -> None:
-        """fit model and save
+    def fit_save_models(
+            self,
+            df: pd.DataFrame = None,
+            interval: int = 15) -> None:
+        """Main control function for retraining new models each day
 
+        Parameters
+        ----------
+        df : pd.DataFrame, optional
+            df with OHLC from db, by default None
+        interval : int, optional
+            default 15
+        """
+        log.info('running fit_save_models')
+        name = 'lgbm'
+        cfg = md.model_cfg(name)
+        n_periods = cfg['target_kw']['n_periods']
+
+        self.clean()
+
+        estimator = md.make_model(name)
+
+        self.fit_save(
+            df=db.get_df(symbol=SYMBOL, startdate=self.d_lower, interval=interval)
+            .pipe(md.add_signals, name=name, drop_ohlc=True)
+            .iloc[:-1 * n_periods, :],
+            name=name,
+            estimator=estimator)
+
+    def fit_save(self, df: pd.DataFrame, name: str, estimator: BaseEstimator) -> None:
+        """fit model and save for n_models
+
+        - to be run every x hours
         - all models start fit from same d_lower
         - new versions created for each new saved ver
 
         Parameters
         ----------
-        estimator :
+        df : pd.DataFrame
+            df with signals/target initialized
+        estimator : BaseEstimator
             estimator with fit/predict methods
-        d_upper : dt
-            [description]
         """
-        cfg = md.get_model_params(name)
+        log.info('running fit_save')
+        cfg = md.model_cfg(name)
 
+        # filter to constant d_upper per day
+        d_upper = f.date_to_dt(dt.utcnow().date()) + delta(hours=self.reset_hour)
+        df = df.loc[:d_upper].to_numpy(np.float32)
+        index = df.index
+
+        # trim df to older dates by cutting off progressively larger slices
         for i in range(self.n_models):
 
-            # d = self.d_upper + delta(hours=-i * self.batch_size)
+            cut_rows = -i * self.batch_size_cdls
 
-            # filter df to max date
-            df = self.df.iloc[:(-i * self.batch_size) or None]
-
-            d = df.index[-1]
-
-            # fit
-            x_train, y_train = sk.split(df, target=cfg['target'])
-            estimator.fit(x_train, y_train)
+            # fit - using weighted currently
+            estimator.fit(
+                df[:cut_rows or None, :-1],
+                df[:cut_rows or None, -1],
+                **sk.weighted_fit(name=None, n=len(df) + cut_rows))
 
             # save
-            fname = f'{name}_{d:self.dt_format}'
+            d = index[cut_rows - 1]
+            fname = f'{name}_{d:{self.dt_format}}'
             f.save_pickle(estimator, p=self.p_model, name=fname)
             log.info(f'saved model: {fname}, max_date: {d}')
 
-    def get_preds(self, df: pd.DataFrame, name: str) -> pd.DataFrame:
+    def df_pred_from_models(self, df: pd.DataFrame, name: str) -> pd.DataFrame:
         """Load all models, make iterative predictions
+        - probas added in a bit of a unique way here, one model slice at a time instead of all at once
 
         Parameters
         ----------
+        df : pd.DataFrame
+            truncated df (~400 rows?) with signals added and OHLC cols dropped,/*----- for live trading
         name : str
             model name
 
@@ -83,85 +147,46 @@ class ModelStorageManager(DictRepr):
         pd.DataFrame
             df with all predictions added
         """
-        cfg = md.get_model_params(name)
+        cfg = md.model_cfg(name)
         target = cfg['target']
-        dfs = []
+        pred_dfs = []
 
-        # d_max = df.index[-1]
         p_models = sorted(self.p_model.glob(f'*{name}*'))
 
-        # get date from filename
-        # dates = [dt.strptime(p.stem.split('_')[-1], self.dt_format) for p in p_models]
+        if len(p_models) == 0:
+            raise RuntimeError(f'No saved models found at: {self.p_model}')
 
         for i, p in enumerate(p_models):
 
+            # get model train date from filepath
             d = dt.strptime(p.stem.split('_')[-1], self.dt_format)
 
             # load estimator
-            pipe = f.load_pickle(p)
+            estimator = f.load_pickle(p)
 
             if not i + 1 == len(p_models):
-                max_date = d + delta(hours=self.batch_size)
+                max_date = d + delta(hours=self.batch_size) + -f.get_offset(self.interval)
             else:
                 max_date = df.index[-1]
 
+            # split into 24 hr slices
             x, _ = sk.split(df.loc[d: max_date], target=target)
 
-            df_pred = pd.DataFrame(
-                data=pipe.predict(x),
-                columns=target,
-                index=x.index)
+            # add y_pred and proba_ for slice of df
+            df_pred = sk.df_proba(
+                x=x.pipe(f.safe_drop, cols=cf.config['drop_cols']),
+                model=estimator)
 
-            log.info(f'Adding preds: {len(df_pred)}')
+            log.info(f'Adding preds: {len(df_pred)}, {df_pred.index.min()}, {df_pred.index.max()}')
 
-            dfs.append(df_pred)
+            pred_dfs.append(df_pred)
 
-        return df.pipe(f.left_merge, pd.concat(dfs))
+        return df.pipe(f.left_merge, pd.concat(pred_dfs)) \
+            .pipe(md.add_proba_trade_signal)
 
     def to_dict(self):
-        return ('d_lower', 'd_upper', 'n_models', 'batch_size')
+        return ('d_lower', 'n_models', 'batch_size', 'batch_size_cdls')
 
 
-def load_df(d_lower: dt, symbol: str = 'XBTUSD') -> pd.DataFrame:
-    """Load base df from database"""
-    kw = dict(
-        symbol=symbol,
-        startdate=d_lower,
-        interval=1)
-
-    return db.get_dataframe(**kw) \
-        .drop(columns=['timestamp', 'symbol'])
-
-
-def fit_save_models(df: pd.DataFrame = None, d_lower: dt = None, reset_hour: int = 18):
-    """Fit lgbm and Ridge models for current strategy predictions
-
-    reset_hour = 11 pst = 18 utc
-    """
-    n_periods = 10  # wet
-
-    if d_lower is None:
-        d_lower = dt(2017, 1, 1)
-
-    # filter to constant d_upper per day
-    d_upper = f.date_to_dt(dt.utcnow().date()) + delta(hours=reset_hour)
-
-    if df is None:
-        df = load_df(d_lower=d_lower, symbol=SYMBOL)
-
-    # drop last rows which we cant set proper target
-    df = df.copy() \
-        .loc[:d_upper] \
-        .pipe(md.add_signals, name='lgbm') \
-        .pipe(md.add_signals, name='ridge') \
-        .iloc[:-1 * n_periods, :] \
-        .fillna(0)
-
-    msm = ModelStorageManager()
-    msm.clean()
-
-    names = ('lgbm', 'ridge')
-
-    for name in names:
-        pipe = md.make_pipeline(name=name, df=df)
-        msm.fit_save(df=df, name=name, estimator=pipe)
+if __name__ == '__main__':
+    ModelStorageManager().fit_save_models()

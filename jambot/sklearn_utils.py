@@ -3,48 +3,41 @@ import json
 import pickle
 import re
 import time
-from pathlib import Path
 from typing import *
 
-import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
-from icecream import ic
-from IPython.core.display import display_pdf
-from IPython.display import display
-from lightgbm import LGBMRegressor
-from matplotlib.colors import LinearSegmentedColormap  # type: ignore
-from matplotlib.colors import ListedColormap, TwoSlopeNorm, rgb2hex, to_hex
-from seaborn import diverging_palette
+from sklearn.base import BaseEstimator
 from sklearn.compose import ColumnTransformer
 from sklearn.decomposition import PCA
-from sklearn.feature_extraction.text import CountVectorizer, _VectorizerMixin
-from sklearn.feature_selection import SelectKBest
+from sklearn.feature_extraction.text import _VectorizerMixin
 from sklearn.feature_selection._base import SelectorMixin
-from sklearn.linear_model import LinearRegression, LogisticRegression, Ridge
-from sklearn.metrics import (accuracy_score, classification_report, f1_score,
-                             make_scorer, mean_squared_error, recall_score)
+from sklearn.linear_model import Ridge
+from sklearn.metrics import classification_report
 from sklearn.model_selection import (GridSearchCV, RandomizedSearchCV,
-                                     cross_val_score, cross_validate,
-                                     train_test_split)
+                                     cross_validate, train_test_split)
 from sklearn.multioutput import MultiOutputRegressor
 from sklearn.pipeline import Pipeline
-from tqdm import tqdm
 
+from jambot import config as cf
 from jambot import functions as f
 from jambot import signals as sg
 
-ic.configureOutput(prefix='')
+# not needed when running on azure
 try:
     import shap
+    from seaborn import diverging_palette
+    _cmap = diverging_palette(240, 10, sep=10, n=21, as_cmap=True)
 
-except ImportError as e:
-    # print('failed to import module', e)
+    from icecream import ic
+    from IPython.display import display
+    ic.configureOutput(prefix='')
+
+    import matplotlib.pyplot as plt
+    from tqdm import tqdm
+
+except (ImportError, ModuleNotFoundError) as e:
     pass
-
-# p_tmp = Path.home() / 'Desktop/sklearn_temp'
-# print(p_tmp.exists())
-_cmap = diverging_palette(240, 10, sep=10, n=21, as_cmap=True)
 
 
 class ModelManager(object):
@@ -72,6 +65,21 @@ class ModelManager(object):
 
         if any(item in kw for item in ('features', 'encoders')):
             self.make_column_transformer(**kw)
+
+    def init_cv(self, scoring: dict, cv_args: dict, scorer=None) -> None:
+        """Convenience func to make sure all reqd cross val params are set
+
+        Parameters
+        ----------
+        scoring : dict
+            scoring names/funcs
+        cv_args : dict
+            cross validation args dict
+        scorer : [type], optional
+            jambot.tradesys.strategies.StratScorer, by default None
+        """
+        f.set_self(vars())
+        return self
 
     def make_column_transformer(self, features: dict, encoders: dict, **kw) -> ColumnTransformer:
         """Create ColumnTransformer from dicts of features and encoders
@@ -179,7 +187,7 @@ class ModelManager(object):
         if show:
             self.show()
 
-    def make_pipe(self, name: str, model, steps: list = None):
+    def make_pipe(self, name: str, model, steps: list = None) -> Pipeline:
         pipe = Pipeline(
             steps=[
                 ('ct', self.ct),
@@ -189,9 +197,7 @@ class ModelManager(object):
 
         # insert extra steps in pipe, eg RFECV
         if not steps is None:
-            if not isinstance(steps, list):
-                steps = [steps]
-            for step in steps:
+            for step in f.as_list(steps):
                 pipe.steps.insert(step[0], step[1])
 
         self.pipes[name] = pipe
@@ -253,7 +259,7 @@ class ModelManager(object):
 
         show_scores(df)
 
-    def fit(self, name: str, best_est=False, model=None, fit_params=None):
+    def fit(self, name: str, best_est: bool = False, model=None, fit_params: dict = None):
         """Fit model to training data"""
         if best_est:
             model = self.best_est(name)
@@ -267,11 +273,11 @@ class ModelManager(object):
         model.fit(self.x_train, self.y_train, **fit_params)  # .ravel()
         return model
 
-    def y_pred(self, X, model=None, **kw):
+    def y_pred(self, x: pd.DataFrame, model=None, **kw):
         if model is None:
             model = self.fit(**kw)
 
-        return model.predict(X)
+        return model.predict(x)
 
     def class_rep(self, name: str = None, **kw):
         """Show classification report
@@ -289,10 +295,13 @@ class ModelManager(object):
         df = pd.DataFrame(m).T
         display(df)
 
-    def df_proba(self, df=None, model=None, **kw):
-        """Return df of predict_proba, with timestamp index"""
+    def df_proba(self, df=None, model=None, **kw) -> pd.DataFrame:
+        """Return df of predict_proba, with timestamp index to join on"""
         if df is None:
             df = self.x_test
+
+        if df.shape[0] == 0:
+            raise ValueError(f'No rows in df: {len(df)}')
 
         if model is None:
             model = self.fit(**kw)
@@ -373,11 +382,24 @@ class ModelManager(object):
 
         return df
 
-    def add_predict(self, df, proba=True, **kw):
-        """Add predicted vals to df"""
+    def add_predict(self, df: pd.DataFrame, proba: bool = True, **kw) -> pd.DataFrame:
+        """Add predicted vals to df
+
+        Parameters
+        ----------
+        df : pd.DataFrame
+            df with signals added
+        proba : bool, optional
+            add predicted probabilites as well as predictions, default True
+
+        Returns
+        -------
+        pd.DataFrame
+            df with predictions and optionally probabilities
+        """
         df = df \
             .assign(
-                y_pred=self.y_pred(X=df.drop(columns=[self.target]), **kw)) \
+                y_pred=self.y_pred(x=df.drop(columns=f.as_list(self.target)), **kw)) \
             .pipe(self.add_proba, do=proba, **kw)
 
         # save predicted values for each model
@@ -459,7 +481,7 @@ class ModelManager(object):
     def save_model(self, name: str, **kw):
         model = self.get_model(name=name, **kw)
 
-        p = f.p_res / f'/models/{name}.pkl'
+        p = cf.p_res / f'/models/{name}.pkl'
 
         with open(p, 'wb') as file:
             pickle.dump(model, file)
@@ -469,7 +491,7 @@ class ModelManager(object):
         with open(filename, 'rb') as file:
             return pickle.load(file)
 
-    def make_train_test(self, df, target, split_date=None, train_size=0.8, **kw):
+    def make_train_test(self, df, target: list = None, split_date=None, train_size=0.8, **kw):
         """Make x_train, y_train etc from df
 
         Parameters
@@ -477,6 +499,9 @@ class ModelManager(object):
         target : list
             target column to remove for y_
         """
+        if target is None:
+            target = self.target
+
         if split_date is None:
             if not 'test_size' in kw:
                 kw['train_size'] = train_size
@@ -553,12 +578,12 @@ def show_prop(df, target_col='target'):
             prop='{:.2%}'))
 
 
-def split(df, target):
+def split(df: pd.DataFrame, target: Union[list, str]) -> Tuple[pd.DataFrame, np.ndarray]:
     """Split off target col to make X and y"""
     if isinstance(target, list) and len(target) == 1:
         target = target[0]
 
-    return df.drop(columns=f.as_list(target)), df[target].values
+    return df.pipe(f.safe_drop, cols=target), df[target].to_numpy(np.float32)
 
 
 def format_cell(bg, t='black'):
@@ -599,6 +624,7 @@ def background_grad_center(s, center=0, vmin=None, vmax=None, higher_better=True
     list
         list of background colors for styler
     """
+    from matplotlib.colors import TwoSlopeNorm, rgb2hex
     cmap = _cmap.reversed() if higher_better else _cmap
 
     vmin = vmin or s.values.min()
@@ -976,12 +1002,114 @@ def all_except(df, exclude: list):
     return [col for col in df.columns if not any(col in lst for lst in exclude)]
 
 
-def df_proba(df, model, **kw):
-    """Return df of predict_proba, with timestamp index"""
-    arr = model.predict_proba(df)
+def df_proba(x: pd.DataFrame, model: BaseEstimator, **kw) -> pd.DataFrame:
+    """Return df of predict_proba, with timestamp index
+
+    Parameters
+    ----------
+    df : pd.DataFrame
+        df with signals
+    model : BaseEstimator
+        fitted model/pipeline
+
+    Returns
+    -------
+    pd.DataFrame
+        df with proba_ added
+    """
+    arr = model.predict_proba(x)
     m = {-1: 'short', 0: 'neutral', 1: 'long'}
     cols = [f'proba_{m.get(c)}' for c in model.classes_]
-    return pd.DataFrame(data=arr, columns=cols, index=df.index)
+    return pd.DataFrame(data=arr, columns=cols, index=x.index)
+
+
+def df_y_pred(x: pd.DataFrame, model: BaseEstimator) -> pd.DataFrame:
+    """Return df with y_pred added
+
+    Parameters
+    ----------
+    df : pd.DataFrame
+        df with signals
+    model : BaseEstimator
+        model/pipe
+
+    Returns
+    -------
+    pd.DataFrame
+        df with y_pred added
+    """
+    return pd.DataFrame(
+        data=model.predict(x),
+        columns=['y_pred'],
+        index=x.index)
+
+
+def add_probas(df: pd.DataFrame, model: BaseEstimator, x: pd.DataFrame, **kw) -> pd.DataFrame:
+    """Convenience func to add probas if don't exist
+
+    Parameters
+    ----------
+    df : pd.DataFrame
+        df with signals
+    model : BaseEstimator
+        model/pipe
+    x : pd.DataFrame
+        section of df to predict on
+
+    Returns
+    -------
+    pd.DataFrame
+        df with proba_ added
+    """
+
+    # already added probas
+    if 'proba_long' in df.columns:
+        return df
+
+    return df.join(df_proba(x=x, model=model))
+
+
+def add_y_pred(df: pd.DataFrame, model: BaseEstimator, x: pd.DataFrame) -> pd.DataFrame:
+    """Add y_pred col to df with model.predict
+
+    Parameters
+    ----------
+    df : pd.DataFrame
+        df with signals
+    model : BaseEstimator
+        model/pipe
+    x : pd.DataFrame
+        section of df to predict on
+
+    Returns
+    -------
+    pd.DataFrame
+        df with y_pred added
+    """
+
+    return df \
+        .assign(y_pred=model.predict(x))
+
+
+def convert_proba_signal(df: pd.DataFrame, col: str = 'rolling_proba') -> pd.DataFrame:
+    """Convert probas btwn 0-1 to a signal of 0, 1 or -1 with threshold 0.5
+
+    Parameters
+    ----------
+    df : pd.DataFrame
+        df with rolling proba col
+    col : str
+        col to conver to signal, default 'rolling_proba'
+
+    Returns
+    -------
+    pd.DataFrame
+        df with signal added
+    """
+    s = df[col]
+    return df \
+        .assign(
+            signal=np.sign(np.diff(np.sign(s - 0.5), prepend=np.array([0]))))
 
 
 def smape(y_true, y_pred, h=1, **kw):
@@ -1064,7 +1192,7 @@ def add_preds_minmax(df, features: dict, encoders: dict, train_size: float) -> p
     features['drop'] = [c for c in features['drop'] if not any(
         c in item for item in [multi_target, pred_cols])] + ['target']
 
-    sm = sg.SignalManager(add_slope=5)
+    sm = sg.SignalManager(slope=5)
 
     signals = [
         sg.TargetMaxMin(n_periods=4),
@@ -1118,14 +1246,10 @@ def as_multi_out(models: dict) -> Dict[str, MultiOutputRegressor]:
     return {k: MultiOutputRegressor(model) for k, model in models.items()}
 
 
-def proba_to_signal(s: pd.Series) -> pd.Series:
-    """Convert probas btwn 0-1 to a signal of 0, 1 or -1 with threshold 0.5"""
-    return np.sign(np.diff(np.sign(s - 0.5), prepend=np.array([0])))
-
-
-def weighted_fit(name: str, n: int) -> dict:
+def weighted_fit(name: str = None, n: int = None) -> dict:
     """Create dict of weighted samples for fit params"""
-    return {f'{name}__sample_weight': np.linspace(0.5, 1, n)}
+    name = f'{name}__' if not name is None else ''
+    return {f'{name}sample_weight': np.linspace(0.5, 1, n)}
 
 
 def plot_pred_dist(df: pd.DataFrame, cols: list = None) -> None:
