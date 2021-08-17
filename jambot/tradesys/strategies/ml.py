@@ -1,15 +1,16 @@
 import warnings
 
-from sklearn.metrics import accuracy_score
-from sklearn.utils.validation import check_is_fitted
+from sklearn.base import BaseEstimator
 
-from ... import signals as sg
-from ... import sklearn_utils as sk
-from ..backtest import BacktestManager
-from ..orders import LimitOrder, MarketOrder, Order, StopOrder
-from ..trade import Trade
+from jambot import functions as f
+from jambot import sklearn_utils as sk
+from jambot.ml import models as md
+from jambot.tradesys.backtest import BacktestManager
+from jambot.tradesys.orders import LimitOrder, MarketOrder, Order, StopOrder
+from jambot.tradesys.strategies.base import StrategyBase
+from jambot.tradesys.trade import Trade
+
 from .__init__ import *
-from .base import StrategyBase
 
 log = getlog(__name__)
 warnings.filterwarnings(action='ignore', category=FutureWarning)
@@ -214,7 +215,14 @@ class StratScorer():
         display(style)
         display(style_tot)
 
-    def score(self, estimator, x, y_true, _type='final', regression=False, **kw):
+    def score(
+            self,
+            estimator: BaseEstimator,
+            x: pd.DataFrame,
+            y_true: np.ndarray,
+            _type: str = 'final',
+            regression: bool = False,
+            **kw):
         """Run strategy and return final balance
         - called for test then train for x number of splits
         """
@@ -229,20 +237,9 @@ class StratScorer():
         bm = self.runs.get(idx[0], None)
 
         if bm is None:
-            rolling_col = 'proba_long' if not regression else 'y_pred'
+            df_pred = x.pipe(md.add_preds_probas, pipe=estimator, regression=regression)
 
-            df_pred = x \
-                .assign(y_pred=estimator.predict(x)) \
-                .join(sk.df_proba(df=x, model=estimator)) \
-                .pipe(sg.add_ema, p=self.n_smooth, c=rolling_col, col='rolling_proba') \
-                .assign(signal=lambda x: sk.proba_to_signal(x.rolling_proba)) \
-                # .assign(rolling_proba=lambda x: x[rolling_col].rolling(n_smooth).mean()) \
-
-            strat = Strategy(
-                lev=3,
-                slippage=0,
-                regression=regression,
-                market_on_timeout=False)
+            strat = make_strat(regression=regression)
 
             kw_args = dict(
                 symbol='XBTUSD',
@@ -259,3 +256,16 @@ class StratScorer():
             return wallet.balance  # final balance
         elif _type == 'max':
             return wallet.max
+
+
+def make_strat(**kw) -> Strategy:
+    """Initialize strategy with default config
+
+    Returns
+    -------
+    Strategy
+    """
+    return Strategy(
+        lev=3,
+        market_on_timeout=True,
+        **kw)
