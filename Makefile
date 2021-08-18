@@ -13,11 +13,15 @@ format:  ## autopep, isort, flake
 
 .PHONY : app
 app:  ## push jambot app to azure
+	@if ! docker info >/dev/null 2>&1; then\
+		echo "Starting Docker";\
+		open /Applications/Docker.app;\
+	fi
 	@func azure functionapp publish jambot-app --build-native-deps
 
 .PHONY : run-app-local
 run-app-local:  ## run app for local testing
-	@func host start
+	@poetry run func host start
 
 .PHONY : testfunc
 testfunc:  ## Test trigger azure function running on localhost
