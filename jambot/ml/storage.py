@@ -111,8 +111,8 @@ class ModelStorageManager(DictRepr):
 
         # filter to constant d_upper per day
         d_upper = f.date_to_dt(dt.utcnow().date()) + delta(hours=self.reset_hour)
+        index = df.loc[:d_upper].index
         df = df.loc[:d_upper].to_numpy(np.float32)
-        index = df.index
 
         # trim df to older dates by cutting off progressively larger slices
         for i in range(self.n_models):
