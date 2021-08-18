@@ -1,3 +1,4 @@
+from jambot import functions as f
 from jambot.tradesys.base import Clock, SignalEvent
 from jambot.tradesys.strategies.base import StrategyBase
 

@@ -1,8 +1,10 @@
+from jambot import functions as f
+
 from ... import signals as sg
 from .. import backtest as bt
 from ..orders import Order
 from ..trade import Trade
-from .__init__ import *
+from .__init__ import *  # noqa
 from .base import StrategyBase
 
 

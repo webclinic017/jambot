@@ -20,19 +20,18 @@ class Strategy(StrategyBase):
     def __init__(
             self,
             symbol: str = 'XBTUSD',
-            min_proba=0.5,
-            min_agree=0,
-            stop_pct=None,
-            min_proba_enter=0.8,
-            num_disagree=0,
-            min_agree_pct=0.8,
-            regression=False,
+            min_proba: float = 0.5,
+            min_agree: int = 0,
+            stop_pct: float = None,
+            min_proba_enter: float = 0.8,
+            num_disagree: int = 0,
+            min_agree_pct: float = 0.8,
+            regression: bool = False,
             market_on_timeout: bool = False,
             **kw):
         super().__init__(symbol=symbol, **kw)
 
         use_stops = True if not stop_pct is None else False
-        # split_val = 0 if regression else 0.5
 
         f.set_self(vars())
 

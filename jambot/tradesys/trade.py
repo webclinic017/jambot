@@ -1,10 +1,12 @@
 import operator as opr
 
+from jambot import functions as f
+from jambot.tradesys.base import Observer, SignalEvent
+from jambot.tradesys.broker import Broker
+from jambot.tradesys.enums import TradeSide, TradeStatus
+from jambot.tradesys.orders import MarketOrder, Order
+
 from .__init__ import *
-from .base import Observer, SignalEvent
-from .broker import Broker
-from .enums import TradeSide, TradeStatus
-from .orders import MarketOrder, Order
 
 
 class Trade(Observer):
