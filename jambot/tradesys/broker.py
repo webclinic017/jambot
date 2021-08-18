@@ -20,7 +20,6 @@ class Broker(Observer):
     def __init__(self, *args, **kw):
         super().__init__(*args, **kw)
         all_orders = {}
-        filled_orders = {}
         open_orders = {}
         wallets = {}
 
@@ -137,6 +136,45 @@ class Broker(Observer):
 
                 # NOTE not sure if broker should be the one to do this
                 order.timedout.emit(order)
+
+    def recent_markets(self, ts: dt = None) -> List[Order]:
+        """Get list of market orders filled during current timestamp
+
+        Parameters
+        ----------
+        ts : dt, optional
+            timestamp to check, by default last timestamp in df
+
+        Returns
+        -------
+        List[Order]
+            list of market orders filled
+        """
+        # NOTE might need to be previous timestamp
+        if ts is None:
+            ts = self.timestamp
+
+        return [o for o in self.all_orders.values() if o.is_market and o.timestamp_filled == ts]
+
+    def _open_orders(self) -> List[Order]:
+        """Get list of all open orders (wrapper for self.open_orders dict)
+
+        Returns
+        -------
+        List[Order]
+            list of all open orders
+        """
+        return list(self.open_orders.values())
+
+    def expected_orders(self) -> List[Order]:
+        """Get all market/limit orders to check for current timestamp
+
+        Returns
+        -------
+        List[Order]
+            list of all orders
+        """
+        return self.recent_markets() + self._open_orders()
 
     @property
     def df_orders(self) -> pd.DataFrame:

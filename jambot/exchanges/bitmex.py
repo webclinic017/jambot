@@ -1,13 +1,16 @@
 import itertools
+import re
 import warnings
 
 from bitmex import bitmex
 from swagger_spec_validator.common import SwaggerValidationWarning
 
+from jambot import AZURE_WEB
+from jambot import functions as f
 from jambot.exchanges.exchange import Exchange
 from jambot.tradesys import orders as ords
 from jambot.tradesys.__init__ import *
-from jambot.tradesys.orders import BitmexOrder
+from jambot.tradesys.orders import BitmexOrder, Order
 from jambot.utils.secrets import SecretsManager
 
 log = getlog(__name__)
@@ -95,9 +98,13 @@ class Bitmex(Exchange):
                 return self.check_request(request=request, retries=retries)
             else:
                 f.send_error('{}: {}\n{}'.format(status, response.result, request.future.request.data))
-        except:
+        except Exception as e:
             # request.prepare() #TODO: this doesn't work
-            f.send_error('HTTP Error: {}'.format(request.future.request.data))
+            # TODO change f.send_error to always raise when not AZURE_WEB
+            if AZURE_WEB:
+                f.send_error('HTTP Error: {}'.format(request.future.request.data))
+            else:
+                raise e
 
     def get_position(self, symbol: str) -> dict:
         """Get position for specific symbol"""
@@ -180,9 +187,12 @@ class Bitmex(Exchange):
     def get_orders(
             self,
             symbol: str = None,
-            new_only=False,
-            bot_only=False,
-            manual_only=False) -> list:
+            new_only: bool = False,
+            bot_only: bool = False,
+            manual_only: bool = False,
+            as_bitmex: bool = False,
+            as_dict: bool = False,
+            refresh: bool = False) -> Union[List[dict], List[BitmexOrder], Dict[str, BitmexOrder]]:
         """Get orders which match criterion
 
         Parameters
@@ -195,13 +205,24 @@ class Bitmex(Exchange):
             orders created by bot, default False
         manual_only : bool, optional
             orders not created by bot, by default False
+        as_bitmex : bool, optional
+            return BitmexOrders instead of raw list of dicts
+        as_dict : bool, optional
+            return Dict[str, BitmexOrders] instead of list (for matching)
+        refresh : bool, optional
+            run self.set_orders() first to ensure orders current with bitmex
 
         Returns
         -------
-        list of order dicts
+        Union[List[dict], List[BitmexOrder] Dict[str, BitmexOrder]]
+            list of RAW order dicts, list of bitmex orders, or dict of str: BitmexOrder
         """
-        var = vars()
+        if refresh:
+            self.set_orders()
 
+        var = {k: v for k, v in vars().items() if not v in ('as_bitmex', 'refresh', 'as_dict')}
+
+        # define filters
         conds = dict(
             symbol=lambda x: x['symbol'].lower() == symbol.lower(),
             new_only=lambda x: x['ordStatus'] == 'New',
@@ -211,9 +232,21 @@ class Bitmex(Exchange):
         # filter conditions based on true args in vars()
         conds = {k: v for k, v in conds.items() if not var.get(k) in (None, False)}
 
-        return [o for o in self._orders if all(cond(o) for cond in conds.values())]
+        # self.refresh() might not have been called yet
+        if self._orders is None:
+            self.set_orders()
 
-    def bitmex_order_from_raw(self, order_specs: list) -> List[BitmexOrder]:
+        orders = [o for o in self._orders if all(cond(o) for cond in conds.values())]
+
+        if as_bitmex:
+            orders = self.bitmex_order_from_raw(order_specs=orders, process=False)
+
+        if as_dict:
+            orders = ords.list_to_dict(orders, key_base=False)
+
+        return orders
+
+    def bitmex_order_from_raw(self, order_specs: list, process: bool = True) -> List[BitmexOrder]:
         """Create bitmex order objs from raw specs
         - top level wrapper to both add raw specs and convert to BitmexOrder
 
@@ -227,15 +260,17 @@ class Bitmex(Exchange):
         List[BitmexOrder]
             list of bitmex orders
         """
+        if process:
+            order_specs = self.add_custom_specs(order_specs)
 
-        return ords.make_bitmex_orders(self.add_custom_specs(order_specs))
+        return ords.make_bitmex_orders(order_specs)
 
-    def add_custom_specs(self, order_specs: list) -> List[dict]:
+    def add_custom_specs(self, order_specs: List[dict]) -> List[dict]:
         """Preprocess orders from exchange to add custom markers
 
         Parameters
         ----------
-        order_specs : list
+        order_specs : List[dict]
             list of order specs from bitmex
 
         Returns
@@ -259,7 +294,10 @@ class Bitmex(Exchange):
             o['processed'] = True
             o['sideStr'] = o['side']
             o['side'] = 1 if o['side'] == 'Buy' else -1
-            o['orderQty'] = int(o['side'] * o['orderQty'])
+
+            # some orders can have none qty if "close position" market order cancelled by bitmex
+            if not o['orderQty'] is None:
+                o['orderQty'] = int(o['side'] * o['orderQty'])
 
             # add key to the order, excluding manual orders
             if not o['clOrdID'] == '':
@@ -267,7 +305,9 @@ class Bitmex(Exchange):
                 o['name'] = o['clOrdID'].split('-')[1]
 
                 if not 'manual' in o['clOrdID']:
-                    # o['key'] = '-'.join(o['clOrdID'].split('-')[:-1])
+                    # replace 10 digit timestamp from key if exists
+                    o['key'] = re.sub(r'-\d{10}', '', o['clOrdID'])
+                    # print(o['key'])
                     o['manual'] = False
                 else:
                     o['manual'] = True
@@ -327,21 +367,28 @@ class Bitmex(Exchange):
         List[BitmexOrder]
             list of order results
         """
-        if not order_specs:
+        if not order_specs and not action == 'cancel_all':
             return
 
         func, param = dict(
             submit=('Order_newBulk', 'orders'),
             amend=('Order_amendBulk', 'orders'),
-            cancel=('Order_cancel', 'orderID')).get(action)
+            cancel=('Order_cancel', 'orderID'),
+            cancel_all=('Order_cancelAll', '')).get(action)
 
-        result = self.check_request(
-            getattr(self.client.Order, func)(**{param: json.dumps(order_specs)}))
+        func = getattr(self.client.Order, func)
 
+        if not action == 'cancel_all':
+            params = {param: json.dumps(order_specs)}
+        else:
+            # cancel_all just uses dict(symbol='XBTUSD')
+            params = order_specs
+
+        result = self.check_request(func(**params))
         resp_orders = self.bitmex_order_from_raw(result)
 
         # check if submit/amend orders incorrectly cancelled
-        if not action == 'cancel':
+        if not 'cancel' in action:
             failed_orders = [o for o in resp_orders if o.is_cancelled]
 
             for o in failed_orders:
@@ -352,16 +399,20 @@ class Bitmex(Exchange):
 
         return resp_orders
 
-    def amend_orders(self, orders: Union[list, 'BitmexOrder']) -> List[BitmexOrder]:
-        """Amend order price or qty"""
+    def amend_orders(self, orders: Union[List[BitmexOrder], BitmexOrder]) -> List[BitmexOrder]:
+        """Amend order price and/or qty
+
+        Parameters
+        ----------
+        orders : Union[List[BitmexOrder], BitmexOrder]
+            Orders to amend price/qty
+
+        Returns
+        -------
+        List[BitmexOrder]
+        """
         order_specs = [o.order_spec_amend for o in f.as_list(orders)]
         return self._order_request(action='amend', order_specs=order_specs)
-
-        # except:
-        #     msg = ''
-        #     for order in amendorders:
-        #         msg += json.dumps(order.amend_order()) + '\n'
-        #     f.send_error(msg)
 
     def submit_simple_order(
             self,
@@ -386,24 +437,32 @@ class Bitmex(Exchange):
         o = self.place_bulk(placeorders=order)[0]
         display(f.useful_keys(o))
 
-    def submit_orders(self, orders: Union[list, 'BitmexOrder']) -> List[BitmexOrder]:
+    def submit_orders(self, orders: Union[List[BitmexOrder], BitmexOrder, List[dict]]) -> List[BitmexOrder]:
         """Submit single or multiple orders
 
         Parameters
         ----------
-        orders : list | BitmexOrder
-            single or list of BitmexOrder objects
+        orders : List[BitmexOrder] | BitmexOrder | List[dict]
+            single or list of BitmexOrder objects, or list/single dict of order specs
 
         Returns
         -------
         list
             list of orders placed
         """
-        orders = f.as_list(orders)
+        _orders = []
+        for o in f.as_list(orders):
 
-        for o in orders:
-            if not o.is_bitmex:
-                raise TypeError(f'Order must be of type BitmexOrder, not {type(o)}.')
+            # convert dict specs to BitmexOrder
+            # NOTE BitmexOrder IS a subclass of dict!!
+            if not isinstance(o, BitmexOrder):
+                o = ords.make_orders(order_specs=o, as_bitmex=True)[0]
+
+            _orders.append(o)
+
+        orders = _orders
+        if not orders:
+            return
 
         # split orders into groups, market orders must be submitted as single
         grouped = {k: list(g) for k, g in itertools.groupby(orders, lambda x: x.is_market)}
@@ -422,14 +481,17 @@ class Bitmex(Exchange):
 
         return result
 
-    def close_position(self, symbol: str = SYMBOL):
+    def close_position(self, symbol: str = SYMBOL) -> None:
+        """Market close current open position
+
+        Parameters
+        ----------
+        symbol : str, optional
+            symbol to close position, by default 'XBTUSD'
+        """
         try:
-            # m = dict(symbol='XBTUSD', execInst='Close', ordType='Market')
             self.check_request(
                 self.client.Order.Order_new(symbol=symbol, execInst='Close'))
-            # self.check_request(
-            #     self.client.Order.Order_newBulk(
-            #         orders=json.dumps(m)))
         except:
             f.send_error(msg='ERROR: Could not close position!')
 
@@ -438,12 +500,12 @@ class Bitmex(Exchange):
         orders = self.get_orders(refresh=True, manual_only=True)
         self.cancel_orders(orders=orders)
 
-    def cancel_orders(self, orders: Union[list, 'BitmexOrder']) -> List[BitmexOrder]:
+    def cancel_orders(self, orders: Union[List[BitmexOrder], BitmexOrder]) -> List[BitmexOrder]:
         """Cancel one or multiple orders by order_id
 
         Parameters
         ----------
-        orders : Union[list, BitmexOrder]
+        orders : List[BitmexOrder] | BitmexOrder
             list of orders to cancel
 
         Returns
@@ -451,14 +513,28 @@ class Bitmex(Exchange):
         List[BitmexOrder]
             list of cancelled orders
         """
-        orders = f.as_list(orders)
-        order_specs = [o.order_id for o in orders]
+        order_specs = [o.order_id for o in f.as_list(orders)]
 
         if not order_specs:
             log.warning('No orders to cancel.')
             return
 
         return self._order_request(action='cancel', order_specs=order_specs)
+
+    def cancel_all_orders(self, symbol: str = None) -> List[BitmexOrder]:
+        """Cancel all open orders
+
+        Parameters
+        ----------
+        symbol : str, default cancel all symbols
+            specific symbol to filter cancel
+
+        Returns
+        -------
+        List[BitmexOrder]
+            list of cancelled orders
+        """
+        return self._order_request(action='cancel_all', order_specs=dict(symbol=symbol))
 
     def get_partial(self, symbol):
         timediff = 0
@@ -617,12 +693,9 @@ class Bitmex(Exchange):
                 log.info('Ratelimit reached. Sleeping 10 seconds.')
                 time.sleep(10)
 
-        # convert bitmex dict to df
         # bitmex gives closetime, tradingview shows opentime, offset to match open
-        # keep all volume in terms of BTC - NOTE should probs change this to only Foreignnotional
-
         df = pd.json_normalize(lst) \
-            .assign(timestamp=lambda x: x.timestamp.astype('datetime64[ns]') + offset * -1) \
+            .assign(timestamp=lambda x: x.timestamp.dt.tz_localize(None) + offset * -1) \
             .pipe(self.resample, include_partial=include_partial, do=interval == 15) \
             .assign(interval=interval)[['interval'] + cols]
 
@@ -634,5 +707,83 @@ class Bitmex(Exchange):
 
         return df
 
-    def printit(self, result):
-        print(json.dumps(result, default=str, indent=4))
+    def reconcile_orders(self, symbol: str, expected_orders: List[Order]) -> None:
+        """Compare expected and actual (current) orders, adjust as required
+
+        Parameters
+        ----------
+        expected_orders : List[Order]
+            orders from current timestamp in strat backtest
+        actual_orders : List[Order]
+            orders active on exchange
+        """
+        actual_orders = self.get_orders(symbol=symbol, new_only=True, bot_only=True, as_bitmex=True, refresh=True)
+        orders = self.validate_orders(expected_orders, actual_orders, show=True)
+
+        self.cancel_orders(orders['cancel'])
+        self.amend_orders(orders['amend'])
+        self.submit_orders(orders['submit'])
+
+    def validate_orders(
+            self,
+            expected_orders: List[Order],
+            actual_orders: List[BitmexOrder],
+            show: bool = False) -> Dict[str, List[Order]]:
+        """Compare expected and actual (current) orders, return reqd actions
+
+        Parameters
+        ----------
+        expected_orders : List[Order]
+            orders from current timestamp in strat backtest
+        actual_orders : List[BitmexOrder]
+            orders active on exchange
+        show : bool
+            display df of orders with reqd action (for testing)
+
+        Returns
+        -------
+        Dict[str, List[Order]]
+            - amend: (orders matched but price/qty different)
+            - valid: (orders matched and have correct price/qty - no action reqd)
+            - submit: (expected_order missing)
+            - cancel: (actual_order not found in expected_orders)
+        """
+
+        # convert to dicts for easier matching
+        expected_orders = ords.list_to_dict(expected_orders)
+        actual_orders = ords.list_to_dict(actual_orders)
+
+        amend, valid, cancel = [], [], []
+        for k, o in actual_orders.items():
+            if k in expected_orders:
+                o_expc = expected_orders[k]
+
+                # compare price/qty
+                if not (o.price == o_expc.price and o.qty == o_expc.qty):
+                    o.amend_from_order(o_expc)
+                    amend.append(o)
+                else:
+                    valid.append(o)
+            else:
+                cancel.append(o)
+
+        submit = [o for k, o in expected_orders.items() if not k in actual_orders]
+
+        all_orders = dict(
+            amend=amend,
+            valid=valid,
+            submit=submit,
+            cancel=cancel)
+
+        if show and not 'linux' in sys.platform:
+            dfs = []
+            for action, orders in all_orders.items():
+                data = [o.to_dict() for o in orders]
+                df = pd.DataFrame.from_dict(data) \
+                    .assign(action=action)
+
+                dfs.append(df)
+
+            display(pd.concat(dfs))
+
+        return all_orders

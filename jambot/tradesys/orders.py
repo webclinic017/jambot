@@ -3,21 +3,24 @@ from __future__ import annotations
 import uuid
 from abc import ABCMeta
 
-from ..common import DictRepr, Serializable
+from jambot import functions as f
+from jambot.common import DictRepr, Serializable
+from jambot.tradesys.base import Observer, SignalEvent
+from jambot.tradesys.enums import OrderStatus, OrderType, TradeSide
+
 from .__init__ import *
-from .base import Observer, SignalEvent
-from .enums import OrderStatus, OrderType, TradeSide
 
 log = getlog(__name__)
 
 
 class BaseOrder(object, metaclass=ABCMeta):
     """Base class to be inherited by backtest or live exchange orders"""
+    ts_format = '%Y-%m-%d %H:%M'
 
     def __init__(
             self,
             qty: int,
-            price: float,
+            price: float = None,
             symbol: str = SYMBOL,
             order_id: str = None,
             name: str = '',
@@ -112,6 +115,23 @@ class BaseOrder(object, metaclass=ABCMeta):
         else:
             return (-1, float('-inf'))
 
+    @property
+    def key_base(self) -> str:
+        """Create key base as unique id (per trade)
+
+        Returns
+        -------
+        str
+            formatted key:
+            - SYMBOL-name-side_str
+            - XBTUSD-limitopen-long
+        """
+        # if ordtype == 'Stop':
+        #     side *= -1
+
+        sidestr = 'long' if self.side == 1 else 'short'
+        return '{}-{}-{}'.format(self.symbol, self.name.lower(), sidestr)
+
     # def rescale_contracts(self, balance, conf=1):
     #     self.qty = int(conf * f.get_contracts(
     #         xbt=balance,
@@ -123,7 +143,6 @@ class BaseOrder(object, metaclass=ABCMeta):
     def dict_stats(self) -> dict:
 
         return dict(
-            # order_id=self.order_id,
             ts=self.timestamp,
             ts_filled=self.timestamp_filled,
             symbol=self.symbol,
@@ -131,8 +150,7 @@ class BaseOrder(object, metaclass=ABCMeta):
             qty=self.qty,
             price=self.price,
             status=self.status,
-            name=self.name
-        )
+            name=self.name)
 
     def format_ts(self, ts: dt) -> Union[str, None]:
         """Format timestamp as str for dict repr
@@ -147,23 +165,21 @@ class BaseOrder(object, metaclass=ABCMeta):
         Union[str, None]
             ts or None
         """
-        return ts.strftime('%Y-%m-%d %H:%M') if not ts is None else None
+        return ts.strftime(self.ts_format) if not ts is None else None
 
     def to_dict(self) -> dict:
 
         price = f'{self.price:,.0f}' if not self.price is None else None
 
         return dict(
-            # order_id=self.order_id,
             ts=self.format_ts(self.timestamp_start),
-            ts_filled=self.format_ts(self.timestamp_filled),
+            # ts_filled=self.format_ts(self.timestamp_filled),
             symbol=self.symbol,
             order_type=str(self.order_type),
             qty=f'{self.qty:+,.0f}',
             price=price,
             status=self.status,
-            name=self.name,
-            t_num=self.parent.trade_num)
+            name=self.name)
 
     def as_bitmex(self) -> 'BitmexOrder':
         """Convert to BitmexOrder"""
@@ -173,6 +189,7 @@ class BaseOrder(object, metaclass=ABCMeta):
 class BitmexOrder(BaseOrder, DictRepr, Serializable):
     """Class to represent bitmex live-trading orders"""
     order_type = ''
+    ts_format = '%Y-%m-%d %H:%M:%S'
 
     # dict to convert bitmex keys
     m_conv = dict(
@@ -185,9 +202,8 @@ class BitmexOrder(BaseOrder, DictRepr, Serializable):
         symbol='symbol',
         key='clOrdID',
         exec_inst='execInst',
-        timestamp='transactTime',
-        name='name',
-    )
+        timestamp_start='transactTime',
+        name='name')
 
     def __init__(
             self,
@@ -196,8 +212,15 @@ class BitmexOrder(BaseOrder, DictRepr, Serializable):
             order_spec_raw: dict = None,
             order_id: str = None,
             timestamp: dt = None,
+            timestamp_start: dt = None,
             key: str = None,
+            stop_px: float = None,
             **kw):
+
+        # convert stop_px to price for stop orders
+        if not stop_px is None:
+            kw['price'] = stop_px
+
         super().__init__(**kw)
 
         order_type = OrderType(order_type)
@@ -226,9 +249,28 @@ class BitmexOrder(BaseOrder, DictRepr, Serializable):
             name=order.name
         )
 
+    @classmethod
+    def example(cls):
+        return cls(order_type='limit', qty=-1000, price=50000, name='example_order')
+
+    @property
+    def qty(self):
+        """Ensure BitmexOrders always in multiples of 100"""
+        return f.round_down(n=abs(self._qty), nearest=100) * self.side
+
+    @qty.setter
+    def qty(self, val):
+        """Set qty and side based on qty
+        - NOTE not dry, but can't redefine getter without setter in same class
+        """
+        self._qty = int(val)
+        self._side = TradeSide(np.sign(val))
+
     @property
     def exec_inst(self):
-        # TODO will probably need to allow adding extra exec_inst specs
+        """Create order type specific exec instructions
+        - TODO will probably need to allow adding extra exec_inst specs
+        """
         lst = []
         if self.is_limit:
             # prevents order from market filling if wrong side or price
@@ -237,7 +279,7 @@ class BitmexOrder(BaseOrder, DictRepr, Serializable):
         if self.is_stop:
             lst.append('IndexPrice')
 
-        # NOTE kinda sketch
+        # NOTE kinda sketch, need to make sure name always has "close"
         if 'close' in self.name:
             lst.append('close')
 
@@ -247,15 +289,13 @@ class BitmexOrder(BaseOrder, DictRepr, Serializable):
     def exec_inst_str(self):
         return ','.join(self.exec_inst)
 
-    def __json__(self):
+    def __json__(self) -> dict:
         """Return order spec dict to make json serializeable"""
         return self.order_spec
 
     @property
     def order_spec(self) -> dict:
         """Create order spec dict to submit to bitmex
-        - TODO need to include order_id when ammending order
-        - NOTE could make this static only when vals change?
         """
         m = dict(
             order_id=self.order_id,
@@ -263,8 +303,7 @@ class BitmexOrder(BaseOrder, DictRepr, Serializable):
             order_type=str(self.order_type).title(),
             qty=self.qty,
             key=self.key,
-            exec_inst=self.exec_inst_str
-        )
+            exec_inst=self.exec_inst_str)
 
         # market order doesn't have price
         # stop needs stopPx only
@@ -280,7 +319,25 @@ class BitmexOrder(BaseOrder, DictRepr, Serializable):
     def order_spec_amend(self) -> dict:
         """Subset of order_spec for amending only"""
         keys = ('orderID', 'symbol', 'orderQty', 'price')
-        return {k: v for k, v in self.order_spec.items() if k in keys}
+        m = {k: v for k, v in self.order_spec.items() if k in keys}
+
+        # check order has an order_id set before it can be amended
+        order_id = m.get('orderID', None)
+        if order_id is None:
+            raise AttributeError(f'orderID not set, needed to amend. orderID: {order_id}')
+
+        return m
+
+    def amend_from_order(self, order: BitmexOrder) -> None:
+        """Update self.price and self.qty from different order
+
+        Parameters
+        ----------
+        order : BitmexOrder
+            order to copy data from
+        """
+        self.price = order.price
+        self.qty = order.qty
 
     def raw_spec(self, key: str):
         """Return val from raw order spec"""
@@ -306,7 +363,9 @@ class BitmexOrder(BaseOrder, DictRepr, Serializable):
 
     @property
     def key_ts(self):
-        """Timestamp to make key unique (bitmex rejects duplicate clOrdIds)"""
+        """Timestamp to make key unique (bitmex rejects duplicate clOrdIds)
+        - This is created once, first time key_ts is called
+        """
         if not hasattr(self, '_key_ts'):
             self._key_ts = int(time.time())
 
@@ -321,16 +380,30 @@ class BitmexOrder(BaseOrder, DictRepr, Serializable):
 
     @property
     def key(self):
-        """Create key for clOrdID from params"""
+        """Create key for clOrdID from params
+        - orders will have key in format "SYMBOL-name-side_str-0123456789"
+        """
         return '{}-{}'.format(
-            f.key(self.symbol, self.name, self.side, self.order_type),
+            self.key_base,
             self.key_ts)
 
     @key.setter
     def key(self, val):
-        """Only set key_ts"""
-        if not val in ('', None):
-            self.key_ts = val.split('-')[-1]
+        """Only set key_ts, get from clOrdID
+        - symbol comes from raw ord spec
+        - name set as new key when data ingested from raw order spec
+        - side_str determined from side
+        """
+        if not val is None:
+            match = re.search(r'\d{10}', val)
+            if match:
+                self.key_ts = match.group()
+
+    def to_dict(self) -> dict:
+        """Add key for BitmexOrders"""
+        return super().to_dict() | dict(
+            key=self.key,
+            order_id=self.order_id)
 
 
 class Order(BaseOrder, Observer, metaclass=ABCMeta):
@@ -353,6 +426,7 @@ class Order(BaseOrder, Observer, metaclass=ABCMeta):
         # give order unique id
         if order_id is None:
             order_id = str(uuid.uuid1())
+            print('setting custom order_id: ', order_id)
 
         status = OrderStatus.PENDING
 
@@ -406,6 +480,12 @@ class Order(BaseOrder, Observer, metaclass=ABCMeta):
         """Set qty to max available"""
         qty = self.parent.wallet.available_quantity(price=self.price) * self.side
         self.parent.broker.amend_order(order=self, qty=qty)
+
+    def to_dict(self) -> dict:
+        """Add t_num for strat Orders"""
+        return super().to_dict() | dict(
+            ts_filled=self.format_ts(self.timestamp_filled),
+            t_num=self.parent.trade_num)
 
 
 class LimitOrder(Order):
@@ -465,40 +545,66 @@ def make_order(order_type: 'OrderType', **kw) -> Order:
     return cls(**kw)
 
 
-def make_orders(order_specs: list, as_bitmex: bool = False, **kw) -> list:
+def make_orders(
+        order_specs: Union[List[dict], dict],
+        as_bitmex: bool = False, **kw) -> Union[List[Order], List[BitmexOrder]]:
     """Make multiple orders
 
     Parameters
     ----------
-    order_specs : list
+    order_specs : Union[List[dict], dict]
         list of order_specs dicts
     as_bitmex : bool
         convert to bitmex orders or not
 
     Returns
     -------
-    list
-        list of initialized Order objects
+    List[Order] | List[BitmexOrder]
+        list of initialized Order | BitmexOrder objects
     """
-    orders = [make_order(**order_spec, **kw) for order_spec in order_specs]
+    order_specs = f.as_list(order_specs)
 
-    if as_bitmex:
-        orders = [o.as_bitmex() for o in orders]
+    if not as_bitmex:
+        orders = [make_order(**order_spec, **kw) for order_spec in order_specs]
+
+    else:
+        # dont want to mix up strat Orders with BitmexOrders (strat creates its own order_id)
+        orders = [BitmexOrder(**order_spec, **kw) for order_spec in order_specs]
 
     return orders
 
 
-def make_bitmex_orders(order_specs: list) -> List[BitmexOrder]:
-    """Create multiple bitmex orders from list of dicts
+def make_bitmex_orders(order_specs: Union[List[dict], dict]) -> List[BitmexOrder]:
+    """Create multiple bitmex orders from raw bitmex order spec dicts
 
     Parameters
     ----------
     order_specs : list
-        list of dicts, usually comes as response from bitmex
+        list of dicts, MUST be response from bitmex
 
     Returns
     -------
     List[BitmexOrder]
     """
+    return [BitmexOrder.from_dict(order_spec) for order_spec in f.as_list(order_specs)]
 
-    return [BitmexOrder.from_dict(order_spec) for order_spec in order_specs]
+
+def list_to_dict(
+        orders: List[Union[Order, BitmexOrder]],
+        key_base: bool = True) -> Dict[str, Union[Order, BitmexOrder]]:
+    """Convenience func to convert list of orders to dict for convenient matching
+
+    Parameters
+    ----------
+    orders : List[Order | BitmexOrder]
+        list of Orders or BitmexOrders
+    key_base : bool, optional default True
+        use key_base or full key with timestamp as key
+
+    Returns
+    -------
+    Dict[str, Order | BitmexOrder]
+        dict of {order.key_base: order}
+    """
+    key = 'key_base' if key_base else 'key'
+    return {getattr(o, key): o for o in orders}

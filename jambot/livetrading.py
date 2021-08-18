@@ -24,67 +24,6 @@ def compare_state(strat, pos):
     return ans
 
 
-def compare_orders(theo=[], actual=[], show=False):
-
-    matched, missing, notmatched = [], [], []
-    m1, m2 = {}, {}
-    # TODO: this could be done with filtering
-
-    for i, o in enumerate(theo):
-        m1[o.key] = i
-
-    for i, o in enumerate(actual):
-        m2[o['key']] = i
-
-    for o in theo:
-        if o.key in m2:
-            o.intake_live_data(actual[m2[o.key]])
-            matched.append(o)
-        else:
-            missing.append(o)
-
-    for o in actual:
-        if not o['key'] in m1:
-            notmatched.append(o)
-
-    if show and not 'linux' in sys.platform:
-        print('\nMatched: ')
-        for o in matched:
-            display(o.to_dict())
-        print('\nMissing:')
-        for o in missing:
-            display(o.to_dict())
-        print('\nNot matched:')
-        for o in notmatched:
-            display(o)
-
-    return matched, missing, notmatched
-
-
-def check_matched(matched, show=False):
-
-    amend = []
-
-    for order in matched:
-        ld = order.livedata
-        checkprice = ld['price'] if ld['ordType'] == 'Limit' else ld['stopPx']
-
-        if not (order.price == checkprice and
-                order.qty == ld['qty'] and
-                order.side == ld['side']):
-            amend.append(order)
-
-            if show and not 'linux' in sys.platform:
-                print('\nAmmending:')
-                print(order.name)
-                print(order.price == checkprice, order.price, checkprice)
-                print(order.qty == ld['qty'], order.qty, ld['qty'])
-                print(order.side == ld['side'], order.side, ld['side'])
-                display(order.amend_order())
-
-    return amend
-
-
 def refresh_gsheet_balance(u=None):
     sht = f.get_google_sheet()
     ws = sht.worksheet_by_title('Bitmex')
@@ -184,6 +123,7 @@ def check_filled_orders(minutes=5, refresh=True, u=None):
                 stats))
 
         # write balance to google sheet, EXCEPT on market buys
+        # NOTE probably don't need to do this now
         if nonmarket and refresh:
             run_toploop(u=u, partial=True)
             # write_balance_google(syms, u, preservedf=True)
@@ -319,11 +259,11 @@ def run_toploop(u=None, partial=False, dfall=None):
                 actual = u.get_orders(bm.symbolbitmex, bot_only=True)
                 theo = strat.final_orders(u, weight)
 
-                matched, missing, notmatched = compare_orders(theo, actual, show=True)
+                # matched, missing, not_matched = compare_orders(theo, actual, show=True)
 
-                u.cancel_bulk(notmatched)
-                u.amend_bulk(check_matched(matched, show=True))
-                u.place_bulk(missing)
+                # u.cancel_bulk(not_matched)
+                # u.amend_bulk(validate_matched(matched, show=True))
+                # u.place_bulk(missing)
 
         except:
             f.send_error(symbol)
@@ -331,12 +271,20 @@ def run_toploop(u=None, partial=False, dfall=None):
     write_balance_google(syms, u, sht)
 
 
-def run_strat_live(exch: Bitmex = None, test: bool = False):
+def run_strat_live(exch: Bitmex = None, test: bool = False, interval: int = 15) -> None:
+    """Run strategy on given interval and adjust orders
+
+    Parameters
+    ----------
+    exch : Bitmex, optional
+        exch obj, default None
+    test : bool, optional
+        [description], by default False
+    """
     # TODO add errlog wrapper
     from jambot.database import db
 
-    # trigger every 15min at 0sec
-    interval = 15
+    # trigger every 15min at 15sec
     symbol = SYMBOL
     name = 'lgbm'
 
@@ -369,6 +317,7 @@ def run_strat_live(exch: Bitmex = None, test: bool = False):
     bm.run()
 
     # reconcile orders
+    exch.reconcile_orders(symbol=symbol, expected_orders=strat.broker.expected_orders())
     return
 
 
