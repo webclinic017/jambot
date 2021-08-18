@@ -12,6 +12,7 @@ import pypika as pk
 import sqlalchemy as sa
 from pypika import functions as fn
 
+from jambot import SYMBOL
 from jambot import functions as f
 from jambot import getlog
 from jambot.exchanges.bitmex import Bitmex
@@ -33,10 +34,8 @@ def _create_engine():
     """Create sqla engine object
     - sqlalchemy.engine.base.Engine
     - Used in DB class and outside, eg pd.read_sql
-    - any errors reading db_creds results in None engine"""
-
-    # connect_args = {'autocommit': True}
-    # , isolation_level="AUTOCOMMIT"
+    - any errors reading db_creds results in None engine
+    """
 
     return sa.create_engine(
         str_conn(),
@@ -161,17 +160,16 @@ class DB(object):
             nrows = df.shape[0]
             df.to_sql(name='Bitmex', con=self.engine, if_exists='append', index=False)
 
-        log.info(f'Imported [{nrows}] rows to db.')
+        log.info(f'Imported [{nrows}] row(s) to db.')
 
     def get_df(
             self,
-            symbol: str,
+            symbol: str = SYMBOL,
             period: int = 300,
             startdate: dt = None,
             enddate: dt = None,
             daterange: Tuple[dt] = None,
-            interval: int = 1,
-            offset: int = -15):
+            interval: int = 15):
 
         if startdate is None:
             startdate = f.timenow(interval=interval) + delta(hours=abs(period) * -1)
@@ -179,7 +177,9 @@ class DB(object):
             if enddate is None and not daterange is None:
                 enddate = startdate + delta(days=daterange)
 
-            startdate += delta(days=offset)
+            # add extra offset for building signals (eg ema_200)
+            offset = {1: 16, 15: 4}.get(interval)
+            startdate += delta(days=-offset)
 
         a = pk.Table('Bitmex')
         cols = ['timestamp', 'open', 'high', 'low', 'close', 'volume']
