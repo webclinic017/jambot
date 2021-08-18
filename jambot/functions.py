@@ -1,5 +1,6 @@
 """General Functions module - don't rely on any other modules from jambot"""
 
+import math
 import pickle
 import re
 import time
@@ -234,6 +235,24 @@ def percent(val):
     return '{:.2%}'.format(val)
 
 
+def round_down(n: Union[int, float], nearest: int = 100) -> int:
+    """Round down to nearest value (used for round contract sizes to nearest 100)
+
+    Parameters
+    ----------
+    n : Union[int, float]
+        number to round
+    nearest : int, optional
+        value to round to, by default 100
+
+    Returns
+    -------
+    int
+        number rounded to nearest
+    """
+    return int(math.floor(n / nearest)) * nearest
+
+
 def price_format(altstatus=False):
     ans = '{:,.0f}' if not altstatus else '{:,.0f}'
     return ans
@@ -309,7 +328,9 @@ def side(x):
 
 
 def useful_keys(orders):
-    # return only useful keys from bitmex orders in dict form
+    """return only useful keys from bitmex orders in dict form
+    - NOTE don't think this is needed anymore
+    """
     keys = ('symbol', 'clOrdID', 'side', 'price', 'stopPx', 'ordType',
             'execInst', 'ordStatus', 'qty', 'name', 'manual', 'orderID')
 
@@ -325,15 +346,6 @@ def useful_keys(orders):
         return result
     else:
         return result[0]
-
-
-def key(symbol, name, side, ordtype):
-    # if ordtype == 'Stop':
-    #     side *= -1
-
-    sidestr = 'long' if side == 1 else 'short'
-
-    return '{}-{}-{}'.format(symbol, name.lower(), sidestr)
 
 
 def col(df, col):
@@ -389,7 +401,6 @@ def send_error(msg='', prnt=False):
         discord(msg=err, channel='err')
 
 
-# DATABASE
 def get_google_sheet():
     import pygsheets
     from google.oauth2 import service_account
