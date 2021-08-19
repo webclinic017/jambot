@@ -219,7 +219,7 @@ def run_toploop(u=None, partial=False, dfall=None):
 
     u.set_positions()
     u.set_orders()
-    u.reservedbalance = g_user['Reserved Balance']  # could just pass g_user to User()
+    u.reserved_balance = g_user['Reserved Balance']  # could just pass g_user to User()
 
     # TODO: filter dfall to only symbols needed, don't pull everything from db
     # use 'WHERE symbol in []', try pypika
@@ -279,19 +279,17 @@ def run_strat_live(exch: Bitmex = None, test: bool = False, interval: int = 15) 
     exch : Bitmex, optional
         exch obj, default None
     test : bool, optional
-        [description], by default False
+        use testnet, by default False
     """
     # TODO add errlog wrapper
     from jambot.database import db
 
+    if exch is None:
+        exch = Bitmex.default(test=test, refresh=True)
+
     # trigger every 15min at 15sec
     symbol = SYMBOL
     name = 'lgbm'
-
-    # update candles from bitmex to db
-    # need to query repeatedly till newest candle is available
-    # if not test:
-    #     exch.wait_candle_avail(interval=interval)
 
     # load raw data from db
     # add signals to raw data
@@ -317,11 +315,6 @@ def run_strat_live(exch: Bitmex = None, test: bool = False, interval: int = 15) 
     bm.run()
 
     # reconcile orders
-    exch.reconcile_orders(symbol=symbol, expected_orders=strat.broker.expected_orders())
-    return
-
-
-def retrain_model():
-    """Run every 24? hours, retrain model and save"""
-    # TODO need new az_TrainModel, trigger 24 hrs + 5 mins or something
-    return
+    exch.reconcile_orders(
+        symbol=symbol,
+        expected_orders=strat.broker.expected_orders(exch=exch, symbol=symbol))
