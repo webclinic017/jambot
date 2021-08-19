@@ -271,6 +271,38 @@ def run_toploop(u=None, partial=False, dfall=None):
     write_balance_google(syms, u, sht)
 
 
+def get_df_pred(symbol: str = SYMBOL, interval: int = 15, name: str = 'lgbm', test: bool = False) -> pd.DataFrame:
+    """Convenicce to get df_pred used by live trading
+
+    Parameters
+    ----------
+    symbol : str, optional
+        by default SYMBOL
+    interval : int, optional
+        by default 15
+    name : str, optional
+        model name, by default 'lgbm'
+    test : bool
+        use test or live models on azure blob storage
+
+    Returns
+    -------
+    pd.DataFrame
+        df with preds added
+    """
+    from jambot.database import db
+
+    # load raw data from db and add signals
+    offset = {1: 16, 15: 4}.get(interval)
+    startdate = f.timenow(interval) + delta(days=-offset)
+    df = db.get_df(symbol=symbol, startdate=startdate, interval=interval) \
+        .pipe(md.add_signals, name=name)
+
+    # load saved/trained models from blob storage and add pred signals
+    return ModelStorageManager(test=test) \
+        .df_pred_from_models(df=df, name=name)
+
+
 def run_strat_live(exch: Bitmex = None, test: bool = False, interval: int = 15) -> None:
     """Run strategy on given interval and adjust orders
 
@@ -282,7 +314,6 @@ def run_strat_live(exch: Bitmex = None, test: bool = False, interval: int = 15) 
         use testnet, by default False
     """
     # TODO add errlog wrapper
-    from jambot.database import db
 
     if exch is None:
         exch = Bitmex.default(test=test, refresh=True)
@@ -290,17 +321,7 @@ def run_strat_live(exch: Bitmex = None, test: bool = False, interval: int = 15) 
     # trigger every 15min at 15sec
     symbol = SYMBOL
     name = 'lgbm'
-
-    # load raw data from db
-    # add signals to raw data
-    offset = {1: 16, 15: 4}.get(interval)
-    startdate = f.timenow(interval) + delta(days=-offset)
-    df = db.get_df(symbol=symbol, startdate=startdate, interval=interval) \
-        .pipe(md.add_signals, name=name)
-
-    # load saved/trained models from blob storage and add pred signals
-    df_pred = ModelStorageManager() \
-        .df_pred_from_models(df=df, name=name)
+    df_pred = get_df_pred(symbol, interval, name)
 
     # run strat in "live" mode to get expected state
     strat = ml.make_strat(live=True)
@@ -308,7 +329,7 @@ def run_strat_live(exch: Bitmex = None, test: bool = False, interval: int = 15) 
     cols = ['open', 'high', 'low', 'close', 'signal']
     bm = bt.BacktestManager(
         symbol=symbol,
-        startdate=df.index[0],
+        startdate=df_pred.index[0],
         strat=strat,
         df=df_pred[cols])
 
