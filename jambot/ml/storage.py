@@ -5,7 +5,7 @@ import numpy as np
 import pandas as pd
 from sklearn.base import BaseEstimator
 
-from jambot import SYMBOL
+from jambot import AZURE_WEB, SYMBOL
 from jambot import config as cf
 from jambot import functions as f
 from jambot import getlog
@@ -13,6 +13,7 @@ from jambot import sklearn_utils as sk
 from jambot.common import DictRepr
 from jambot.database import db
 from jambot.ml import models as md
+from jambot.utils.storage import BlobStorage
 
 log = getlog(__name__)
 
@@ -26,7 +27,8 @@ class ModelStorageManager(DictRepr):
             n_models: int = 3,
             d_lower: dt = None,
             interval: int = 15,
-            reset_hour: int = 18):
+            reset_hour: int = 18,
+            test: bool = False):
         """
 
         Parameters
@@ -42,6 +44,13 @@ class ModelStorageManager(DictRepr):
         reset_hour : int, optional
             filter training df to constant hour per day for consistency (11 pst = 18 utc)
         """
+        container = 'jambot-app'
+
+        if not AZURE_WEB or test:
+            container = f'{container}-test'
+
+        # init BlobStorage to mirror local data dir to azure blob storage
+        bs = BlobStorage(container=container)
 
         dt_format = '%Y-%m-%d-%H'
         batch_size_cdls = batch_size
@@ -131,6 +140,9 @@ class ModelStorageManager(DictRepr):
             f.save_pickle(estimator, p=self.p_model, name=fname)
             log.info(f'saved model: {fname}, max_date: {d}')
 
+        # mirror saved models to azure blob
+        self.bs.upload_dir(p=self.p_model, mirror=True)
+
     def df_pred_from_models(self, df: pd.DataFrame, name: str) -> pd.DataFrame:
         """Load all models, make iterative predictions
         - probas added in a bit of a unique way here, one model slice at a time instead of all at once
@@ -147,6 +159,8 @@ class ModelStorageManager(DictRepr):
         pd.DataFrame
             df with all predictions added
         """
+        self.bs.download_dir(p=self.p_model, mirror=True)
+
         cfg = md.model_cfg(name)
         target = cfg['target']
         pred_dfs = []
