@@ -5,7 +5,7 @@ import numpy as np
 import pandas as pd
 from sklearn.base import BaseEstimator
 
-from jambot import AZURE_WEB, SYMBOL
+from jambot import SYMBOL
 from jambot import config as cf
 from jambot import functions as f
 from jambot import getlog
@@ -30,7 +30,6 @@ class ModelStorageManager(DictRepr):
             reset_hour: int = 18,
             test: bool = False):
         """
-
         Parameters
         ----------
         batch_size : int, optional
@@ -46,7 +45,7 @@ class ModelStorageManager(DictRepr):
         """
         container = 'jambot-app'
 
-        if not AZURE_WEB or test:
+        if test:
             container = f'{container}-test'
 
         # init BlobStorage to mirror local data dir to azure blob storage
@@ -119,6 +118,7 @@ class ModelStorageManager(DictRepr):
         cfg = md.model_cfg(name)
 
         # filter to constant d_upper per day
+        # TODO make this max 18:00 no matter which day
         d_upper = f.date_to_dt(dt.utcnow().date()) + delta(hours=self.reset_hour)
         index = df.loc[:d_upper].index
         df = df.loc[:d_upper].to_numpy(np.float32)
