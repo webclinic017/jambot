@@ -1,5 +1,4 @@
 import copy
-import json
 import pickle
 import re
 import time
@@ -61,7 +60,7 @@ class ModelManager(object):
         grids = {}
         df_preds = {}
         v = {**vars(), **kw}
-        set_self(v)
+        f.set_self(v)
 
         if any(item in kw for item in ('features', 'encoders')):
             self.make_column_transformer(**kw)
@@ -78,7 +77,7 @@ class ModelManager(object):
         scorer : [type], optional
             jambot.tradesys.strategies.StratScorer, by default None
         """
-        f.set_self(vars())
+        f.f.set_self(vars())
         return self
 
     def make_column_transformer(self, features: dict, encoders: dict, **kw) -> ColumnTransformer:
@@ -99,7 +98,7 @@ class ModelManager(object):
         ct = ColumnTransformer(
             transformers=[(name, encoder, features[name]) for name, encoder in encoders.items()])
 
-        set_self(vars())
+        f.set_self(vars())
         return ct
 
     def show_ct(self, x_train: pd.DataFrame = None):
@@ -474,7 +473,7 @@ class ModelManager(object):
             'Best params': grid.best_params_,
             'Best score': f'{grid.best_score_:.3f}'}
 
-        pretty_dict(results)
+        f.pretty_dict(results)
 
         return grid
 
@@ -515,7 +514,7 @@ class ModelManager(object):
         x_train, y_train = split(df_train, target=target)
         x_test, y_test = split(df_test, target=target)
 
-        set_self(vars(), exclude=('target',))
+        f.set_self(vars(), exclude=('target',))
 
         return x_train, y_train, x_test, y_test
 
@@ -841,143 +840,6 @@ def get_ct_feature_names(ct):
 
     # print(output_features)
     return output_features
-
-
-def pretty_dict(m: dict, html=False, prnt=True) -> str:
-    """Print pretty dict converted to newlines
-    Paramaters
-    ----
-    m : dict
-    html: bool
-        Use <br> instead of html
-    Returns
-    -------
-    str
-        'Key 1: value 1
-        'Key 2: value 2"
-    """
-    s = json.dumps(m, indent=4)
-    newline_char = '\n' if not html else '<br>'
-
-    # remove these chars from string
-    remove = '}{\'"[]'
-    for char in remove:
-        s = s.replace(char, '')
-
-    s = s \
-        .replace(', ', newline_char) \
-        .replace(',\n', newline_char)
-
-    # remove leading and trailing newlines
-    s = re.sub(r'^[\n]', '', s)
-    s = re.sub(r'\s*[\n]$', '', s)
-
-    if prnt:
-        print(s)
-    else:
-        return s
-
-
-def df_dict(m: dict, colname=None, prnt=True):
-    """Quick display of dataframe from dict
-
-    Parameters
-    ----------
-    m : dict
-        dictionary to display
-    colname : str, optional
-    prnt : bool, optional
-    """
-
-    colname = colname or 'col1'
-    df = pd.DataFrame.from_dict(m, orient='index', columns=[colname])
-
-    if prnt:
-        display(df)
-    else:
-        return df
-
-
-def inverse(m: dict) -> dict:
-    """Return inverse of dict"""
-    return {v: k for k, v in m.items()}
-
-
-def set_self(m, prnt=False, exclude=()):
-    """Convenience func to assign an object's func's local vars to self"""
-    if not isinstance(exclude, tuple):
-        exclude = (exclude, )
-    exclude += ('__class__', 'self')  # always exclude class/self
-    obj = m.get('self', None)  # self must always be in vars dict
-
-    if obj is None:
-        return
-
-    for k, v in m.items():
-        if prnt:
-            print(f'\n\t{k}: {v}')
-
-        if not k in exclude:
-            setattr(obj, k, v)
-
-
-def remove_bad_chars(w: str):
-    """Remove any bad chars " : < > | . \ / * ? in string to make safe for filepaths"""  # noqa
-    return re.sub(r'[":<>|.\\\/\*\?]', '', str(w))
-
-
-def to_snake(s: str):
-    """Convert messy camel case to lower snake case
-
-    Parameters
-    ----------
-    s : str
-        string to convert to special snake case
-
-    Examples
-    --------
-    """
-    s = remove_bad_chars(s).strip()  # get rid of /<() etc
-    s = re.sub(r'[\]\[()]', '', s)  # remove brackets/parens
-    s = re.sub(r'[\n-]', '_', s)  # replace newline/dash with underscore
-    s = re.sub(r'[%]', 'pct', s)
-    s = re.sub(r"'", '', s)
-
-    # split on capital letters
-    expr = r'(?<!^)((?<![A-Z])|(?<=[A-Z])(?=[A-Z][a-z]))(?=[A-Z])'
-
-    return re \
-        .sub(expr, '_', s) \
-        .lower() \
-        .replace(' ', '_') \
-        .replace('__', '_')
-
-
-def lower_cols(df):
-    """Convert df columns to snake case and remove bad characters"""
-    is_list = False
-
-    if isinstance(df, pd.DataFrame):
-        cols = df.columns
-    else:
-        cols = df
-        is_list = True
-
-    m_cols = {col: to_snake(col) for col in cols}
-
-    if is_list:
-        return list(m_cols.values())
-
-    return df.pipe(lambda df: df.rename(columns=m_cols))
-
-
-def parse_datecols(df, format=None):
-    """Convert any columns with 'date' or 'time' in header name to datetime"""
-    datecols = list(filter(lambda x: any(s in x.lower()
-                    for s in ('date', 'time')), df.columns))
-    df[datecols] = df[datecols].apply(
-        pd.to_datetime, errors='coerce', format=format)
-    return df
 
 
 def mpl_dict(params):

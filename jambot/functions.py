@@ -1,5 +1,6 @@
 """General Functions module - don't rely on any other modules from jambot"""
 
+import json
 import math
 import pickle
 import re
@@ -12,10 +13,7 @@ from sys import platform
 from typing import Any, Union
 
 import pandas as pd
-import yaml
 from dateutil.parser import parse
-
-from jambot import config as cf
 
 
 def check_path(p: Path) -> None:
@@ -53,9 +51,10 @@ def as_list(items: Any) -> list:
     return items
 
 
-def set_self(m, prnt=False, exclude=()):
+def set_self(m: dict, exclude: Union[tuple, str] = ()):
     """Convenience func to assign an object's func's local vars to self"""
-    # if not isinstance(exclude, tuple): exclude = (exclude, )
+    if not isinstance(exclude, tuple):
+        exclude = (exclude, )
     exclude += ('__class__', 'self')  # always exclude class/self
     obj = m.get('self', None)  # self must always be in vars dict
 
@@ -63,11 +62,69 @@ def set_self(m, prnt=False, exclude=()):
         return
 
     for k, v in m.items():
-        # if prnt:
-        #     print(f'\n\t{k}: {v}')
-
         if not k in exclude:
             setattr(obj, k, v)
+
+
+def inverse(m: dict) -> dict:
+    """Return inverse of dict"""
+    return {v: k for k, v in m.items()}
+
+
+def pretty_dict(m: dict, html=False, prnt=True) -> str:
+    """Print pretty dict converted to newlines
+    Paramaters
+    ----
+    m : dict
+    html: bool
+        Use <br> instead of html
+    Returns
+    -------
+    str
+        'Key 1: value 1
+        'Key 2: value 2"
+    """
+    s = json.dumps(m, indent=4)
+    newline_char = '\n' if not html else '<br>'
+
+    # remove these chars from string
+    remove = '}{\'"[]'
+    for char in remove:
+        s = s.replace(char, '')
+
+        # .replace(', ', newline_char) \
+    s = s \
+        .replace(',\n', newline_char)
+
+    # remove leading and trailing newlines
+    s = re.sub(r'^[\n]', '', s)
+    s = re.sub(r'\s*[\n]$', '', s)
+
+    if prnt:
+        print(s)
+    else:
+        return s
+
+
+def df_dict(m: dict, colname=None, prnt=True):
+    """Quick display of dataframe from dict
+
+    Parameters
+    ----------
+    m : dict
+        dictionary to display
+    colname : str, optional
+    prnt : bool, optional
+    """
+    from IPython.display import display
+
+    colname = colname or 'col1'
+    df = pd.DataFrame.from_dict(m, orient='index', columns=[colname])
+
+    if prnt:
+        display(df)
+    else:
+        return df
 
 
 def filter_df(dfall, symbol):
@@ -276,9 +333,12 @@ def get_price(pnl: float, entry_price: float, side: int) -> float:
         price
     """
     if side == 1:
-        return pnl * entry_price + entry_price
+        price = pnl * entry_price + entry_price
     elif side == -1:
-        return entry_price / (1 + pnl)
+        price = entry_price / (1 + pnl)
+
+    # NOTE this will need to change for different symbols
+    return round_down(n=price, nearest=0.5)
 
 
 def get_pnl_xbt(qty: int, entry_price: float, exit_price: float, isaltcoin: bool = False) -> float:
@@ -292,7 +352,7 @@ def get_pnl_xbt(qty: int, entry_price: float, exit_price: float, isaltcoin: bool
     exit_price : float, optional
     isaltcoin : bool, optional
         alts calculated opposite, default False
-        # NOTE this should all be restructured to be relative to a base currency somehow
+        - NOTE this should all be restructured to be relative to a base currency somehow
 
     Returns
     -------
@@ -352,13 +412,6 @@ def col(df, col):
     return df.columns.get_loc(col)
 
 
-def binance_creds():
-    return
-    p = cf.p_sec / 'binance.yaml'
-    with open(p) as file:
-        return yaml.full_load(file)
-
-
 def discord(msg: str, channel: str = 'jambot') -> None:
     """Send message to discord channel
 
@@ -370,8 +423,9 @@ def discord(msg: str, channel: str = 'jambot') -> None:
     """
     from discord import RequestsWebhookAdapter, Webhook
 
-    p = cf.p_sec / 'discord.csv'
-    r = pd.read_csv(p, index_col='channel').loc[channel]
+    from jambot.utils.secrets import SecretsManager
+
+    r = SecretsManager('discord.csv').load.set_index('channel').loc[channel]
     if channel == 'err':
         msg += '@here'
 
@@ -386,7 +440,7 @@ def discord(msg: str, channel: str = 'jambot') -> None:
         webhook.send(msg)
 
 
-def send_error(msg='', prnt=False):
+def send_error(msg: str = '', prnt: bool = False) -> None:
     import traceback
     err = traceback.format_exc().replace('Traceback (most recent call last):\n', '')
 
@@ -470,3 +524,62 @@ def load_pickle(p: Path) -> object:
     """Load pickle from file"""
     with open(p, 'rb') as file:
         return pickle.load(file)
+
+
+def remove_bad_chars(w: str):
+    """Remove any bad chars " : < > | . \ / * ? in string to make safe for filepaths"""  # noqa
+    return re.sub(r'[":<>|.\\\/\*\?]', '', str(w))
+
+
+def to_snake(s: str):
+    """Convert messy camel case to lower snake case
+
+    Parameters
+    ----------
+    s : str
+        string to convert to special snake case
+
+    Examples
+    --------
+    """
+    s = remove_bad_chars(s).strip()  # get rid of /<() etc
+    s = re.sub(r'[\]\[()]', '', s)  # remove brackets/parens
+    s = re.sub(r'[\n-]', '_', s)  # replace newline/dash with underscore
+    s = re.sub(r'[%]', 'pct', s)
+    s = re.sub(r"'", '', s)
+
+    # split on capital letters
+    expr = r'(?<!^)((?<![A-Z])|(?<=[A-Z])(?=[A-Z][a-z]))(?=[A-Z])'
+
+    return re \
+        .sub(expr, '_', s) \
+        .lower() \
+        .replace(' ', '_') \
+        .replace('__', '_')
+
+
+def lower_cols(df):
+    """Convert df columns to snake case and remove bad characters"""
+    is_list = False
+
+    if isinstance(df, pd.DataFrame):
+        cols = df.columns
+    else:
+        cols = df
+        is_list = True
+
+    m_cols = {col: to_snake(col) for col in cols}
+
+    if is_list:
+        return list(m_cols.values())
+
+    return df.pipe(lambda df: df.rename(columns=m_cols))
+
+
+def parse_datecols(df, format=None):
+    """Convert any columns with 'date' or 'time' in header name to datetime"""
+    datecols = list(filter(lambda x: any(s in x.lower()
+                    for s in ('date', 'time')), df.columns))
+    df[datecols] = df[datecols].apply(
+        pd.to_datetime, errors='coerce', format=format)
+    return df
