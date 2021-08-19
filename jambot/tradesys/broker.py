@@ -2,8 +2,10 @@ from typing import Union
 
 import pandas as pd
 
+from jambot import SYMBOL
 from jambot import functions as f
 from jambot import getlog
+from jambot.exchanges.bitmex import Bitmex
 from jambot.tradesys.__init__ import *
 from jambot.tradesys.base import Observer
 from jambot.tradesys.enums import OrderStatus
@@ -24,7 +26,7 @@ class Broker(Observer):
         wallets = {}
 
         # temp set default wallet to only XBTUSD
-        symbol = 'XBTUSD'
+        symbol = SYMBOL.lower()
         wallets[symbol] = Wallet(symbol=symbol)
         self.attach_listeners(wallets.values())
 
@@ -42,7 +44,7 @@ class Broker(Observer):
         -------
         Wallet
         """
-        return self.wallets[symbol]
+        return self.wallets[symbol.lower()]
 
     def submit(self, orders: Union[list, Order]):
         """Submit single or multiple orders at once
@@ -106,7 +108,7 @@ class Broker(Observer):
 
     def fill_order(self, order: Order) -> None:
         """Execute order at specific price"""
-        wallet = self.wallets[order.symbol]
+        wallet = self.get_wallet(order.symbol)
         wallet.fill_order(order)
 
         # remove order from open orders
@@ -166,15 +168,37 @@ class Broker(Observer):
         """
         return list(self.open_orders.values())
 
-    def expected_orders(self) -> List[Order]:
+    def expected_orders(self, exch: Bitmex, symbol: str) -> List[Order]:
         """Get all market/limit orders to check for current timestamp
+
+        - NOTE this will currently just scale orders based on max avail qtys
+        - May need to support multiple orders in the future (eg close half of position)
 
         Returns
         -------
         List[Order]
             list of all orders
         """
-        return self.recent_markets() + self._open_orders()
+        # TODO test how these are adjusted when bitmex "available balance" is adjusted by reserving some
+        wallet = self.get_wallet(symbol)
+        wallet.set_exchange_data(exch)  # IMPORTANT
+
+        orders = self.recent_markets() + self._open_orders()
+
+        # rescale orders
+        # TODO stops need to be related to limit open
+
+        for o in orders:
+            if o.is_reduce:
+                if not o.is_stop:
+                    o.qty = exch.current_qty(symbol=symbol) * -1
+                else:
+                    raise NotImplementedError('Stop order rescaling not set up yet.')
+
+            elif o.is_increase:
+                o.qty = wallet.available_quantity(price=o.price) * o.side
+
+        return orders
 
     @property
     def df_orders(self) -> pd.DataFrame:
