@@ -29,8 +29,8 @@ class BaseOrder(object, metaclass=ABCMeta):
         price_original = price
         timestamp_filled = None
 
-        if pd.isna(qty) or qty == 0:
-            raise ValueError(f'Order quantity cannot be {qty}')
+        # if pd.isna(qty) or qty == 0:
+        #     raise ValueError(f'Order quantity cannot be {qty}')
 
         f.set_self(vars())
 
@@ -83,6 +83,16 @@ class BaseOrder(object, metaclass=ABCMeta):
         return self.order_type == OrderType.STOP
 
     @property
+    def is_reduce(self) -> bool:
+        """If order reduces/closes open position size"""
+        return 'close' in self.name
+
+    @property
+    def is_increase(self) -> bool:
+        """If order increases/opens position"""
+        return 'open' in self.name
+
+    @property
     def trigger_switch(self):
         """Switch to determine direction to sort for checking order price"""
         if self.is_limit:
@@ -131,14 +141,6 @@ class BaseOrder(object, metaclass=ABCMeta):
 
         sidestr = 'long' if self.side == 1 else 'short'
         return '{}-{}-{}'.format(self.symbol, self.name.lower(), sidestr)
-
-    # def rescale_contracts(self, balance, conf=1):
-    #     self.qty = int(conf * f.get_contracts(
-    #         xbt=balance,
-    #         leverage=self.trade.strat.lev,
-    #         entry_price=self.price,
-    #         side=self.side,
-    #         isaltcoin=self.bm.altstatus))
 
     def dict_stats(self) -> dict:
 
@@ -267,7 +269,7 @@ class BitmexOrder(BaseOrder, DictRepr, Serializable):
         self._side = TradeSide(np.sign(val))
 
     @property
-    def exec_inst(self):
+    def exec_inst(self) -> list:
         """Create order type specific exec instructions
         - TODO will probably need to allow adding extra exec_inst specs
         """
@@ -286,7 +288,14 @@ class BitmexOrder(BaseOrder, DictRepr, Serializable):
         return lst
 
     @property
-    def exec_inst_str(self):
+    def exec_inst_str(self) -> str:
+        """Get string version of exec_inst to submit with order spec
+
+        Returns
+        -------
+        str
+            values in exec_inst joined
+        """
         return ','.join(self.exec_inst)
 
     def __json__(self) -> dict:
@@ -339,8 +348,24 @@ class BitmexOrder(BaseOrder, DictRepr, Serializable):
         self.price = order.price
         self.qty = order.qty
 
-    def raw_spec(self, key: str):
-        """Return val from raw order spec"""
+    def raw_spec(self, key: str) -> Any:
+        """Return val from raw order spec
+
+        Parameters
+        ----------
+        key : str
+            dict key to find
+
+        Returns
+        -------
+        Any
+            any value from raw order spec dict
+
+        Raises
+        ------
+        AttributeError
+            if key doesn't exist
+        """
         if self.order_spec_raw:
             try:
                 return self.order_spec_raw[key]
@@ -426,7 +451,6 @@ class Order(BaseOrder, Observer, metaclass=ABCMeta):
         # give order unique id
         if order_id is None:
             order_id = str(uuid.uuid1())
-            print('setting custom order_id: ', order_id)
 
         status = OrderStatus.PENDING
 

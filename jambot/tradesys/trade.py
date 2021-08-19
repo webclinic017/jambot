@@ -169,14 +169,6 @@ class Trade(Observer):
         order.filled.connect(self.on_fill)
         self.broker.submit(order)
 
-    # def make_order(self, order_spec: dict):
-    #     """Make single order and attach self to filled signal"""
-
-    #     order = ords.make_order(**order_spec)
-    #     order.filled.connect(self.on_fill)
-
-    #     return order
-
     def on_fill(self, qty: int, *args):
         """Perform action when any orders filled"""
 

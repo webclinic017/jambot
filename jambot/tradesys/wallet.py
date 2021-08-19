@@ -1,4 +1,5 @@
 from jambot import functions as f
+from jambot.exchanges.bitmex import Bitmex
 from jambot.tradesys.base import DictRepr, Observer
 from jambot.tradesys.enums import OrderType, TradeSide
 from jambot.tradesys.exceptions import InsufficientBalance
@@ -44,6 +45,7 @@ class Wallet(Observer):
         _balance = 1  # base instrument, eg XBT
         _default_balance = _balance
         _min_balance = 0.01
+        _total_balance_margin = None  # live trading, comes from exch
         precision = 8
         _max = 0
         _min = _balance
@@ -99,7 +101,7 @@ class Wallet(Observer):
         return len(self.txns)
 
     @property
-    def balance(self):
+    def balance(self) -> float:
         """Current wallet balance in base pair, always keep above 0"""
         if self._balance < self._min_balance:
             self._balance = self._min_balance
@@ -108,14 +110,34 @@ class Wallet(Observer):
 
     @balance.setter
     def balance(self, balance: float):
-        """Update internal balance and add transaction record"""
-        # self.add_transaction(delta=delta)
+        """Update internal balance"""
         self._balance = balance
 
         if self._balance < self._min:
             self._min = self._balance
         elif self._balance > self._max:
             self._max = self._balance
+
+    @property
+    def total_balance_margin(self) -> float:
+        if self._total_balance_margin is None:
+            # backtesting
+            return self.balance + f.get_pnl_xbt(self.qty, self.price, self.c.close)
+        else:
+            # live trading
+            return self._total_balance_margin
+
+    def set_exchange_data(self, exch: Bitmex) -> None:
+        """Adjust current balance/upnl to match available on exchange
+
+        Parameters
+        ----------
+        exch : Bitmex
+            exchange obj
+        """
+        # Margin Balance = Wallet Balance + uPNL
+        # bitmex does some extra small maths, just multiply by 0.99
+        self._total_balance_margin = exch.total_balance_margin * 0.99
 
     def fill_order(self, order: 'Order'):
         """Perform transcation of order, modify balance, current price/quantity"""
@@ -208,11 +230,7 @@ class Wallet(Observer):
         int
             quantity of qty
         """
-
-        # add upnl xbt to available balance
-        upnl = f.get_pnl_xbt(self.qty, self.price, self.c.close)
-
-        qty = (self.balance + upnl) * self.lev * price
+        qty = self.total_balance_margin * self.lev * price
         return int(qty)
 
     def adjust_price(self, price: float, order_price: float, qty: int, order_qty: int) -> float:
