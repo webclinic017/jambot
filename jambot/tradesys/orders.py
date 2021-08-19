@@ -282,8 +282,8 @@ class BitmexOrder(BaseOrder, DictRepr, Serializable):
             lst.append('IndexPrice')
 
         # NOTE kinda sketch, need to make sure name always has "close"
-        if 'close' in self.name:
-            lst.append('close')
+        if self.is_reduce:
+            lst.append('Close')
 
         return lst
 
