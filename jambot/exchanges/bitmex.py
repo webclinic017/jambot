@@ -281,6 +281,11 @@ class Bitmex(Exchange):
         if process:
             order_specs = self.add_custom_specs(order_specs)
 
+        # TODO temp solution should handle depending on result
+        for item in order_specs:
+            if not isinstance(item, dict):
+                raise AttributeError(f'Invalid order specs returned from bitmex. {type(item)}: {item}')
+
         return ords.make_bitmex_orders(order_specs)
 
     def add_custom_specs(self, order_specs: List[dict]) -> List[dict]:
