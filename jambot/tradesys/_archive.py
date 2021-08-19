@@ -1,3 +1,5 @@
+from jambot import functions as f
+from jambot.tradesys.orders import Order
 
 
 class Confidence():

@@ -124,7 +124,7 @@ class DB(object):
     def update_all_symbols(
             self,
             exch: 'Bitmex' = None,
-            interval: int = 1,
+            interval: int = 15,
             symbol: str = None) -> None:
 
         lst = []

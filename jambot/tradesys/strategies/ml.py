@@ -105,6 +105,7 @@ class Strategy(StrategyBase):
 
         limit_price = f.get_price(pnl=offset, entry_price=price, side=side)
 
+        # NOTE timeout params are kinda arbitrary
         if name == 'open':
             qty = self.wallet.available_quantity(price=limit_price) * side
             timeout = 6
