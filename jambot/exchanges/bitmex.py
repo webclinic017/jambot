@@ -1,6 +1,7 @@
 import itertools
 import re
 import warnings
+from collections import defaultdict as dd
 
 from bitmex import bitmex
 from swagger_spec_validator.common import SwaggerValidationWarning
@@ -28,7 +29,7 @@ class Bitmex(Exchange):
         self.avail_margin = 0
         self.total_balance_margin = 0
         self.total_balance_wallet = 0
-        self.reservedbalance = 0
+        self.reserved_balance = 0
         self.unrealized_pnl = 0
         self.prev_pnl = 0
         self._orders = None
@@ -72,8 +73,14 @@ class Bitmex(Exchange):
 
     @property
     def balance(self) -> float:
-        """"""
-        return self.total_balance_wallet - self.reservedbalance
+        """Get current exchange balance in Xbt, minus user-defined "reserved" balance
+        - "Wallet Balance" on bitmex, NOT "Available Balance"
+
+        Returns
+        -------
+        float
+        """
+        return self.total_balance_wallet - self.reserved_balance
 
     def check_request(self, request, retries: int = 0):
         """
@@ -137,9 +144,24 @@ class Bitmex(Exchange):
         m = self.client.Instrument.Instrument_get(symbol=symbol).result()[0][0]
         return m['lastPrice']
 
-    def open_contracts(self):
-        """Open contracts for each position"""
-        return {k: v['currentQty'] for k, v in self._positions.items()}
+    def current_qty(self, symbol: str = None) -> Union[int, dict]:
+        """Open contracts for each position
+
+        Parameters
+        ----------
+        symbol : str, optional
+            symbol to get current qty, by default None
+
+        Returns
+        -------
+        Union[int, dict]
+            single qty (if symbol given) or dict of all {symbol: currentQty}
+        """
+        if not symbol is None:
+            return self.get_position(symbol)['currentQty']
+        else:
+            # all position qty
+            return {k: v['currentQty'] for k, v in self._positions.items()}
 
     def df_orders(self, symbol=None, new_only=True, refresh=False):
         orders = self.get_orders(symbol=symbol, new_only=new_only, refresh=refresh)
@@ -217,7 +239,7 @@ class Bitmex(Exchange):
         Union[List[dict], List[BitmexOrder] Dict[str, BitmexOrder]]
             list of RAW order dicts, list of bitmex orders, or dict of str: BitmexOrder
         """
-        if refresh:
+        if refresh or self._orders is None:
             self.set_orders()
 
         var = {k: v for k, v in vars().items() if not v in ('as_bitmex', 'refresh', 'as_dict')}
@@ -231,10 +253,6 @@ class Bitmex(Exchange):
 
         # filter conditions based on true args in vars()
         conds = {k: v for k, v in conds.items() if not var.get(k) in (None, False)}
-
-        # self.refresh() might not have been called yet
-        if self._orders is None:
-            self.set_orders()
 
         orders = [o for o in self._orders if all(cond(o) for cond in conds.values())]
 
@@ -346,7 +364,8 @@ class Bitmex(Exchange):
         """Set margin/wallet values"""
         div = self.div
         res = self.check_request(self.client.User.User_getMargin(currency='XBt'))
-        self.avail_margin = res['excessMargin'] / div  # total available/unused > only used in postOrder
+        # total available/unused > only used in postOrder "Available Balance"
+        self.avail_margin = res['excessMargin'] / div
         self.total_balance_margin = res['marginBalance'] / div  # unrealized + realized > don't actually use
         self.total_balance_wallet = res['walletBalance'] / div  # realized
         self.unrealized_pnl = res['unrealisedPnl'] / div
@@ -452,15 +471,21 @@ class Bitmex(Exchange):
         """
         _orders = []
         for o in f.as_list(orders):
-
             # convert dict specs to BitmexOrder
             # NOTE BitmexOrder IS a subclass of dict!!
             if not isinstance(o, BitmexOrder):
-                o = ords.make_orders(order_specs=o, as_bitmex=True)[0]
+
+                # isinstance(o, Order) doesn't want to work
+                if hasattr(o, 'as_bitmex'):
+                    o = o.as_bitmex()
+                else:
+                    # dict
+                    o = ords.make_orders(order_specs=o, as_bitmex=True)[0]
 
             _orders.append(o)
 
-        orders = _orders
+        # remove orders with zero qty
+        orders = [o for o in _orders if not o.qty == 0]
         if not orders:
             return
 
@@ -718,11 +743,14 @@ class Bitmex(Exchange):
             orders active on exchange
         """
         actual_orders = self.get_orders(symbol=symbol, new_only=True, bot_only=True, as_bitmex=True, refresh=True)
-        orders = self.validate_orders(expected_orders, actual_orders, show=True)
+        all_orders = self.validate_orders(expected_orders, actual_orders, show=True)
 
-        self.cancel_orders(orders['cancel'])
-        self.amend_orders(orders['amend'])
-        self.submit_orders(orders['submit'])
+        for action, orders in all_orders.items():
+            if orders and not action == 'valid':
+                getattr(self, f'{action}_orders')(orders)
+
+        s = ', '.join([f'{action}={len(orders)}' for action, orders in all_orders.items()])
+        log.info(f'Reconciled orders: {s}')
 
     def validate_orders(
             self,
@@ -752,8 +780,8 @@ class Bitmex(Exchange):
         # convert to dicts for easier matching
         expected_orders = ords.list_to_dict(expected_orders)
         actual_orders = ords.list_to_dict(actual_orders)
+        all_orders = dd(list, {k: [] for k in ('valid', 'amend', 'submit', 'cancel')})
 
-        amend, valid, cancel = [], [], []
         for k, o in actual_orders.items():
             if k in expected_orders:
                 o_expc = expected_orders[k]
@@ -761,29 +789,25 @@ class Bitmex(Exchange):
                 # compare price/qty
                 if not (o.price == o_expc.price and o.qty == o_expc.qty):
                     o.amend_from_order(o_expc)
-                    amend.append(o)
+                    all_orders['amend'].append(o)
                 else:
-                    valid.append(o)
+                    all_orders['valid'].append(o)
             else:
-                cancel.append(o)
+                all_orders['cancel'].append(o)
 
-        submit = [o for k, o in expected_orders.items() if not k in actual_orders]
+        all_orders['submit'] = [o for k, o in expected_orders.items() if not k in actual_orders]
 
-        all_orders = dict(
-            amend=amend,
-            valid=valid,
-            submit=submit,
-            cancel=cancel)
-
-        if show and not 'linux' in sys.platform:
+        if show and not AZURE_WEB:
             dfs = []
             for action, orders in all_orders.items():
-                data = [o.to_dict() for o in orders]
-                df = pd.DataFrame.from_dict(data) \
-                    .assign(action=action)
+                if orders:
+                    data = [o.to_dict() for o in orders]
+                    df = pd.DataFrame.from_dict(data) \
+                        .assign(action=action)
 
-                dfs.append(df)
+                    dfs.append(df)
 
-            display(pd.concat(dfs))
+            if dfs:
+                display(pd.concat(dfs))
 
         return all_orders
