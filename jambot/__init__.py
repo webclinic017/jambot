@@ -28,6 +28,7 @@ except ModuleNotFoundError:
 # Set environments
 AZURE_LOCAL = not os.getenv('AZURE_FUNCTIONS_ENVIRONMENT') is None
 AZURE_WEB = not os.getenv('WEBSITE_SITE_NAME') is None
+AZURE_WEB = True
 SYMBOL = 'XBTUSD'
 
 if AZURE_LOCAL or AZURE_WEB:
@@ -51,6 +52,7 @@ def getlog(name: str) -> logging.Logger:
     >>> from jambot import getlog
         log = getlog(__name__)
     """
+
     fmt_stream = logging.Formatter('%(levelname)-7s %(lineno)-4d %(name)-26s %(message)s')
     sh = logging.StreamHandler()
     sh.setLevel(logging.INFO)
@@ -60,5 +62,8 @@ def getlog(name: str) -> logging.Logger:
     if not log.handlers:
         log.setLevel(logging.INFO)
         log.addHandler(sh)
+
+        import jambot.utils.google as gg
+        gg.add_google_logging_handler(log)
 
     return log
