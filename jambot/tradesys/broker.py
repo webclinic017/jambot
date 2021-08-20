@@ -8,7 +8,7 @@ from jambot import getlog
 from jambot.exchanges.bitmex import Bitmex
 from jambot.tradesys.__init__ import *
 from jambot.tradesys.base import Observer
-from jambot.tradesys.enums import OrderStatus
+from jambot.tradesys.enums import OrderStatus, OrderType
 from jambot.tradesys.orders import Order
 from jambot.tradesys.wallet import Wallet
 
@@ -168,7 +168,7 @@ class Broker(Observer):
         """
         return list(self.open_orders.values())
 
-    def expected_orders(self, exch: Bitmex, symbol: str) -> List[Order]:
+    def expected_orders(self, symbol: str, exch: Bitmex = None) -> List[Order]:
         """Get all market/limit orders to check for current timestamp
 
         - NOTE this will currently just scale orders based on max avail qtys
@@ -179,24 +179,37 @@ class Broker(Observer):
         List[Order]
             list of all orders
         """
-        # TODO test how these are adjusted when bitmex "available balance" is adjusted by reserving some
-        wallet = self.get_wallet(symbol)
-        wallet.set_exchange_data(exch)  # IMPORTANT
-
         orders = self.recent_markets() + self._open_orders()
 
         # rescale orders
         # TODO stops need to be related to limit open
+        if not exch is None:
+            # TODO test how these are adjusted when bitmex "available balance" is adjusted by reserving some
+            wallet = self.get_wallet(symbol)
+            wallet.set_exchange_data(exch)  # IMPORTANT
+            expected_qty = wallet.qty
+            cur_qty = exch.current_qty(symbol=symbol)
 
-        for o in orders:
-            if o.is_reduce:
-                if not o.is_stop:
-                    o.qty = exch.current_qty(symbol=symbol) * -1
-                else:
-                    raise NotImplementedError('Stop order rescaling not set up yet.')
+            for o in orders:
+                if o.is_reduce:
+                    if not o.is_stop:
 
-            elif o.is_increase:
-                o.qty = wallet.available_quantity(price=o.price) * o.side
+                        # TODO not sure if this works:
+                        # if cur_qty not same side as expected_qty, market close current position?
+                        if not np.sign(expected_qty) == np.sign(cur_qty):
+
+                            # TODO should make a better "change_order_type" func
+                            o.order_type = OrderType('market')
+                            o.price = None
+                            o.name = 'market_close'
+
+                        o.qty = cur_qty * -1
+
+                    else:
+                        raise NotImplementedError('Stop order rescaling not set up yet.')
+
+                elif o.is_increase:
+                    o.qty = wallet.available_quantity(price=o.price) * o.side
 
         return orders
 
