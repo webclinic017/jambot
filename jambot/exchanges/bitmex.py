@@ -42,10 +42,10 @@ class Bitmex(Exchange):
             self.refresh()
 
     @classmethod
-    def default(cls, test: bool = False, **kw) -> 'Bitmex':
+    def default(cls, test: bool = True, refresh: bool = True, **kw) -> 'Bitmex':
         """Create Bitmex obj with default name"""
         user = 'jayme' if not test else 'testnet'
-        return cls(user=user, test=test, **kw)
+        return cls(user=user, test=test, refresh=refresh, **kw)
 
     def load_creds(self, user: str):
         """Load creds from csv"""
@@ -90,6 +90,7 @@ class Bitmex(Exchange):
         - type(response) = bravado.response.BravadoResponse
         - response = request.response(fallback_result=[400], exceptions_to_catch=bravado.exception.HTTPBadRequest)
         """
+        # bravado.exception.HTTPBadRequest
 
         try:
             response = request.response(fallback_result='')
@@ -105,11 +106,13 @@ class Bitmex(Exchange):
                 return self.check_request(request=request, retries=retries)
             else:
                 f.send_error('{}: {}\n{}'.format(status, response.result, request.future.request.data))
+
         except Exception as e:
             # request.prepare() #TODO: this doesn't work
-            # TODO change f.send_error to always raise when not AZURE_WEB
+            data = request.future.request.data
+
             if AZURE_WEB:
-                f.send_error('HTTP Error: {}'.format(request.future.request.data))
+                f.send_error(f'HTTP Error: {data}')
             else:
                 raise e
 
@@ -282,6 +285,10 @@ class Bitmex(Exchange):
             order_specs = self.add_custom_specs(order_specs)
 
         # TODO temp solution should handle depending on result
+        # order_specs is None
+        if order_specs is None:
+            log.warning('order_specs is None.')
+
         for item in order_specs:
             if not isinstance(item, dict):
                 raise AttributeError(f'Invalid order specs returned from bitmex. {type(item)}: {item}')
@@ -307,7 +314,7 @@ class Bitmex(Exchange):
             if order has already been processed
         """
         if order_specs is None:
-            log.warning('No orders to add into.')
+            log.warning('No orders to add custom specs to.')
             return
 
         for o in f.as_list(order_specs):
@@ -409,17 +416,24 @@ class Bitmex(Exchange):
             params = order_specs
 
         result = self.check_request(func(**params))
-        resp_orders = self.bitmex_order_from_raw(result)
+
+        # result can be None if bad orders
+        if result is None:
+            return
+
+        resp_orders = self.bitmex_order_from_raw(order_specs=result)
 
         # check if submit/amend orders incorrectly cancelled
         if not 'cancel' in action:
             failed_orders = [o for o in resp_orders if o.is_cancelled]
 
-            for o in failed_orders:
-                msg = '***** ERROR: Order CANCELLED! \n{} \n{}' \
-                    .format(o.to_json(), o.raw_spec('text'))
+            if failed_orders:
+                msg = 'ERROR: Order(s) CANCELLED!'
+                for o in failed_orders:
+                    msg += '\n{} \n{}' \
+                        .format(o.to_json(), o.raw_spec('text'))
 
-                f.send_error(msg, prnt=True)
+                f.discord(msg, channel='err')
 
         return resp_orders
 
@@ -498,11 +512,13 @@ class Bitmex(Exchange):
         grouped = {k: list(g) for k, g in itertools.groupby(orders, lambda x: x.is_market)}
 
         batches = []
-        batches.append(grouped.get(False, []))
 
-        # add each market order as it's own group
+        # add each market order as it's own group - send market orders first
         for order in grouped.get(True, []):
             batches.append([order])
+
+        # limit orders
+        batches.append(grouped.get(False, []))
 
         result = []
         for order_batch in batches:
