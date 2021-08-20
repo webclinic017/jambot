@@ -217,13 +217,18 @@ class BitmexOrder(BaseOrder, DictRepr, Serializable):
             timestamp_start: dt = None,
             key: str = None,
             stop_px: float = None,
+            name: str = '',
             **kw):
 
         # convert stop_px to price for stop orders
         if not stop_px is None:
             kw['price'] = stop_px
 
-        super().__init__(**kw)
+        max_name_len = 13
+        if len(name) > max_name_len:
+            raise ValueError(f'Order name too long: {len(name)}, {name}. Max: {max_name_len}')
+
+        super().__init__(name=name, **kw)
 
         order_type = OrderType(order_type)
         status = OrderStatus(status or 'new')
