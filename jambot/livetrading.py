@@ -338,4 +338,4 @@ def run_strat_live(exch: Bitmex = None, test: bool = False, interval: int = 15) 
     # reconcile orders
     exch.reconcile_orders(
         symbol=symbol,
-        expected_orders=strat.broker.expected_orders(exch=exch, symbol=symbol))
+        expected_orders=strat.broker.expected_orders(symbol=symbol, exch=exch))

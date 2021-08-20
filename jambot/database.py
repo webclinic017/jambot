@@ -47,8 +47,8 @@ def _create_engine():
 
 class DB(object):
     def __init__(self):
-        log.info('Initializing database')
         self.__name__ = 'Jambot Database'
+        log.debug(f'Initializing database: {self.__name__}')
         self.reset(False)
 
     def close(self):
