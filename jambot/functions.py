@@ -9,11 +9,12 @@ from datetime import date
 from datetime import datetime as dt
 from datetime import timedelta as delta
 from pathlib import Path
-from sys import platform
 from typing import Any, Union
 
 import pandas as pd
 from dateutil.parser import parse
+
+from jambot import AZURE_WEB
 
 
 def check_path(p: Path) -> None:
@@ -427,7 +428,7 @@ def discord(msg: str, channel: str = 'jambot') -> None:
 
     r = SecretsManager('discord.csv').load.set_index('channel').loc[channel]
     if channel == 'err':
-        msg += '@here'
+        msg = f'{msg} @here'
 
     # Create webhook
     webhook = Webhook.partial(r.id, r.token, adapter=RequestsWebhookAdapter())
@@ -440,33 +441,24 @@ def discord(msg: str, channel: str = 'jambot') -> None:
         webhook.send(msg)
 
 
-def send_error(msg: str = '', prnt: bool = False) -> None:
+def send_error(msg: str = None, prnt: bool = False, force: bool = False) -> None:
     import traceback
     err = traceback.format_exc().replace('Traceback (most recent call last):\n', '')
 
-    if not msg == '':
-        err = '{}:\n{}'.format(msg, err).replace(':\nNoneType: None', '')
+    to_discord = True if AZURE_WEB or force else False
 
-    err = '*------------------*\n{}'.format(err)
+    # wrap err traceback in py code block formatting
+    if to_discord:
+        err = f'```py\n{err}```{dt.utcnow():%Y-%m-%d %H:%M:%S}'
 
-    if prnt or not 'linux' in platform:
-        print(err)
+    # add custom msg to traceback if paassed
+    msg = err if not msg is None else f'{msg}:\n{err}'  # .replace(':\nNoneType: None', '')
+
+    # print if local dev, else send to discord
+    if prnt or not to_discord:
+        print(msg)
     else:
-        discord(msg=err, channel='err')
-
-
-def get_google_sheet():
-    import pygsheets
-    from google.oauth2 import service_account
-
-    from jambot.utils.secrets import SecretsManager
-    m = SecretsManager('gsheets.json').load
-    SCOPES = ('https://www.googleapis.com/auth/spreadsheets', 'https://www.googleapis.com/auth/drive')
-    my_credentials = service_account.Credentials.from_service_account_info(m, scopes=SCOPES)
-
-    # easiest way loading from json file
-    # return pygsheets.authorize(service_account_file=p).open('Jambot Settings')
-    return pygsheets.authorize(custom_credentials=my_credentials).open('Jambot Settings')
+        discord(msg=msg, channel='err')
 
 
 def get_offset(interval: int = 1) -> delta:
