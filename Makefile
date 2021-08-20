@@ -1,3 +1,7 @@
+#!/bin/bash
+
+SHELL := /bin/bash
+utils := @poetry run python -m scripts.utils
 code := jambot tests working az_*
 
 # Azure commands
@@ -34,6 +38,10 @@ reqs:  ## make requirements.txt for function app
 .PHONY : test
 test: ## run tests
 	@poetry run pytest
+
+.PHONY : creds
+creds:  ## re-encrypt credentials
+	$(utils) --encrypt_creds
 
 help: ## show this help message
 	@## https://gist.github.com/prwhite/8168133#gistcomment-1716694
