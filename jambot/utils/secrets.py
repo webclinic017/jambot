@@ -9,9 +9,10 @@ from cryptography.fernet import Fernet
 
 from jambot import config as cf
 from jambot import functions as f
-from jambot.__init__ import getlog
 
-log = getlog(__name__)
+# from jambot import getlog
+
+# log = getlog(__name__)  # SecretsManager cant use logger, its used to init logger
 
 
 class SecretsManager(object):
@@ -96,7 +97,7 @@ class SecretsManager(object):
             if self.encrypt_file(p):
                 i += 1
 
-        log.info(f'Successfully encrypted [{i}] file(s).')
+        print(f'Successfully encrypted [{i}] file(s).')
 
     def encrypt_file(self, p: Path, **kw):
         """Open file, encrypt, and save it to secrets folder"""
