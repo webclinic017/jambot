@@ -137,6 +137,7 @@ class Bitmex(Exchange):
 
             if AZURE_WEB:
                 f.send_error(f'{e.status_code} {e.__class__.__name__}: {err_msg}\n{data}')
+            else:
                 raise e
 
     def get_position(self, symbol: str) -> dict:

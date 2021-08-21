@@ -28,7 +28,6 @@ except ModuleNotFoundError:
 # Set environments
 AZURE_LOCAL = not os.getenv('AZURE_FUNCTIONS_ENVIRONMENT') is None
 AZURE_WEB = not os.getenv('WEBSITE_SITE_NAME') is None
-AZURE_WEB = True
 SYMBOL = 'XBTUSD'
 
 if AZURE_LOCAL or AZURE_WEB:
