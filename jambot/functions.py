@@ -413,7 +413,7 @@ def col(df, col):
     return df.columns.get_loc(col)
 
 
-def discord(msg: str, channel: str = 'jambot') -> None:
+def discord(msg: str, channel: str = 'jambot', log=None) -> None:
     """Send message to discord channel
 
     Parameters
@@ -421,10 +421,15 @@ def discord(msg: str, channel: str = 'jambot') -> None:
     msg : str
     channel : str, optional
         discord channel, default 'jambot'
+    log : logging.Logger.log_func
+        log message as well, default None
     """
     from discord import RequestsWebhookAdapter, Webhook
 
     from jambot.utils.secrets import SecretsManager
+
+    if not log is None:
+        log(msg)
 
     r = SecretsManager('discord.csv').load.set_index('channel').loc[channel]
     if channel == 'err':
