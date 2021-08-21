@@ -198,6 +198,13 @@ class BaseOrder(object, metaclass=ABCMeta):
         """Convert to BitmexOrder"""
         return BitmexOrder.from_base_order(order=self)
 
+    @property
+    def short_stats(self) -> str:
+        """Return compressed version of info for messages"""
+        qty = self.qty if not self.qty is None else 0
+        price = f'${self.price:,.0f}' if not self.price is None else ''
+        return f'{self.symbol} | {self.name} | {price} | {qty:+,}'
+
 
 class BitmexOrder(BaseOrder, DictRepr, Serializable):
     """Class to represent bitmex live-trading orders"""
@@ -397,11 +404,6 @@ class BitmexOrder(BaseOrder, DictRepr, Serializable):
                 return None
         else:
             raise AttributeError('order_spec_raw not set.')
-
-    @property
-    def short_stats(self) -> str:
-        """Return compressed version of info for messages"""
-        return f'{self.symbol} | {self.name} | ${self.price:,.0f} | {self.qty:+,}'
 
     def summary_msg(self, exch=None, nearest: float = 0.5) -> str:
         """Get buy/sell price qty summary for discord msg
