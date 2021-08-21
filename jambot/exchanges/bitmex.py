@@ -1,4 +1,5 @@
 import itertools
+import json
 import re
 import warnings
 from collections import defaultdict as dd
@@ -110,6 +111,14 @@ class Bitmex(Exchange):
         except Exception as e:
             # request.prepare() #TODO: this doesn't work
             data = request.future.request.data
+
+            # try to parse data response
+            try:
+                if isinstance(data, dict):
+                    m = {k: json.loads(v) for k, v in data.items()}
+                    data = f.pretty_dict(m=data, prnt=False)
+            except:
+                pass
 
             if AZURE_WEB:
                 f.send_error(f'HTTP Error: {data}')
@@ -467,8 +476,10 @@ class Bitmex(Exchange):
             if failed_orders:
                 msg = 'ERROR: Order(s) CANCELLED!'
                 for o in failed_orders:
-                    msg += '\n{} \n{}' \
-                        .format(o.to_json(), o.raw_spec('text'))
+                    msg += '\n\n{}\n{}' \
+                        .format(
+                            o.raw_spec('text'),
+                            f.pretty_dict(o.order_spec, prnt=False))
 
                 f.discord(msg, channel='err')
 
