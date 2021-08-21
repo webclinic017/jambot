@@ -95,7 +95,7 @@ def pretty_dict(m: dict, html: bool = False, prnt: bool = True, bold_keys: bool 
     def _bold_keys(m):
         """Recursively bold all keys in dict"""
         if isinstance(m, dict):
-            return {f'*{k}*': _bold_keys(v) for k, v in m.items()}
+            return {f'**{k}**': _bold_keys(v) for k, v in m.items()}
         else:
             return m
 
