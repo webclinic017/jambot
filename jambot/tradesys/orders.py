@@ -198,6 +198,15 @@ class BaseOrder(object, metaclass=ABCMeta):
         """Convert to BitmexOrder"""
         return BitmexOrder.from_base_order(order=self)
 
+    def to_market(self, **kw) -> None:
+        """Convert self to market order
+        - allow setting any other self params (eg name) with kw
+        """
+        self.price = None
+        self.order_type = OrderType('market')
+
+        f.set_self(kw)
+
     @property
     def short_stats(self) -> str:
         """Return compressed version of info for messages
@@ -243,7 +252,7 @@ class BitmexOrder(BaseOrder, DictRepr, Serializable):
         if not stop_px is None:
             kw['price'] = stop_px
 
-        max_name_len = 13
+        max_name_len = 12
         if len(name) > max_name_len:
             raise ValueError(f'Order name too long: {len(name)}, {name}. Max: {max_name_len}')
 
@@ -567,9 +576,10 @@ class Order(BaseOrder, Observer, metaclass=ABCMeta):
 
     def to_dict(self) -> dict:
         """Add t_num for strat Orders"""
+        t_num = self.parent.trade_num if not self.parent is None else None
         return super().to_dict() | dict(
             ts_filled=self.format_ts(self.timestamp_filled),
-            t_num=self.parent.trade_num)
+            t_num=t_num)
 
 
 class LimitOrder(Order):
