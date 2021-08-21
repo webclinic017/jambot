@@ -18,3 +18,10 @@ config = dict(
     drop_cols=['open', 'high', 'low', 'close', 'volume', 'ema_10', 'ema_50', 'ema_200'],
     signalmanager_kw=dict(slope=1, sum=12)
 )
+
+colors = dict(
+    lightblue='#6df7ff',
+    lightred='#ff6d6d',
+    darkgrey='#a0a0a0',
+    lightyellow='#FFFFCC'
+)

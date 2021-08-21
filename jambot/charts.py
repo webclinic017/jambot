@@ -10,16 +10,10 @@ from icecream import ic
 from matplotlib import pyplot
 from plotly.subplots import make_subplots
 
-from . import functions as f
+from jambot import functions as f
+from jambot.config import colors
 
 ic.configureOutput(prefix='')
-
-colors = dict(
-    lightblue='#6df7ff',
-    lightred='#ff6d6d',
-    darkgrey='#a0a0a0',
-    lightyellow='#FFFFCC'
-)
 
 
 # Pandas DataFrame Styles
