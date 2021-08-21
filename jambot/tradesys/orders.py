@@ -200,7 +200,8 @@ class BaseOrder(object, metaclass=ABCMeta):
 
     @property
     def short_stats(self) -> str:
-        """Return compressed version of info for messages"""
+        """Return compressed version of info for messages
+        - "XBTUSD | limit_open | $48,852 | +394,800" """
         qty = self.qty if not self.qty is None else 0
         price = f'${self.price:,.0f}' if not self.price is None else ''
         return f'{self.symbol} | {self.name} | {price} | {qty:+,}'
@@ -420,6 +421,10 @@ class BitmexOrder(BaseOrder, DictRepr, Serializable):
 
         stats = ''
         if not exch is None:
+            # NOTE this is a bit messy, would prefer properties but dont wanna make em for everything
+            if not exch.balance_set:
+                exch.set_total_balance()
+
             stats = f' | Bal: {exch.total_balance_margin:.3f} | ' \
                 + f'PnL: {exch.prev_pnl:.3f}' if self.is_stop or self.is_reduce else ''
 

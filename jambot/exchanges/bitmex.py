@@ -27,6 +27,7 @@ class Bitmex(Exchange):
         # self.name = ''
         # self.nameshort = ''
         self.percentbalance = 1
+        self.balance_set = False
         self.avail_margin = 0
         self.total_balance_margin = 0
         self.total_balance_wallet = 0
@@ -132,7 +133,7 @@ class Bitmex(Exchange):
             # need to deserialize inner items first
             if isinstance(data, dict):
                 m = {k: json.loads(v) if isinstance(v, str) else v for k, v in data.items()}
-                data = f.pretty_dict(m=m, prnt=False)
+                data = f.pretty_dict(m=m, prnt=False, bold_keys=True)
 
             if AZURE_WEB:
                 f.send_error(f'{e.status_code} {e.__class__.__name__}: {err_msg}\n{data}')
@@ -441,6 +442,7 @@ class Bitmex(Exchange):
         self.total_balance_wallet = res['walletBalance'] / div  # realized
         self.unrealized_pnl = res['unrealisedPnl'] / div
         self.prev_pnl = res['prevRealisedPnl'] / div
+        self.balance_set = True
 
     def _order_request(self, action: str, order_specs: list) -> Union[List[BitmexOrder], None]:
         """Send order submit/amend/cancel request
@@ -496,7 +498,7 @@ class Bitmex(Exchange):
                     if 'ParticipateDoNotInitiate' in err_text:
                         m['last_price'] = self.last_price(symbol=o.symbol)
 
-                    msg += f'\n\n{err_text}\n{f.pretty_dict(m, prnt=False)}'
+                    msg += f'\n\n{err_text}\n{f.pretty_dict(m, prnt=False, bold_keys=True)}'
 
                 f.discord(msg, channel='err')
 
@@ -840,7 +842,7 @@ class Bitmex(Exchange):
         # temp send order submit details to discord
         m = {k: [o.short_stats for o in orders] for k, orders in all_orders.items() if orders}
         if m:
-            msg = f.pretty_dict(m, prnt=False)
+            msg = f.pretty_dict(m, prnt=False, bold_keys=True)
             f.discord(msg=msg, channel='orders')
 
         s = ', '.join([f'{action}={len(orders)}' for action, orders in all_orders.items()])
