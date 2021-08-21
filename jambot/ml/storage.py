@@ -117,9 +117,15 @@ class ModelStorageManager(DictRepr):
         log.info('running fit_save')
         cfg = md.model_cfg(name)
 
-        # filter to constant d_upper per day
-        # TODO make this max 18:00 no matter which day
-        d_upper = f.date_to_dt(dt.utcnow().date()) + delta(hours=self.reset_hour)
+        # max date where hour is greater or equal to 18:00
+        # set back @cut hrs due to losing @n_periods for training preds
+        cut = {1: 10, 15: 3}.get(self.interval)
+        reset_hour = self.reset_hour - cut
+
+        d_upper = f.date_to_dt(
+            df.query('timestamp.dt.hour >= @reset_hour').index.max().date()) \
+            + delta(hours=reset_hour)
+
         index = df.loc[:d_upper].index
         df = df.loc[:d_upper].to_numpy(np.float32)
 
