@@ -73,19 +73,35 @@ def inverse(m: dict) -> dict:
     return {v: k for k, v in m.items()}
 
 
-def pretty_dict(m: dict, html: bool = False, prnt: bool = True) -> str:
+def pretty_dict(m: dict, html: bool = False, prnt: bool = True, bold_keys: bool = False) -> str:
     """Print pretty dict converted to newlines
     Paramaters
     ----
     m : dict
     html: bool
         Use <br> instead of html
+    prnt : bool
+        print, or return formatted string
+    bold_keys : bool
+        if true, add ** to dict keys to bold for discord msg
+
     Returns
     -------
     str
         'Key 1: value 1
         'Key 2: value 2"
     """
+
+    def _bold_keys(m):
+        """Recursively bold all keys in dict"""
+        if isinstance(m, dict):
+            return {f'*{k}*': _bold_keys(v) for k, v in m.items()}
+        else:
+            return m
+
+    if bold_keys:
+        m = _bold_keys(m)
+
     s = json.dumps(m, indent=4)
     newline_char = '\n' if not html else '<br>'
 
