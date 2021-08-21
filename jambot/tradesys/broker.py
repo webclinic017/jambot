@@ -189,8 +189,17 @@ class Broker(Observer):
             wallet.set_exchange_data(exch)  # IMPORTANT
             expected_qty = wallet.qty
             cur_qty = exch.current_qty(symbol=symbol)
+            last_price = exch.last_price(symbol=symbol)
 
             for o in orders:
+                if o.is_limit:
+                    # order is offside (price moved too fast from close)
+                    # adjust close price to exch's last price + offset %
+                    if (o.price - last_price) * o.side > 0:
+                        o.price = f.get_price(pnl=o.offset, entry_price=o.price, side=o.side)
+                        msg = f'Adjusting order price from [{o.price_original:,.1f}] to [{o.price:,.1f}] | {o.name}'
+                        f.discord(msg=msg, channel='orders', log=log.info)
+
                 if o.is_reduce:
                     if not o.is_stop:
 

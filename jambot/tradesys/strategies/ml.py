@@ -118,6 +118,7 @@ class Strategy(StrategyBase):
             symbol=self.symbol,
             qty=qty,
             price=limit_price,
+            offset=offset,
             timeout=timeout,
             name=f'limit_{name}')
 
