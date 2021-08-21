@@ -131,7 +131,25 @@ class Bitmex(Exchange):
             symbol = pos['symbol']
             self._positions[symbol.lower()] = pos
 
-    def last_price(self, symbol: str = 'XBTUSD') -> float:
+    def get_instrument(self, symbol: str = SYMBOL) -> dict:
+        """Get symbol stats dict
+        - add precision for rounding
+        - Useful for getting precision or last price
+        - no rest api delay
+
+        Parameters
+        ----------
+        symbol : str, optional
+
+        Returns
+        -------
+        dict
+        """
+        m = self.client.Instrument.Instrument_get(symbol=symbol).response().result[0]
+
+        return m | dict(precision=len(str(m['tickSize']).split('.')[-1]))
+
+    def last_price(self, symbol: str = SYMBOL) -> float:
         """Get last price for symbol (used for testing)
 
         Parameters
@@ -144,8 +162,7 @@ class Bitmex(Exchange):
         float
             last price
         """
-        m = self.client.Instrument.Instrument_get(symbol=symbol).result()[0][0]
-        return m['lastPrice']
+        return self.get_instrument(symbol=symbol)['lastPrice']
 
     def current_qty(self, symbol: str = None) -> Union[int, dict]:
         """Open contracts for each position
@@ -199,15 +216,30 @@ class Bitmex(Exchange):
         else:
             return dd(type(None))
 
-    def get_filled_orders(self, symbol='', starttime=None):
+    def get_filled_orders(self, symbol: str = SYMBOL, starttime: dt = None) -> List[BitmexOrder]:
+        """Get orders filled since last starttime
 
+        - NOTE This refreshes and sets exch orders to recent filled only
+
+        Parameters
+        ----------
+        symbol : str, optional
+            default XBTUSD
+        starttime : dt, optional
+            time to filter on, by default None
+
+        Returns
+        -------
+        List[BitmexOrder]
+            list of recently filled orders
+        """
         if starttime is None:
             starttime = dt.utcnow() + delta(days=-7)
 
         fltr = dict(ordStatus='Filled')
 
-        self.set_orders(fltr=fltr, new_only=False, starttime=starttime, reverse=False)
-        return self._orders
+        self.set_orders(fltr=fltr, starttime=starttime, reverse=False)
+        return self.bitmex_order_from_raw(order_specs=self._orders, process=False)
 
     def get_orders(
             self,
@@ -347,7 +379,12 @@ class Bitmex(Exchange):
 
         return order_specs
 
-    def set_orders(self, fltr: dict = None, count: int = 100, starttime=None, reverse=True):
+    def set_orders(
+            self,
+            fltr: dict = None,
+            count: int = 100,
+            starttime: dt = None,
+            reverse: bool = True) -> None:
         """Save last count orders from exchange"""
 
         if not fltr is None:

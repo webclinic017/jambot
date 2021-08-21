@@ -1,6 +1,7 @@
 from jambot import *
 from jambot import config as cf
 from jambot import functions as f
+from jambot import sklearn_utils as sk
 from jambot.exchanges.bitmex import Bitmex
 from jambot.ml import models as md
 from jambot.ml.storage import ModelStorageManager
@@ -75,62 +76,30 @@ def check_sfp(df):
         f.discord(msg=msg, channel='sfp')
 
 
-def check_filled_orders(minutes=5, refresh=True, u=None):
-    if u is None:
-        # u = User()
-        u = None
+def check_filled_orders(minutes: int = 5, exch: Bitmex = None, test: bool = True) -> None:
+    """Get orders filled in last n minutes and send discord msg
+
+    Parameters
+    ----------
+    minutes : int, optional
+        default 5
+    exch : Bitmex, optional
+    test : bool, optional
+        use testnet, default True
+    """
+    if exch is None:
+        exch = Bitmex.default(test=test, refresh=False)
+
     starttime = dt.utcnow() + delta(minutes=minutes * -1)
-    orders = u.get_filled_orders(starttime=starttime)
+    orders = exch.get_filled_orders(starttime=starttime)
+    prec = exch.get_instrument(symbol=SYMBOL)['tickSize']
+
+    # NOTE could filter by symbols eventually
 
     if orders:
-        p = cf.p_res / 'symbols.csv'
-        df = pd.read_csv(p)
-
-        lst, syms, templist = [], [], []
-        nonmarket = False
-
-        for o in orders:
-            symbol, name = o['symbol'], o['name']
-            row = df[df['symbolbitmex'] == symbol]
-            figs = 0
-            if len(row) > 0:
-                symshort = row['symbolshort'].values[0]
-                figs = row['decimal_figs'].values[0]
-
-            price = o['price']
-            avgpx = round(o['avgPx'], figs)
-
-            # check for non-market buys
-            if not o['ordType'] == 'Market':
-                nonmarket = True
-
-                # need to have all correct symbols in symbols.csv
-                if not symbol in templist:
-                    templist.append(symbol)
-                    syms.append(bt.BacktestManager(symbol=symbol))
-
-            ordprice = f' ({price})' if not price == avgpx else ''
-            stats = f' | Bal: {u.total_balance_margin:.3f} | PnL: {u.prev_pnl:.3f}' if any(
-                s in name for s in ('close', 'stop')) else ''
-
-            lst.append('{} | {} {:,} at ${:,}{} | {}{}'.format(
-                symshort,
-                o['sideStr'],
-                o['qty'],
-                avgpx,
-                ordprice,
-                name,
-                stats))
-
-        # write balance to google sheet, EXCEPT on market buys
-        # NOTE probably don't need to do this now
-        if nonmarket and refresh:
-            run_toploop(u=u, partial=True)
-            # write_balance_google(syms, u, preservedf=True)
-
-        msg = '\n'.join(lst)
-        f.discord(msg=msg + '\n@here', channel='orders')
-        # return msg
+        msg = '\n'.join([o.summary_msg(exch=exch, nearest=prec) for o in orders])
+        msg = f'```py\n{msg}```@here'
+        f.discord(msg=msg, channel='orders')
 
 
 def write_balance_google(syms, u, sht=None, ws=None, preservedf=False, df=None):
@@ -271,6 +240,31 @@ def run_toploop(u=None, partial=False, dfall=None):
     write_balance_google(syms, u, sht)
 
 
+def show_current_status(n: int = 30, **kw) -> None:
+    """Show current live strategy signals
+
+    # NOTE this is kinda extra, should probs just show strat's recent trades
+    """
+
+    # set columns and num format
+    cols_ohlc = ['open', 'high', 'low', 'close']
+    m_fmt = {c: '{:,.0f}' for c in cols_ohlc}
+    m_fmt |= dict(
+        rolling_proba='{:.3f}',
+        signal='{:.0f}')
+
+    # set colors to highlight signal column
+    m_color = {
+        1: (cf.colors['lightblue'], 'black'),
+        -1: (cf.colors['lightred'], 'white')}
+
+    # show last n rows of current active strategy df_pred
+    return get_df_pred(**kw)[list(m_fmt.keys())] \
+        .tail(n) \
+        .style.format(m_fmt) \
+        .apply(sk.highlight_val, subset=['signal'], m=m_color)
+
+
 def get_df_pred(symbol: str = SYMBOL, interval: int = 15, name: str = 'lgbm', test: bool = False) -> pd.DataFrame:
     """Convenicce to get df_pred used by live trading
 
@@ -303,7 +297,7 @@ def get_df_pred(symbol: str = SYMBOL, interval: int = 15, name: str = 'lgbm', te
         .df_pred_from_models(df=df, name=name)
 
 
-def run_strat_live(exch: Bitmex = None, test: bool = False, interval: int = 15) -> None:
+def run_strat_live(exch: Bitmex = None, test: bool = True, interval: int = 15) -> None:
     """Run strategy on given interval and adjust orders
 
     Parameters

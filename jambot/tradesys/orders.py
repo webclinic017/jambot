@@ -21,6 +21,7 @@ class BaseOrder(object, metaclass=ABCMeta):
             self,
             qty: int,
             price: float = None,
+            offset: float = None,
             symbol: str = SYMBOL,
             order_id: str = None,
             name: str = '',
@@ -91,6 +92,16 @@ class BaseOrder(object, metaclass=ABCMeta):
     def is_increase(self) -> bool:
         """If order increases/opens position"""
         return 'open' in self.name
+
+    @property
+    def is_buy(self) -> bool:
+        """If order is buy"""
+        return self.side == TradeSide.LONG
+
+    @property
+    def is_sell(self) -> bool:
+        """If order is sell"""
+        return self.side == TradeSide.SHORT
 
     @property
     def trigger_switch(self):
@@ -308,6 +319,13 @@ class BitmexOrder(BaseOrder, DictRepr, Serializable):
         return self.order_spec
 
     @property
+    def sym_short(self) -> str:
+        """Get symbol's base currency
+        - eg remove 'USD' from 'XBTUSD'
+        """
+        return self.symbol.replace(self.raw_spec('currency'), '')
+
+    @property
     def order_spec(self) -> dict:
         """Create order spec dict to submit to bitmex
         """
@@ -379,6 +397,33 @@ class BitmexOrder(BaseOrder, DictRepr, Serializable):
                 return None
         else:
             raise AttributeError('order_spec_raw not set.')
+
+    def summary_msg(self, exch=None, nearest: float = 0.5) -> str:
+        """Get buy/sell price qty summary for discord msg
+        -eg "XBT | Sell -2,000 at $44,975.5 (44972.0) | limit_open"
+
+        Returns
+        -------
+        str
+        """
+        m = self.order_spec_raw
+        avgpx = f.round_down(n=m['avgPx'], nearest=nearest)
+
+        ordprice = f' (${self.price:,})' if not self.price == avgpx else ''
+
+        stats = ''
+        if not exch is None:
+            stats = f' | Bal: {exch.total_balance_margin:.3f} | ' \
+                + f'PnL: {exch.prev_pnl:.3f}' if self.is_stop or self.is_reduce else ''
+
+        return '{} | {:<4} {:>+8,} at ${:,}{:>12} | {}{}'.format(
+            self.sym_short,
+            m['sideStr'],
+            self.qty,
+            avgpx,
+            ordprice,
+            self.name,
+            stats)
 
     @property
     def name(self):
