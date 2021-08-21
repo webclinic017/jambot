@@ -8,8 +8,8 @@ from jambot import getlog
 from jambot.exchanges.bitmex import Bitmex
 from jambot.tradesys.__init__ import *
 from jambot.tradesys.base import Observer
-from jambot.tradesys.enums import OrderStatus, OrderType
-from jambot.tradesys.orders import Order
+from jambot.tradesys.enums import OrderStatus
+from jambot.tradesys.orders import MarketOrder, Order
 from jambot.tradesys.wallet import Wallet
 
 log = getlog(__name__)
@@ -187,8 +187,9 @@ class Broker(Observer):
             # TODO test how these are adjusted when bitmex "available balance" is adjusted by reserving some
             wallet = self.get_wallet(symbol)
             wallet.set_exchange_data(exch)  # IMPORTANT
-            expected_qty = wallet.qty
+            expected_side = wallet.side
             cur_qty = exch.current_qty(symbol=symbol)
+            cur_side = np.sign(cur_qty)
             last_price = exch.last_price(symbol=symbol)
 
             for o in orders:
@@ -204,16 +205,6 @@ class Broker(Observer):
 
                 if o.is_reduce:
                     if not o.is_stop:
-
-                        # TODO not sure if this works:
-                        # if cur_qty not same side as expected_qty, market close current position?
-                        if not np.sign(expected_qty) == np.sign(cur_qty):
-
-                            # TODO should make a better "change_order_type" func
-                            o.order_type = OrderType('market')
-                            o.price = None
-                            o.name = 'market_close'
-
                         o.qty = cur_qty * -1
 
                     else:
@@ -221,6 +212,20 @@ class Broker(Observer):
 
                 elif o.is_increase:
                     o.qty = wallet.available_quantity(price=o.price) * o.side
+
+            if not cur_side == 0 and not expected_side == cur_side:
+                log.warning(f'Position offside, market closing. Expected: {expected_side}, actual: {cur_side}')
+
+                # remove limit close
+                orders = [o for o in orders if not (o.is_limit and o.is_reduce)]
+
+                # add market close
+                mkt_close = MarketOrder(
+                    symbol=symbol,
+                    qty=cur_qty * -1,
+                    name='mkt_close_er')
+
+                orders.append(mkt_close)
 
         return orders
 
