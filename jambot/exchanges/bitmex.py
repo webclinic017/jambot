@@ -94,6 +94,7 @@ class Bitmex(Exchange):
         # bravado.exception.HTTPBadRequest
 
         try:
+            # 400 HttpBadRequest raised at response()
             response = request.response(fallback_result='')
             status = response.metadata.status_code
             backoff = 0.5
@@ -109,20 +110,32 @@ class Bitmex(Exchange):
                 f.send_error('{}: {}\n{}'.format(status, response.result, request.future.request.data))
 
         except Exception as e:
-            # request.prepare() #TODO: this doesn't work
             data = request.future.request.data
+            err_msg = e.swagger_result.get('error', {}).get('message', '')
 
-            # try to parse data response
-            try:
-                if isinstance(data, dict):
-                    m = {k: json.loads(v) for k, v in data.items()}
-                    data = f.pretty_dict(m=data, prnt=False)
-            except:
-                pass
+            if 'balance' in err_msg.lower():
+                # convert eg 6559678800 sats to 65.597 btc for easier reading
+                n = re.search(r'(\d+)', err_msg)
+                if n:
+                    n = n.group()
+                    err_msg = err_msg.replace(n, str(round(int(n) / self.div, 3)))
+
+                m_bal = dict(
+                    avail_margin=self.avail_margin,
+                    total_balance_margin=self.total_balance_margin,
+                    total_balance_wallet=self.total_balance_wallet,
+                    unpl=self.unrealized_pnl)
+
+                data['avail_balance'] = {k: round(v, 3) for k, v in m_bal.items()}
+
+            # request data is dict of {key: str(list(dict))}
+            # need to deserialize inner items first
+            if isinstance(data, dict):
+                m = {k: json.loads(v) if isinstance(v, str) else v for k, v in data.items()}
+                data = f.pretty_dict(m=m, prnt=False)
 
             if AZURE_WEB:
-                f.send_error(f'HTTP Error: {data}')
-            else:
+                f.send_error(f'{e.status_code} {e.__class__.__name__}: {err_msg}\n{data}')
                 raise e
 
     def get_position(self, symbol: str) -> dict:
@@ -418,7 +431,7 @@ class Bitmex(Exchange):
 
         return rate, hrs
 
-    def set_total_balance(self):
+    def set_total_balance(self) -> None:
         """Set margin/wallet values"""
         div = self.div
         res = self.check_request(self.client.User.User_getMargin(currency='XBt'))
@@ -429,7 +442,7 @@ class Bitmex(Exchange):
         self.unrealized_pnl = res['unrealisedPnl'] / div
         self.prev_pnl = res['prevRealisedPnl'] / div
 
-    def _order_request(self, action: str, order_specs: list) -> List[BitmexOrder]:
+    def _order_request(self, action: str, order_specs: list) -> Union[List[BitmexOrder], None]:
         """Send order submit/amend/cancel request
 
         Parameters
@@ -441,8 +454,8 @@ class Bitmex(Exchange):
 
         Returns
         -------
-        List[BitmexOrder]
-            list of order results
+        Union[List[BitmexOrder], None]
+            list of order results or None if request failed
         """
         if not order_specs and not action == 'cancel_all':
             return
@@ -476,10 +489,14 @@ class Bitmex(Exchange):
             if failed_orders:
                 msg = 'ERROR: Order(s) CANCELLED!'
                 for o in failed_orders:
-                    msg += '\n\n{}\n{}' \
-                        .format(
-                            o.raw_spec('text'),
-                            f.pretty_dict(o.order_spec, prnt=False))
+                    err_text = o.raw_spec('text')
+                    m = o.order_spec
+
+                    # failed submitted at offside price, add last_price for comparison
+                    if 'ParticipateDoNotInitiate' in err_text:
+                        m['last_price'] = self.last_price(symbol=o.symbol)
+
+                    msg += f'\n\n{err_text}\n{f.pretty_dict(m, prnt=False)}'
 
                 f.discord(msg, channel='err')
 
@@ -571,7 +588,9 @@ class Bitmex(Exchange):
         result = []
         for order_batch in batches:
             result_orders = self._order_request(action='submit', order_specs=order_batch)
-            result.extend(result_orders)
+
+            if not result_orders is None:
+                result.extend(result_orders)
 
         return result
 
