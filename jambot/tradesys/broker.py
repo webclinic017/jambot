@@ -197,7 +197,9 @@ class Broker(Observer):
                     # adjust close price to exch's last price + offset %
                     if (o.price - last_price) * o.side > 0:
                         o.price = f.get_price(pnl=o.offset, entry_price=last_price, side=o.side)
-                        msg = f'Adjusting order price from [{o.price_original:,.1f}] to [{o.price:,.1f}] | {o.name}'
+
+                        msg = f'Adjusting order price from [{o.price_original:,.1f} > {o.price:,.1f}]' \
+                            + f' | {o.short_stats} | last_price: {last_price}'
                         f.discord(msg=msg, channel='orders', log=log.info)
 
                 if o.is_reduce:
