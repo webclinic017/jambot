@@ -5,11 +5,12 @@ import math
 import pickle
 import re
 import time
+import traceback
 from datetime import date
 from datetime import datetime as dt
 from datetime import timedelta as delta
 from pathlib import Path
-from typing import Any, Union
+from typing import Any, Callable, Union
 
 import pandas as pd
 from dateutil.parser import parse
@@ -72,7 +73,7 @@ def inverse(m: dict) -> dict:
     return {v: k for k, v in m.items()}
 
 
-def pretty_dict(m: dict, html=False, prnt=True) -> str:
+def pretty_dict(m: dict, html: bool = False, prnt: bool = True) -> str:
     """Print pretty dict converted to newlines
     Paramaters
     ----
@@ -100,6 +101,9 @@ def pretty_dict(m: dict, html=False, prnt=True) -> str:
     # remove leading and trailing newlines
     s = re.sub(r'^[\n]', '', s)
     s = re.sub(r'\s*[\n]$', '', s)
+
+    # remove blank lines (if something was a list etc)
+    # s = re.sub(r'(\n\s+)(\n)', r'\2', s)
 
     if prnt:
         print(s)
@@ -413,7 +417,7 @@ def col(df, col):
     return df.columns.get_loc(col)
 
 
-def discord(msg: str, channel: str = 'jambot', log=None) -> None:
+def discord(msg: str, channel: str = 'jambot', log: Callable = None) -> None:
     """Send message to discord channel
 
     Parameters
@@ -421,8 +425,8 @@ def discord(msg: str, channel: str = 'jambot', log=None) -> None:
     msg : str
     channel : str, optional
         discord channel, default 'jambot'
-    log : logging.Logger.log_func
-        log message as well, default None
+    log : Callable, logging.Logger.log_func
+        log the message as well, default None
     """
     from discord import RequestsWebhookAdapter, Webhook
 
@@ -447,7 +451,7 @@ def discord(msg: str, channel: str = 'jambot', log=None) -> None:
 
 
 def send_error(msg: str = None, prnt: bool = False, force: bool = False) -> None:
-    import traceback
+
     err = traceback.format_exc().replace('Traceback (most recent call last):\n', '')
 
     to_discord = True if AZURE_WEB or force else False
@@ -457,7 +461,7 @@ def send_error(msg: str = None, prnt: bool = False, force: bool = False) -> None
         err = f'```py\n{err}```{dt.utcnow():%Y-%m-%d %H:%M:%S}'
 
     # add custom msg to traceback if paassed
-    msg = err if not msg is None else f'{msg}:\n{err}'  # .replace(':\nNoneType: None', '')
+    msg = err if msg is None else f'{msg}\n{err}'  # .replace(':\nNoneType: None', '')
 
     # print if local dev, else send to discord
     if prnt or not to_discord:
