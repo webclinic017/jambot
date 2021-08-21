@@ -807,6 +807,12 @@ class Bitmex(Exchange):
             if orders and not action == 'valid':
                 getattr(self, f'{action}_orders')(orders)
 
+        # temp send order submit details to discord
+        m = {k: [o.short_stats for o in orders] for k, orders in all_orders.items() if orders}
+        if m:
+            msg = f.pretty_dict(m, prnt=False)
+            f.discord(msg=msg, channel='orders')
+
         s = ', '.join([f'{action}={len(orders)}' for action, orders in all_orders.items()])
         log.info(f'Reconciled orders: {s}')
 

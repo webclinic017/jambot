@@ -398,6 +398,11 @@ class BitmexOrder(BaseOrder, DictRepr, Serializable):
         else:
             raise AttributeError('order_spec_raw not set.')
 
+    @property
+    def short_stats(self) -> str:
+        """Return compressed version of info for messages"""
+        return f'{self.symbol} | {self.name} | ${self.price:,.0f} | {self.qty:+,}'
+
     def summary_msg(self, exch=None, nearest: float = 0.5) -> str:
         """Get buy/sell price qty summary for discord msg
         -eg "XBT | Sell -2,000 at $44,975.5 (44972.0) | limit_open"
@@ -476,9 +481,7 @@ class BitmexOrder(BaseOrder, DictRepr, Serializable):
 
     def to_dict(self) -> dict:
         """Add key for BitmexOrders"""
-        return super().to_dict() | dict(
-            key=self.key,
-            order_id=self.order_id)
+        return super().to_dict() | dict(key=self.key)
 
 
 class Order(BaseOrder, Observer, metaclass=ABCMeta):
