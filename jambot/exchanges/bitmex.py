@@ -218,14 +218,12 @@ class Bitmex(Exchange):
             df['size'] = df.orderQty * df.side
             df['price'] = np.where(df.price > 0, df.price, df.stopPx)
 
-        df = df \
+        return df \
             .reindex(columns=cols) \
             .sort_values(
                 by=['symbol', 'ordType', 'name'],
                 ascending=[False, True, True]) \
             .reset_index(drop=True)
-
-        return df
 
     def get_order_by_key(self, key):
         if self._orders is None:
@@ -260,7 +258,7 @@ class Bitmex(Exchange):
         if starttime is None:
             starttime = dt.utcnow() + delta(days=-7)
 
-        fltr = dict(ordStatus='Filled')
+        fltr = dict(ordStatus=['Filled', 'PartiallyFilled'])
 
         self.set_orders(fltr=fltr, starttime=starttime, reverse=False)
         return self.bitmex_order_from_raw(order_specs=self._orders, process=False)
