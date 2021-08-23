@@ -207,8 +207,8 @@ class Bitmex(Exchange):
             # all position qty
             return {k: v['currentQty'] for k, v in self._positions.items()}
 
-    def df_orders(self, symbol=None, new_only=True, refresh=False):
-        orders = self.get_orders(symbol=symbol, new_only=new_only, refresh=refresh)
+    def df_orders(self, symbol=None, new_only=True, refresh=False) -> pd.DataFrame:
+        orders = self.get_orders(symbol=symbol, new_only=new_only, refresh=refresh, as_bitmex=False)
         cols = ['ordType', 'name', 'size', 'price', 'execInst', 'symbol']
 
         if not orders:
@@ -271,7 +271,7 @@ class Bitmex(Exchange):
             new_only: bool = False,
             bot_only: bool = False,
             manual_only: bool = False,
-            as_bitmex: bool = False,
+            as_bitmex: bool = True,
             as_dict: bool = False,
             refresh: bool = False) -> Union[List[dict], List[BitmexOrder], Dict[str, BitmexOrder]]:
         """Get orders which match criterion
@@ -287,7 +287,7 @@ class Bitmex(Exchange):
         manual_only : bool, optional
             orders not created by bot, by default False
         as_bitmex : bool, optional
-            return BitmexOrders instead of raw list of dicts
+            return BitmexOrders instead of raw list of dicts, default True
         as_dict : bool, optional
             return Dict[str, BitmexOrders] instead of list (for matching)
         refresh : bool, optional
@@ -306,7 +306,7 @@ class Bitmex(Exchange):
         # define filters
         conds = dict(
             symbol=lambda x: x['symbol'].lower() == symbol.lower(),
-            new_only=lambda x: x['ordStatus'] == 'New',
+            new_only=lambda x: x['ordStatus'] in ('New', 'PartiallyFilled'),
             bot_only=lambda x: not x['manual'],
             manual_only=lambda x: x['manual'])
 
@@ -843,6 +843,7 @@ class Bitmex(Exchange):
         # temp send order submit details to discord
         m = {k: [o.short_stats for o in orders] for k, orders in all_orders.items() if orders}
         if m:
+            m['current_qty'] = f'{self.current_qty(symbol=symbol):+,}'
             msg = f.pretty_dict(m, prnt=False, bold_keys=True)
             f.discord(msg=msg, channel='orders')
 
