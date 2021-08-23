@@ -9,7 +9,7 @@ from jambot.exchanges.bitmex import Bitmex
 from jambot.tradesys.__init__ import *
 from jambot.tradesys.base import Observer
 from jambot.tradesys.enums import OrderStatus
-from jambot.tradesys.orders import MarketOrder, Order
+from jambot.tradesys.orders import BitmexOrder, MarketOrder, Order
 from jambot.tradesys.wallet import Wallet
 
 log = getlog(__name__)
@@ -168,7 +168,7 @@ class Broker(Observer):
         """
         return list(self.open_orders.values())
 
-    def expected_orders(self, symbol: str, exch: Bitmex = None) -> List[Order]:
+    def expected_orders(self, symbol: str, exch: Bitmex = None) -> List[BitmexOrder]:
         """Get all market/limit orders to check for current timestamp
 
         - NOTE this will currently just scale orders based on max avail qtys
@@ -180,6 +180,7 @@ class Broker(Observer):
             list of all orders
         """
         orders = self.recent_markets() + self._open_orders()
+        orders = [o.as_bitmex() for o in orders]
 
         # rescale orders
         # TODO stops need to be related to limit open
