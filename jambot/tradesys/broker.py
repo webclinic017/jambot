@@ -193,8 +193,6 @@ class Broker(Observer):
             cur_side = np.sign(cur_qty)
             last_price = exch.last_price(symbol=symbol)
 
-            # TODO allows submitting mkt_close_err AND market_close at same time
-
             for o in orders:
                 if o.is_limit:
                     # order is offside (price moved too fast from close)
@@ -216,7 +214,12 @@ class Broker(Observer):
                 elif o.is_increase:
                     o.qty = wallet.available_quantity(price=o.price) * o.side
 
-            if not cur_side == 0 and not expected_side == cur_side:
+            # consider impact of submitting market orders this period first
+            cur_qty += sum([o.qty for o in orders if o.is_market])
+            cur_side = np.sign(cur_qty)
+
+            # final check to get position back to correct side
+            if expected_side * cur_side == -1:
                 log.warning(f'Position offside, market closing. Expected: {expected_side}, actual: {cur_side}')
 
                 # remove limit close
