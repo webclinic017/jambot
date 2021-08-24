@@ -466,15 +466,40 @@ def discord(msg: str, channel: str = 'jambot', log: Callable = None) -> None:
         webhook.send(msg)
 
 
-def send_error(msg: str = None, prnt: bool = False, force: bool = False) -> None:
+def py_codeblock(msg: str) -> str:
+    """Wrap message in a ```py codeblock for discord messaging
 
+    Parameters
+    ----------
+    msg : str
+
+    Returns
+    -------
+    str
+        msg with py codeblock wrapper
+    """
+    return f'```py\n{msg}```\n'
+
+
+def send_error(msg: str = None, prnt: bool = False, force: bool = False) -> None:
+    """Send error message to discord with last err traceback
+
+    Parameters
+    ----------
+    msg : str, optional
+        message header info, by default None
+    prnt : bool, optional
+        print to stdout or send to discord, by default False
+    force : bool, optional
+        always send to discord, by default False
+    """
     err = traceback.format_exc().replace('Traceback (most recent call last):\n', '')
 
     to_discord = True if AZURE_WEB or force else False
 
     # wrap err traceback in py code block formatting
     if to_discord:
-        err = f'```py\n{err}```{dt.utcnow():%Y-%m-%d %H:%M:%S}'
+        err = f'{py_codeblock(err)}{dt.utcnow():%Y-%m-%d %H:%M:%S}'
 
     # add custom msg to traceback if paassed
     msg = err if msg is None else f'{msg}\n{err}'  # .replace(':\nNoneType: None', '')
@@ -575,7 +600,7 @@ def to_snake(s: str):
         .replace('__', '_')
 
 
-def lower_cols(df):
+def lower_cols(df: Union[pd.DataFrame, list]) -> Union[pd.DataFrame, list]:
     """Convert df columns to snake case and remove bad characters"""
     is_list = False
 
