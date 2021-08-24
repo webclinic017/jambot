@@ -68,6 +68,10 @@ class BaseOrder(object, metaclass=ABCMeta):
         return self.status == OrderStatus.FILLED
 
     @property
+    def is_partially_filled(self):
+        return self.status == OrderStatus.PARTIALLYFILLED
+
+    @property
     def is_cancelled(self):
         return self.status == OrderStatus.CANCELLED
 
@@ -437,10 +441,12 @@ class BitmexOrder(BaseOrder, DictRepr, Serializable):
             stats = f' | Bal: {exch.total_balance_margin:.3f} | ' \
                 + f'PnL: {exch.prev_pnl:.3f}' if self.is_stop or self.is_reduce else ''
 
+        qty = self.qty if not self.is_partially_filled else self.raw_spec('cumQty')
+
         return '{} | {:<4} {:>+8,} at ${:,}{:>12} | {}{}'.format(
             self.sym_short,
             m['sideStr'],
-            self.qty,
+            qty,
             avgpx,
             ordprice,
             self.name,
