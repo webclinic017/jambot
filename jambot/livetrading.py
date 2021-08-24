@@ -100,8 +100,10 @@ def check_filled_orders(minutes: int = 5, exch: Bitmex = None, test: bool = True
         msg = '\n'.join([o.summary_msg(exch=exch, nearest=prec) for o in orders])
 
         exch.set_positions()
-        current_qty = '{:+,}'.format(
-            f.pretty_dict(dict(current_qty=exch.current_qty(symbol=SYMBOL)), prnt=False, bold_keys=True))
+        current_qty = f.pretty_dict(
+            m=dict(current_qty=f'{exch.current_qty(symbol=SYMBOL):+,}'),
+            prnt=False,
+            bold_keys=True)
 
         msg = f'```py\n{msg}```\n{current_qty}@here'
         f.discord(msg=msg, channel='orders')
