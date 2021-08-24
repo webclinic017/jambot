@@ -137,7 +137,7 @@ class Wallet(Observer):
         """
         # Margin Balance = Wallet Balance + uPNL
         # bitmex does some extra small maths, just multiply by 0.99
-        self._total_balance_margin = exch.total_balance_margin * 0.99
+        self._total_balance_margin = exch.total_balance_margin * 0.99 * exch.pct_balance
 
     def fill_order(self, order: 'Order'):
         """Perform transcation of order, modify balance, current price/quantity"""

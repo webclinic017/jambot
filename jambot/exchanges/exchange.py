@@ -1,13 +1,17 @@
 from abc import ABCMeta, abstractmethod
 
+from jambot import functions as f
+
 
 class Exchange(object, metaclass=ABCMeta):
     """Base object to represent an exchange connection"""
 
-    def __init__(self, user: str, test: bool = False, **kw):
+    def __init__(self, user: str, test: bool = False, pct_balance: float = 1, **kw):
 
         self._creds = self.load_creds(user=user)
         self._client = self.init_client(test=test)
+
+        f.set_self(vars())
 
     @property
     def client(self):
