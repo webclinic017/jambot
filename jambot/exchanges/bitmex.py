@@ -874,7 +874,7 @@ class Bitmex(Exchange):
         # convert to dicts for easier matching
         expected_orders = ords.list_to_dict(expected_orders)
         actual_orders = ords.list_to_dict(actual_orders)
-        all_orders = dd(list, {k: [] for k in ('valid', 'amend', 'submit', 'cancel')})
+        all_orders = dd(list, {k: [] for k in ('valid', 'cancel', 'amend', 'submit')})
 
         for k, o in actual_orders.items():
             if k in expected_orders:
