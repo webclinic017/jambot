@@ -193,6 +193,8 @@ class Broker(Observer):
             cur_side = np.sign(cur_qty)
             last_price = exch.last_price(symbol=symbol)
 
+            # TODO allows submitting mkt_close_err AND market_close at same time
+
             for o in orders:
                 if o.is_limit:
                     # order is offside (price moved too fast from close)

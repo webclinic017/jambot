@@ -99,6 +99,7 @@ def check_filled_orders(minutes: int = 5, exch: Bitmex = None, test: bool = True
     if orders:
         msg = '\n'.join([o.summary_msg(exch=exch, nearest=prec) for o in orders])
 
+        exch.set_positions()
         current_qty = '{:+,}'.format(
             f.pretty_dict(dict(current_qty=exch.current_qty(symbol=SYMBOL)), prnt=False, bold_keys=True))
 
