@@ -120,13 +120,11 @@ class ModelStorageManager(DictRepr):
         # max date where hour is greater or equal to 18:00
         # set back @cut hrs due to losing @n_periods for training preds
         # model is trained AT 1800, but only UP TO 1500
-        # between 1500 - 1800 we're using the previous day's preds
-        cut = {1: 10, 15: 3}.get(self.interval)
-        reset_hour = self.reset_hour - cut
+        cut_hrs = {1: 10, 15: 3}.get(self.interval)
 
         d_upper = f.date_to_dt(
-            df.query('timestamp.dt.hour >= @reset_hour').index.max().date()) \
-            + delta(hours=reset_hour)
+            df.query('timestamp.dt.hour >= @self.reset_hour').index.max().date()) \
+            + delta(hours=self.reset_hour - cut_hrs)
 
         index = df.loc[:d_upper].index
         df = df.loc[:d_upper].to_numpy(np.float32)
@@ -143,10 +141,10 @@ class ModelStorageManager(DictRepr):
                 **sk.weighted_fit(name=None, n=len(df) + cut_rows))
 
             # save - add back cut hrs so always consistent
-            d = index[cut_rows - 1] + delta(hours=cut)
+            d = index[cut_rows - 1] + delta(hours=cut_hrs)
             fname = f'{name}_{d:{self.dt_format}}'
             f.save_pickle(estimator, p=self.p_model, name=fname)
-            log.info(f'saved model: {fname}, max_date: {d}')
+            log.info(f'saved model: {fname}, train_date: {d}')
 
         # mirror saved models to azure blob
         self.bs.upload_dir(p=self.p_model, mirror=True)
@@ -186,8 +184,8 @@ class ModelStorageManager(DictRepr):
             # load estimator
             estimator = f.load_pickle(p)
 
-            if not i + 1 == len(p_models):
-                max_date = d + delta(hours=self.batch_size) + -f.get_offset(self.interval)
+            if not i == len(p_models) - 1:
+                max_date = d + delta(hours=self.batch_size) - f.get_offset(self.interval)
             else:
                 max_date = df.index[-1]
 
