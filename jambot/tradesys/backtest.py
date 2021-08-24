@@ -66,10 +66,11 @@ class BacktestManager(Clock):
         """Top level doesn't need to do anything"""
         pass
 
-    def run(self, prnt=True) -> None:
+    def run(self, prnt=True) -> 'BacktestManager':
         """Top level step function"""
         super().run()
         self.end_session.emit()
+        return self
 
     @property
     def summary_format(self):

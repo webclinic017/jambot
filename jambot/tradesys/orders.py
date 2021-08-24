@@ -443,7 +443,7 @@ class BitmexOrder(BaseOrder, DictRepr, Serializable):
 
         qty = self.qty if not self.is_partially_filled else self.raw_spec('cumQty')
 
-        return '{} | {:<4} {:>+8,} at ${:,}{:>12} | {}{}'.format(
+        return '{} | {:<4} {:>+8,} at ${:,}{:>12} | {:<12}{}'.format(
             self.sym_short,
             m['sideStr'],
             qty,
