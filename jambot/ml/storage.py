@@ -119,6 +119,8 @@ class ModelStorageManager(DictRepr):
 
         # max date where hour is greater or equal to 18:00
         # set back @cut hrs due to losing @n_periods for training preds
+        # model is trained AT 1800, but only UP TO 1500
+        # between 1500 - 1800 we're using the previous day's preds
         cut = {1: 10, 15: 3}.get(self.interval)
         reset_hour = self.reset_hour - cut
 
@@ -140,8 +142,8 @@ class ModelStorageManager(DictRepr):
                 df[:cut_rows or None, -1],
                 **sk.weighted_fit(name=None, n=len(df) + cut_rows))
 
-            # save
-            d = index[cut_rows - 1]
+            # save - add back cut hrs so always consistent
+            d = index[cut_rows - 1] + delta(hours=cut)
             fname = f'{name}_{d:{self.dt_format}}'
             f.save_pickle(estimator, p=self.p_model, name=fname)
             log.info(f'saved model: {fname}, max_date: {d}')
