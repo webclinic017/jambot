@@ -12,14 +12,10 @@ from __app__.jambot.exchanges.bitmex import Bitmex  # type: ignore
 def main(mytimer: func.TimerRequest) -> None:
     try:
         interval = 15
-        exch = Bitmex.default(test=True, refresh=True)
+        exch = Bitmex.default(test=False, refresh=False)
         db.update_all_symbols(exch=exch, interval=interval, symbol=SYMBOL)
 
-        # startdate, daterange = dt.now().date() + delta(days=-15), 30
-        # dfall = db.get_df(symbol='XBTUSD', startdate=startdate, daterange=daterange)
-
-        live.run_strat_live(exch=exch, interval=interval)
-        # live.check_sfp(df=dfall)
+        live.run_strat_live(interval=interval)
 
         # update hourly candles after strat run on 15 min
         if 0 <= dt.utcnow().minute < 15:

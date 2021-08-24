@@ -26,7 +26,6 @@ class Bitmex(Exchange):
         super().__init__(user=user, test=test, **kw)
         # self.name = ''
         # self.nameshort = ''
-        self.percentbalance = 1
         self.balance_set = False
         self.avail_margin = 0
         self.total_balance_margin = 0
@@ -863,14 +862,16 @@ class Bitmex(Exchange):
                 getattr(self, f'{action}_orders')(orders)
 
         # temp send order submit details to discord
-        m = {k: [o.short_stats for o in orders] for k, orders in all_orders.items() if orders}
-        if m:
+        m = dict(user=self.user)
+        m_ords = {k: [o.short_stats for o in orders] for k, orders in all_orders.items() if orders}
+        if m_ords:
             m['current_qty'] = f'{self.current_qty(symbol=symbol):+,}'
+            m |= m_ords
             msg = f.pretty_dict(m, prnt=False, bold_keys=True)
             f.discord(msg=msg, channel='orders')
 
         s = ', '.join([f'{action}={len(orders)}' for action, orders in all_orders.items()])
-        log.info(f'Reconciled orders: {s}')
+        log.info(f'{self.user} - Reconciled orders: {s}')
 
     def validate_orders(
             self,

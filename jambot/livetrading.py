@@ -7,6 +7,7 @@ from jambot.ml import models as md
 from jambot.ml.storage import ModelStorageManager
 from jambot.tradesys import backtest as bt
 from jambot.tradesys.strategies import ml, sfp, trendrev
+from jambot.utils import google as gg
 
 
 def compare_state(strat, pos):
@@ -87,26 +88,26 @@ def check_filled_orders(minutes: int = 5, exch: Bitmex = None, test: bool = True
     test : bool, optional
         use testnet, default True
     """
-    if exch is None:
-        exch = Bitmex.default(test=test, refresh=False)
-
     starttime = dt.utcnow() + delta(minutes=minutes * -1)
-    orders = exch.get_filled_orders(starttime=starttime)
-    prec = exch.get_instrument(symbol=SYMBOL)['tickSize']
 
-    # NOTE could filter by symbols eventually
+    for exch in iter_exchanges(refresh=False):
 
-    if orders:
-        msg = '\n'.join([o.summary_msg(exch=exch, nearest=prec) for o in orders])
+        orders = exch.get_filled_orders(starttime=starttime)
+        prec = exch.get_instrument(symbol=SYMBOL)['tickSize']
 
-        exch.set_positions()
-        current_qty = f.pretty_dict(
-            m=dict(current_qty=f'{exch.current_qty(symbol=SYMBOL):+,}'),
-            prnt=False,
-            bold_keys=True)
+        # NOTE could filter by symbols eventually
 
-        msg = f'```py\n{msg}```\n{current_qty}@here'
-        f.discord(msg=msg, channel='orders')
+        if orders:
+            msg = '\n'.join([o.summary_msg(exch=exch, nearest=prec) for o in orders])
+
+            exch.set_positions()
+            current_qty = f.pretty_dict(
+                m=dict(current_qty=f'{exch.current_qty(symbol=SYMBOL):+,}'),
+                prnt=False,
+                bold_keys=True)
+
+            msg = f'{f.py_codeblock(msg)}{current_qty}\n@here'
+            f.discord(msg=msg, channel='orders')
 
 
 def write_balance_google(syms, u, sht=None, ws=None, preservedf=False, df=None):
@@ -211,7 +212,7 @@ def run_toploop(u=None, partial=False, dfall=None):
             # match google user with bitmex position, add %balance
             weight = float(g_user[row.symbolshort].strip('%')) / 100
             pos = u.get_position(row.symbolbitmex)
-            pos['percentbalance'] = weight
+            pos['percent_balance'] = weight
 
             symbol = row.symbol
             # NOTE may need to set timestamp/symbol index when using more than just XBTUSD
@@ -304,22 +305,37 @@ def get_df_pred(symbol: str = SYMBOL, interval: int = 15, name: str = 'lgbm', te
         .df_pred_from_models(df=df, name=name)
 
 
-def run_strat_live(exch: Bitmex = None, test: bool = True, interval: int = 15) -> None:
-    """Run strategy on given interval and adjust orders
+def iter_exchanges(refresh: bool = True) -> Bitmex:
+    """Iterate exchange objs for all users
 
     Parameters
     ----------
-    exch : Bitmex, optional
-        exch obj, default None
-    test : bool, optional
-        use testnet, by default False
+    refresh : bool
+        refresh exch data on init or not
+
+    Returns
+    -------
+    Bitmex
+        initialized Bitmex exch obj
     """
-    # TODO add errlog wrapper
+    df_users = gg.UserSettings().get_df() \
+        .query('bot_enabled == True')
 
-    if exch is None:
-        exch = Bitmex.default(test=test, refresh=True)
+    for user, m in df_users.to_dict(orient='index').items():
+        test = True if 'test' in user.lower() else False
 
-    # trigger every 15min at 15sec
+        # NOTE only set up for XBT currently
+        yield Bitmex(user=user, test=test, refresh=refresh, pct_balance=m['xbt'])
+
+
+def run_strat_live(interval: int = 15) -> None:
+    """Run strategy on given interval and adjust orders
+    - run at 15 seconds passed the interval (bitmex OHLC REST delay)
+
+    Parameters
+    ----------
+    interval : int, default 15
+    """
     symbol = SYMBOL
     name = 'lgbm'
     df_pred = get_df_pred(symbol, interval, name)
@@ -332,11 +348,9 @@ def run_strat_live(exch: Bitmex = None, test: bool = True, interval: int = 15) -
         symbol=symbol,
         startdate=df_pred.index[0],
         strat=strat,
-        df=df_pred[cols])
+        df=df_pred[cols]).run()
 
-    bm.run()
-
-    # reconcile orders
-    exch.reconcile_orders(
-        symbol=symbol,
-        expected_orders=strat.broker.expected_orders(symbol=symbol, exch=exch))
+    for exch in iter_exchanges():
+        exch.reconcile_orders(
+            symbol=symbol,
+            expected_orders=strat.broker.expected_orders(symbol=symbol, exch=exch))
