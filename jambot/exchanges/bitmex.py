@@ -241,7 +241,7 @@ class Bitmex(Exchange):
     def get_filled_orders(self, symbol: str = SYMBOL, starttime: dt = None) -> List[BitmexOrder]:
         """Get orders filled since last starttime
 
-        - NOTE This refreshes and sets exch orders to recent filled only
+        - NOTE This refreshes and sets exch orders to recent Filled/PartiallyFilled only
 
         Parameters
         ----------
@@ -589,9 +589,7 @@ class Bitmex(Exchange):
         result = []
         for order_batch in batches:
             result_orders = self._order_request(action='submit', order_specs=order_batch)
-
-            if not result_orders is None:
-                result.extend(result_orders)
+            result.extend(result_orders or [])
 
         return result
 
