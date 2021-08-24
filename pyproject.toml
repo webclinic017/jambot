@@ -25,9 +25,9 @@ lightgbm = "^3.2.1"
 cryptography = "^3.4.7"
 azure-storage-blob = "^12.8.1"
 google-cloud-logging = "^2.6.0"
+pygsheets = "^2.0.5"
 
 [tool.poetry.dev-dependencies]
-pygsheets = "^2.0.5"
 jupyter = "^1.0.0"
 shap = "^0.39.0" # LLVM_CONFIG=/usr/local/Cellar/llvm@9/9.0.1_2/bin/llvm-config poetry add shap
 seaborn = "^0.11.1"
