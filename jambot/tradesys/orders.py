@@ -438,7 +438,7 @@ class BitmexOrder(BaseOrder, DictRepr, Serializable):
             if not exch.balance_set:
                 exch.set_total_balance()
 
-            stats = f' | Bal: {exch.total_balance_margin:.3f} | ' \
+            stats = f' | Bal: {exch.total_balance_wallet:.3f} | ' \
                 + f'PnL: {exch.prev_pnl:.3f}' if self.is_stop or self.is_reduce else ''
 
         qty = self.qty if not self.is_partially_filled else self.raw_spec('cumQty')

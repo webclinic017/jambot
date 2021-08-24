@@ -437,7 +437,7 @@ class Bitmex(Exchange):
         res = self.check_request(self.client.User.User_getMargin(currency='XBt'))
         # total available/unused > only used in postOrder "Available Balance"
         self.avail_margin = res['excessMargin'] / div
-        self.total_balance_margin = res['marginBalance'] / div  # unrealized + realized > don't actually use
+        self.total_balance_margin = res['marginBalance'] / div  # unrealized + realized > wallet total qty avail
         self.total_balance_wallet = res['walletBalance'] / div  # realized
         self.unrealized_pnl = res['unrealisedPnl'] / div
         self.prev_pnl = res['prevRealisedPnl'] / div
