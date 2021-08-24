@@ -765,6 +765,33 @@ class Bitmex(Exchange):
             count: int = 1000,
             pages: int = 100,
             reverse: bool = False) -> pd.DataFrame:
+        """Get df of OHLCV candles from Bitmex converted to df
+
+        - NOTE bitmex gives closetime, tradingview shows opentime > offset to match open
+
+        Parameters
+        ----------
+        symbol : str, optional
+        starttime : dt, optional
+        fltr : str, optional
+            any filter which has been json.dumps already, by default ''
+        retain_partial : bool, optional
+            keep partial candle in return df, by default False
+        include_partial : bool, optional
+            query include partial candle from bitmex, by default True
+        interval : int, optional
+        count : int, optional
+            max number of candles to include, by default 1000
+        pages : int, optional
+            by default 100
+        reverse : bool, optional
+            return candles in reverse (newest first) order, by default False
+
+        Returns
+        -------
+        pd.DataFrame
+            df of OHLCV candles
+        """
 
         if interval == 1:
             binsize = '1h'
@@ -805,7 +832,6 @@ class Bitmex(Exchange):
                 log.info('Ratelimit reached. Sleeping 10 seconds.')
                 time.sleep(10)
 
-        # bitmex gives closetime, tradingview shows opentime, offset to match open
         df = pd.json_normalize(lst) \
             .assign(timestamp=lambda x: x.timestamp.dt.tz_localize(None) + offset * -1) \
             .pipe(self.resample, include_partial=include_partial, do=interval == 15) \
