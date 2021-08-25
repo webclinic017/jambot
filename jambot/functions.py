@@ -353,6 +353,9 @@ def get_price(pnl: float, entry_price: float, side: int) -> float:
     float
         price
     """
+    if pnl is None:
+        discord(f'WARNING: Pnl is None: {pnl}', channel='err')
+
     if side == 1:
         price = pnl * entry_price + entry_price
     elif side == -1:
