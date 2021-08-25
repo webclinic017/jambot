@@ -217,7 +217,7 @@ class BaseOrder(object, metaclass=ABCMeta):
         - "XBTUSD | limit_open | $48,852 | +394,800" """
         qty = self.qty if not self.qty is None else 0
         price = f'${self.price:,.0f}' if not self.price is None else ''
-        return f'{self.symbol} | {self.name} | {price} | {qty:+,}'
+        return f'{self.symbol} | {self.name} | {qty:+,} | {price}'
 
 
 class BitmexOrder(BaseOrder, DictRepr, Serializable):
