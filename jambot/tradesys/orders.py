@@ -285,8 +285,8 @@ class BitmexOrder(BaseOrder, DictRepr, Serializable):
             price=order.price,
             symbol=order.symbol,
             qty=order.qty,
-            name=order.name
-        )
+            name=order.name,
+            offset=order.offset)
 
     @classmethod
     def example(cls):
