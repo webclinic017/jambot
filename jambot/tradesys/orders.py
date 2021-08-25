@@ -414,8 +414,11 @@ class BitmexOrder(BaseOrder, DictRepr, Serializable):
             try:
                 return self.order_spec_raw[key]
             except KeyError:
-                log.warning(f'key "{key}" doesn\'t exist in order_spec_raw')
-                return None
+                try:
+                    return self.order_spec_raw[self.m_conv.get(key)]
+                except KeyError:
+                    log.warning(f'key "{key}" doesn\'t exist in order_spec_raw')
+                    return None
         else:
             raise AttributeError('order_spec_raw not set.')
 
@@ -438,8 +441,8 @@ class BitmexOrder(BaseOrder, DictRepr, Serializable):
             if not exch.balance_set:
                 exch.set_total_balance()
 
-            stats = f' | Bal: {exch.total_balance_wallet:.3f} | ' \
-                + f'PnL: {exch.prev_pnl:.3f}' if self.is_stop or self.is_reduce else ''
+            stats = f' | Bal: {exch.total_balance_wallet:.4f} | ' \
+                + f'PnL: {exch.prev_pnl:.4f}' if self.is_stop or self.is_reduce else ''
 
         qty = self.qty if not self.is_partially_filled else self.raw_spec('cumQty')
 
