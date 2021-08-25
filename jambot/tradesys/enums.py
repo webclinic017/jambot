@@ -31,6 +31,7 @@ class OrderStatus(CaseInsensitiveEnum):
     CANCELLED: str = 'cancelled', 'canceled'
     FILLED: str = 'filled'
     PARTIALLYFILLED: str = 'partiallyfilled'
+    REJECTED: str = 'rejected'
 
 
 class TradeStatus(CaseInsensitiveEnum):
