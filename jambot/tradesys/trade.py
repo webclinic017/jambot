@@ -28,10 +28,11 @@ class Trade(Observer):
         orders = []
         status = TradeStatus.PENDING
         _side = TradeSide.NEUTRAL
-        exit_balance = None
         qty_filled = 0
 
         wallet = broker.get_wallet(symbol=symbol)
+        entry_balance = None
+        exit_balance = None
 
         f.set_self(vars())
 
@@ -70,8 +71,15 @@ class Trade(Observer):
         return len(self.orders)
 
     @property
-    def pnl(self):
+    def pnl(self) -> float:
+        """PnL % of trade"""
         return f.get_pnl(self.side, self.entry_price, self.exit_price)
+
+    @property
+    def pnl_acct(self) -> float:
+        """Balance % change of account"""
+        if self.exit_balance and self.entry_balance:
+            return (self.exit_balance - self.entry_balance) / self.entry_balance
 
     @property
     def is_good(self):
@@ -171,15 +179,12 @@ class Trade(Observer):
 
     def on_fill(self, qty: int, *args):
         """Perform action when any orders filled"""
-
-        # chose side based on first order filled
-        # self.entry_price = self.wallet.entry_price
-        # self.exit_price = round(self.wallet.exit_price, 1)
         self.qty_filled += qty
 
         if self.is_pending:
             self.side = np.sign(qty)
             self.status = TradeStatus.OPEN
+            self.entry_balance = self.wallet.balance
         elif self.is_open:
             if self.wallet.is_zero:
                 self.close()
@@ -248,6 +253,7 @@ class Trade(Observer):
             exit=self.exit_price,
             qty=self.qty,
             pnl=self.pnl,
+            pnl_acct=self.pnl_acct,
             bal=self.exit_balance,
             status=self.status,
             t_num=self.trade_num)

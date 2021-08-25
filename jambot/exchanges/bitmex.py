@@ -206,23 +206,21 @@ class Bitmex(Exchange):
             # all position qty
             return {k: v['currentQty'] for k, v in self._positions.items()}
 
-    def df_orders(self, symbol=None, new_only=True, refresh=False) -> pd.DataFrame:
-        orders = self.get_orders(symbol=symbol, new_only=new_only, refresh=refresh, as_bitmex=False)
-        cols = ['ordType', 'name', 'size', 'price', 'execInst', 'symbol']
+    def df_orders(self, symbol: str = SYMBOL, new_only: bool = True, refresh: bool = False) -> pd.DataFrame:
+        orders = self.get_orders(symbol=symbol, new_only=new_only, refresh=refresh, as_bitmex=True)
+        cols = ['order_type', 'name', 'qty', 'price', 'exec_inst', 'symbol']
 
         if not orders:
             df = pd.DataFrame(columns=cols, index=range(1))
         else:
-            df = pd.json_normalize(orders)
-            df['size'] = df.orderQty * df.side
-            df['price'] = np.where(df.price > 0, df.price, df.stopPx)
+            data = [{k: o.raw_spec(k) for k in cols} for o in orders]
+            df = pd.DataFrame.from_dict(data) \
 
         return df \
             .reindex(columns=cols) \
             .sort_values(
-                by=['symbol', 'ordType', 'name'],
-                ascending=[False, True, True]) \
-            .reset_index(drop=True)
+                by=['symbol', 'order_type', 'name'],
+                ascending=[False, True, True])
 
     def get_order_by_key(self, key):
         if self._orders is None:

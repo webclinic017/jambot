@@ -1,12 +1,16 @@
-from jambot import *
+from datetime import datetime as dt
+from datetime import timedelta as delta
+
+import pandas as pd
+
+from jambot import SYMBOL
 from jambot import config as cf
 from jambot import functions as f
-from jambot import sklearn_utils as sk
 from jambot.exchanges.bitmex import Bitmex
 from jambot.ml import models as md
 from jambot.ml.storage import ModelStorageManager
 from jambot.tradesys import backtest as bt
-from jambot.tradesys.strategies import ml, sfp, trendrev
+from jambot.tradesys.strategies import base, ml, sfp, trendrev
 from jambot.utils import google as gg
 
 
@@ -110,7 +114,7 @@ def check_filled_orders(minutes: int = 5, exch: Bitmex = None, test: bool = True
             f.discord(msg=msg, channel='orders')
 
 
-def write_balance_google(syms, u, sht=None, ws=None, preservedf=False, df=None):
+def _write_balance_google(syms, u, sht=None, ws=None, preservedf=False, df=None):
 
     if sht is None:
         sht = f.get_google_sheet()
@@ -248,11 +252,31 @@ def run_toploop(u=None, partial=False, dfall=None):
     write_balance_google(syms, u, sht)
 
 
+def write_balance_google(strat: base.StrategyBase, exch: Bitmex) -> None:
+    """Update google sheet "Bitmex" with current strat performance
+
+    Parameters
+    ----------
+    strat : base.StrategyBase
+    exch : Bitmex
+    """
+    gc = gg.get_google_client()
+    batcher = gg.SheetBatcher(gc=gc, name='Bitmex')
+    kw = dict(batcher=batcher)
+
+    gg.OpenPositions(**kw).set_df(exch=exch)
+    gg.OpenOrders(**kw).set_df(exch=exch)
+    gg.TradeHistory(**kw).set_df(strat=strat)
+
+    batcher.run_batch()
+
+
 def show_current_status(n: int = 30, **kw) -> None:
     """Show current live strategy signals
 
     # NOTE this is kinda extra, should probs just show strat's recent trades
     """
+    from jambot.utils.styles import highlight_val
 
     # set columns and num format
     cols_ohlc = ['open', 'high', 'low', 'close']
@@ -270,10 +294,14 @@ def show_current_status(n: int = 30, **kw) -> None:
     return get_df_pred(**kw)[list(m_fmt.keys())] \
         .tail(n) \
         .style.format(m_fmt) \
-        .apply(sk.highlight_val, subset=['signal'], m=m_color)
+        .apply(highlight_val, subset=['signal'], m=m_color)
 
 
-def get_df_pred(symbol: str = SYMBOL, interval: int = 15, name: str = 'lgbm', test: bool = False) -> pd.DataFrame:
+def get_df_pred(
+        symbol: str = SYMBOL,
+        interval: int = 15,
+        name: str = 'lgbm',
+        test: bool = False) -> pd.DataFrame:
     """Convenicce to get df_pred used by live trading
 
     Parameters
@@ -350,7 +378,13 @@ def run_strat_live(interval: int = 15) -> None:
         strat=strat,
         df=df_pred[cols]).run()
 
+    m_exch = {}
     for exch in iter_exchanges():
+        m_exch[exch.user] = exch
+
         exch.reconcile_orders(
             symbol=symbol,
             expected_orders=strat.broker.expected_orders(symbol=symbol, exch=exch))
+
+    # write current strat trades/open positions to google
+    write_balance_google(strat=strat, exch=m_exch['jayme'])

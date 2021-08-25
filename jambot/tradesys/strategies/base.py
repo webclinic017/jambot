@@ -113,37 +113,49 @@ class StrategyBase(Observer):
     def bad_trades(self):
         return list(filter(lambda x: x.pnlfinal <= 0, self.trades))
 
-    def show_trades(self, maxmin=0, first=float('inf'), last=0, df=None):
-        import seaborn as sns
+    def show_trades(
+            self,
+            maxmin: int = 0,
+            first: int = float('inf'),
+            last: int = 0,
+            df: pd.DataFrame = None) -> None:
 
-        if df is None:
-            df = self.df_trades(first=first, last=last)
+        from jambot.utils.styles import _cmap
+
+        df = df or self.df_trades(first=first, last=last)
         style = df.style.hide_index()
 
         # figs = self.bm.decimal_figs
         # price_format = '{:,.' + str(figs) + 'f}'
         price_format = '{:,.0f}'
 
-        cmap = sns.diverging_palette(10, 240, sep=10, n=20, center='dark', as_cmap=True)
-        # style.background_gradient(cmap=cmap, subset=['PnlAcct'], vmin=-0.3, vmax=0.3)
-
         style \
-            .background_gradient(cmap=cmap, subset=['pnl'], vmin=-0.1, vmax=0.1) \
+            .background_gradient(cmap=_cmap.reversed(), subset=['pnl', 'pnl_acct'], vmin=-0.1, vmax=0.1) \
             .format({
-                'timestamp': '{:%Y-%m-%d %H:%M}',
-                'qty': '{:,}',
+                'ts': '{:%Y-%m-%d %H:%M}',
+                'qty': '{:+,}',
                 'entry': price_format,
                 'exit': price_format,
-                #   'Conf': '{:.3f}',
                 'pnl': '{:.2%}',
-                #   'PnlAcct': '{:.2%}',
-                'bal': '{:.2f}',
-            })
+                'pnl_acct': '{:.2%}',
+                'bal': '{:.2f}'})
 
         display(style)
 
-    def df_trades(self, first=float('inf'), last=0):
-        """Return df of trade history"""
+    def df_trades(self, first: int = float('inf'), last: int = 0) -> pd.DataFrame:
+        """Return df of trade history
+
+        Parameters
+        ----------
+        first : int, optional
+            only first n rows, by default all
+        last : int, optional
+            only last n rows, by default all
+
+        Returns
+        -------
+        pd.DataFrame
+        """
         trades = self.trades
         data = [t.dict_stats() for t in trades[last * -1: min(first, len(trades))]]
 
