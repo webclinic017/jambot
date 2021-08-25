@@ -3,7 +3,6 @@ import warnings
 from sklearn.base import BaseEstimator
 
 from jambot import functions as f
-from jambot import sklearn_utils as sk
 from jambot.ml import models as md
 from jambot.tradesys.backtest import BacktestManager
 from jambot.tradesys.orders import LimitOrder, MarketOrder, Order, StopOrder
@@ -191,6 +190,7 @@ class StratScorer():
 
     def show_summary(self):
         """Show summary df of all backtest runs"""
+        import jambot.utils.styles as st
         fmt = list(self.runs.values())[0].summary_format
 
         higher = ['drawdown', 'good_pct']
@@ -202,9 +202,9 @@ class StratScorer():
 
         style = df \
             .style.format(fmt) \
-            .pipe(sk.bg, subset=higher, higher_better=True) \
-            .pipe(sk.bg, subset=['tpd'], higher_better=False) \
-            .apply(sk.background_grad_center, subset=higher_centered, higher_better=True, center=1.0) \
+            .pipe(st.bg, subset=higher, higher_better=True) \
+            .pipe(st.bg, subset=['tpd'], higher_better=False) \
+            .apply(st.background_grad_center, subset=higher_centered, higher_better=True, center=1.0) \
 
         ints = ('lev', 'good', 'filled', 'total')
         df_tot = df.mean().to_frame().T \
