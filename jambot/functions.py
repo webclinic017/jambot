@@ -10,7 +10,7 @@ from datetime import date
 from datetime import datetime as dt
 from datetime import timedelta as delta
 from pathlib import Path
-from typing import Any, Callable, Union
+from typing import Any, Callable, List, Union
 
 import pandas as pd
 from dateutil.parser import parse
@@ -309,8 +309,9 @@ def read_csv(startdate, daterange, symbol=None):
     return df
 
 
-def percent(val):
-    return '{:.2%}'.format(val)
+def percent(x: float) -> str:
+    """Format float as string percent"""
+    return f'{x:.2%}' if pd.notna(x) else pd.NA
 
 
 def round_down(n: Union[int, float], nearest: int = 100) -> int:
@@ -573,6 +574,11 @@ def remove_bad_chars(w: str):
     return re.sub(r'[":<>|.\\\/\*\?]', '', str(w))
 
 
+def from_snake(s: str):
+    """Convert from snake case cols to title"""
+    return s.replace('_', ' ').title()
+
+
 def to_snake(s: str):
     """Convert messy camel case to lower snake case
 
@@ -600,8 +606,20 @@ def to_snake(s: str):
         .replace('__', '_')
 
 
-def lower_cols(df: Union[pd.DataFrame, list]) -> Union[pd.DataFrame, list]:
-    """Convert df columns to snake case and remove bad characters"""
+def lower_cols(df: Union[pd.DataFrame, List[str]], title: bool = False) -> Union[pd.DataFrame, List[str]]:
+    """Convert df columns to snake case and remove bad characters
+
+    Parameters
+    ----------
+    df : Union[pd.DataFrame, list]
+        dataframe or list of strings
+    title : bool, optional
+        convert back to title case, by default False
+
+    Returns
+    -------
+    Union[pd.DataFrame, list]
+    """
     is_list = False
 
     if isinstance(df, pd.DataFrame):
@@ -610,12 +628,28 @@ def lower_cols(df: Union[pd.DataFrame, list]) -> Union[pd.DataFrame, list]:
         cols = df
         is_list = True
 
-    m_cols = {col: to_snake(col) for col in cols}
+    func = to_snake if not title else from_snake
+
+    m_cols = {col: func(col) for col in cols}
 
     if is_list:
         return list(m_cols.values())
 
     return df.pipe(lambda df: df.rename(columns=m_cols))
+
+
+def remove_underscore(df: pd.DataFrame) -> pd.DataFrame:
+    """Remove underscores from df columns
+
+    Parameters
+    ----------
+    df : pd.DataFrame
+
+    Returns
+    -------
+    pd.DataFrame
+    """
+    return df.rename(columns={c: c.replace('_', ' ') for c in df.columns})
 
 
 def parse_datecols(df, format=None):
