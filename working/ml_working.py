@@ -58,6 +58,7 @@ if True:
     from jambot.ml import models as md
     from jambot.tradesys import backtest as bt
     from jambot.tradesys.strategies import ml
+    from jambot.utils import styles as st
 
     plt.rcParams.update({'figure.figsize': (12, 5), 'font.size': 14})
     plt.style.use('dark_background')
@@ -476,7 +477,7 @@ pd.DataFrame(
     columns=['Included'],
     index=df_trans.index) \
     .style \
-    .apply(sk.highlight_val, subset=['Included'], m={True: (ch.colors['lightblue'], 'black')})
+    .apply(st.highlight_val, subset=['Included'], m={True: (ch.colors['lightblue'], 'black')})
 
 # %%
 # POLY
