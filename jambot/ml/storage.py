@@ -51,12 +51,14 @@ class ModelStorageManager(DictRepr):
         # init BlobStorage to mirror local data dir to azure blob storage
         bs = BlobStorage(container=container)
 
-        dt_format = '%Y-%m-%d-%H'
+        dt_format = '%Y-%m-%d %H'
+        dt_format_path = '%Y-%m-%d-%H'
         batch_size_cdls = batch_size
 
         if interval == 15:
             batch_size_cdls = batch_size_cdls * 4
-            dt_format = f'{dt_format}-%M'
+            dt_format_path = f'{dt_format_path}-%M'
+            dt_format = f'{dt_format}:%M'
 
         p_model = cf.p_data / 'models'
         f.check_path(p_model)
@@ -141,10 +143,11 @@ class ModelStorageManager(DictRepr):
                 **sk.weighted_fit(name=None, n=len(df) + cut_rows))
 
             # save - add back cut hrs so always consistent
-            d = index[cut_rows - 1] + delta(hours=cut_hrs)
-            fname = f'{name}_{d:{self.dt_format}}'
+            # d = date model was trained
+            d = index[cut_rows - 1] + delta(hours=cut_hrs) + delta(days=1)
+            fname = f'{name}_{d:{self.dt_format_path}}'
             f.save_pickle(estimator, p=self.p_model, name=fname)
-            log.info(f'saved model: {fname}, train_date: {d}')
+            log.info(f'saved model: {fname}')
 
         # mirror saved models to azure blob
         self.bs.upload_dir(p=self.p_model, mirror=True)
@@ -179,7 +182,7 @@ class ModelStorageManager(DictRepr):
         for i, p in enumerate(p_models):
 
             # get model train date from filepath
-            d = dt.strptime(p.stem.split('_')[-1], self.dt_format)
+            d = dt.strptime(p.stem.split('_')[-1], self.dt_format_path)
 
             # load estimator
             estimator = f.load_pickle(p)
@@ -197,7 +200,9 @@ class ModelStorageManager(DictRepr):
                 x=x.pipe(f.safe_drop, cols=cf.config['drop_cols']),
                 model=estimator)
 
-            log.info(f'Adding preds: {len(df_pred)}, {df_pred.index.min()}, {df_pred.index.max()}')
+            idx = df_pred.index
+            fmt = self.dt_format
+            log.info(f'Adding preds: {len(df_pred):02}, {idx.min():{fmt}}, {idx.max():{fmt}}')
 
             pred_dfs.append(df_pred)
 
