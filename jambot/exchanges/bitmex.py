@@ -439,6 +439,7 @@ class Bitmex(Exchange):
         self.unrealized_pnl = res['unrealisedPnl'] / div
         self.prev_pnl = res['prevRealisedPnl'] / div
         self.balance_set = True
+        self.res = res
 
     def _order_request(self, action: str, order_specs: list) -> Union[List[BitmexOrder], None]:
         """Send order submit/amend/cancel request
