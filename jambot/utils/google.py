@@ -1,5 +1,4 @@
 import logging
-from typing import *
 
 import google.cloud.logging as gcl
 import numpy as np
@@ -151,7 +150,23 @@ class GoogleSheet():
             ws = self.wb.worksheet_by_title(self.name)
             ws.set_dataframe(df=df, start=self.rng_start, nan='')
         else:
-            self.batcher.add_df(df=df, rng=self.rng_start)
+            self.batcher.add_df(df=df, gs=self)
+
+    def as_percent(self, df: pd.DataFrame, cols: tuple) -> pd.DataFrame:
+        """Convert df columns to % strings for google sheets
+
+        Parameters
+        ----------
+        df : pd.DataFrame
+        cols : tuple
+
+        Returns
+        -------
+        pd.DataFrame
+        """
+        return df \
+            .assign(**{c: lambda x, c=c: x[c].apply(lambda x: f.percent(x)) for c in cols}) \
+
 
 
 class SheetBatcher(GoogleSheet):
@@ -159,8 +174,8 @@ class SheetBatcher(GoogleSheet):
         super().__init__(name=name, **kw)
         self.batches = []
 
-    def add_df(self, df: pd.DataFrame, rng: Tuple[int, int]) -> None:
-        self.batches.append([rng, df])
+    def add_df(self, df: pd.DataFrame, gs: GoogleSheet) -> None:
+        self.batches.append([gs, df])
 
     def run_batch(self) -> None:
         """Combine all dfs in self.batches to larger df, submit to google
@@ -170,7 +185,8 @@ class SheetBatcher(GoogleSheet):
         rows_max, cols_max = 0, 0
 
         # loop to get min/max ranges
-        for rng, df in self.batches:
+        for gs, df in self.batches:
+            rng = gs.rng_start
             rows_min = min(rows_min, rng[0] - 1)
             rows_max = max(rows_max, rng[0] + df.shape[0] - 1)
             cols_min = min(cols_min, rng[1] - 1)
@@ -180,13 +196,23 @@ class SheetBatcher(GoogleSheet):
         df_out = pd.DataFrame(np.nan, index=range(rows_min, rows_max), columns=range(cols_min, cols_max))
 
         # loop again to set dfs to df_out
-        for rng, df in self.batches:
+        for gs, df in self.batches:
             # set data in place
-            df_out.loc[rng[0] - 1: df.shape[0] - 1, rng[1] - 1: rng[1] + df.shape[1] - 2] = df.values
+            rng = gs.rng_start
+            row_start = rng[0] - 1
+            row_end = rng[0] + df.shape[0] - 1
+            col_start = rng[1] - 1
+            col_end = rng[1] + df.shape[1] - 1
 
-            # rename columns
-            m_rename = {i + rng[1] - 1: df.columns[i] for i in range(df.shape[1])}
-            df_out.rename(columns=m_rename, inplace=True)
+            df_out.iloc[row_start: row_end, col_start: col_end] = df.values
+
+            # rename columns if first row dfs
+            if row_start == 0:
+                m_rename = {i + rng[1] - 1: df.columns[i] for i in range(df.shape[1])}
+                df_out.rename(columns=m_rename, inplace=True)
+            else:
+                # add col header in df as cells
+                df_out.iloc[row_start - 1: row_end - 1, col_start: col_end] = df.columns.values
 
         # return df_out
         self.rng_start = (rows_min + 1, cols_min + 1)
@@ -223,11 +249,11 @@ class Bitmex(GoogleSheet):
 class TradeHistory(Bitmex):
     rng_start = (1, 15)
 
-    def set_df(self, strat, **kw) -> None:
+    def set_df(self, strat, last: int = 15, **kw) -> None:
         """Set df of trade history to gs"""
         cols = ['ts', 'side', 'dur', 'entry', 'exit', 'pnl', 'pnl_acct', 'profitable']
-        df = strat.df_trades(last=20)[cols].copy() \
-            .assign(**{c: lambda x, c=c: x[c].apply(lambda x: f.percent(x)) for c in ('pnl', 'pnl_acct')}) \
+        df = strat.df_trades(last=last)[cols].copy() \
+            .pipe(self.as_percent, cols=('pnl', 'pnl_acct')) \
             .pipe(f.remove_underscore)
 
         super().set_df(df=df, **kw)
@@ -262,6 +288,16 @@ class OpenPositions(Bitmex):
         data = [{k: pos[v] for k, v in m_conv.items()} for pos in exch._positions.values()]
         df = pd.DataFrame(data=data) \
             .assign(**{c: lambda x, c=c: x[c] / exch.div for c in ('pnl', 'value')}) \
+            .pipe(self.as_percent, cols=('pnl', 'pnl_pct', 'roe_pct')) \
             .pipe(f.remove_underscore)
 
+        super().set_df(df=df, **kw)
+
+
+class UserBalance(Bitmex):
+    rng_start = (11, 2)
+
+    def set_df(self, exch, **kw) -> None:
+        data = dict(upnl=[exch.unrealized_pnl], bal=[exch.total_balance_margin])
+        df = pd.DataFrame(data)
         super().set_df(df=df, **kw)
