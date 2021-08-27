@@ -266,6 +266,7 @@ def write_balance_google(strat: base.StrategyBase, exch: Bitmex) -> None:
 
     gg.OpenPositions(**kw).set_df(exch=exch)
     gg.OpenOrders(**kw).set_df(exch=exch)
+    gg.UserBalance(**kw).set_df(exch=exch)
     gg.TradeHistory(**kw).set_df(strat=strat)
 
     batcher.run_batch()
@@ -356,16 +357,7 @@ def iter_exchanges(refresh: bool = True) -> Bitmex:
         yield Bitmex(user=user, test=test, refresh=refresh, pct_balance=m['xbt'])
 
 
-def run_strat_live(interval: int = 15) -> None:
-    """Run strategy on given interval and adjust orders
-    - run at 15 seconds passed the interval (bitmex OHLC REST delay)
-
-    Parameters
-    ----------
-    interval : int, default 15
-    """
-    symbol = SYMBOL
-    name = 'lgbm'
+def run_strat(interval: int = 15, symbol: str = SYMBOL, name: str = 'lgbm') -> ml.Strategy:
     df_pred = get_df_pred(symbol, interval, name)
 
     # run strat in "live" mode to get expected state
@@ -377,6 +369,21 @@ def run_strat_live(interval: int = 15) -> None:
         startdate=df_pred.index[0],
         strat=strat,
         df=df_pred[cols]).run()
+
+    return strat
+
+
+def run_strat_live(interval: int = 15) -> None:
+    """Run strategy on given interval and adjust orders
+    - run at 15 seconds passed the interval (bitmex OHLC REST delay)
+
+    Parameters
+    ----------
+    interval : int, default 15
+    """
+    symbol = SYMBOL
+    name = 'lgbm'
+    strat = run_strat(interval=interval, symbol=symbol, name=name)
 
     m_exch = {}
     for exch in iter_exchanges():
