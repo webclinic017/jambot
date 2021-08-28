@@ -357,8 +357,8 @@ def iter_exchanges(refresh: bool = True) -> Bitmex:
         yield Bitmex(user=user, test=test, refresh=refresh, pct_balance=m['xbt'])
 
 
-def run_strat(interval: int = 15, symbol: str = SYMBOL, name: str = 'lgbm') -> ml.Strategy:
-    df_pred = get_df_pred(symbol, interval, name)
+def run_strat(interval: int = 15, symbol: str = SYMBOL, name: str = 'lgbm', **kw) -> ml.Strategy:
+    df_pred = get_df_pred(symbol, interval, name, **kw)
 
     # run strat in "live" mode to get expected state
     strat = ml.make_strat(live=True)

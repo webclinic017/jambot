@@ -117,7 +117,6 @@ class ModelStorageManager(DictRepr):
         estimator : BaseEstimator
             estimator with fit/predict methods
         """
-        log.info('running fit_save')
         cfg = md.model_cfg(name)
 
         # max date where hour is greater or equal to 18:00

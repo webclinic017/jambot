@@ -136,7 +136,7 @@ if not regression:
 
 # %% - FEATURES, MODELMANAGER
 if True:
-    n_splits = 5
+    n_splits = 10
     train_size = 0.9
     # max_train_size = int(df.shape[0] * train_size / n_splits)
     max_train_size = None
@@ -270,10 +270,6 @@ if run_ada:
 # %% - RUN STRAT
 
 name = 'lgbm'
-# name = 'rnd_forest'
-# fit_params = sk.weighted_fit(name, n=mm.df_train.shape[0])
-fit_params = sk.weighted_fit(name, weights=sg.WeightedPercent(8).get_weight(x_train))
-# fit_params = None
 
 # import talib as tb
 # df['psar'] = tb.SAR(df.high, df.low, acceleration=0.02, maximum=0.2)
@@ -298,6 +294,10 @@ if True:
     # df_pred = df_pred_iter.copy()
 
 else:
+    # fit_params = sk.weighted_fit(name, n=mm.df_train.shape[0])
+    fit_params = sk.weighted_fit(name, weights=sg.WeightedPercent(8).get_weight(x_train))
+    # fit_params = None
+
     df_pred = mm \
         .add_predict(
             df=df,
