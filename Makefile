@@ -44,8 +44,8 @@ creds:  ## re-encrypt credentials
 	$(utils) --encrypt_creds
 
 .PHONY : codecount
-codecount  ## show lines of code
-    pygount --suffix=py --format=summary jambot
+codecount:  ## show lines of code
+    @pygount --suffix=py --format=summary jambot
 
 help: ## show this help message
 	@## https://gist.github.com/prwhite/8168133#gistcomment-1716694

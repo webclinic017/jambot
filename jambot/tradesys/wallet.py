@@ -122,7 +122,7 @@ class Wallet(Observer):
     def total_balance_margin(self) -> float:
         if self._total_balance_margin is None:
             # backtesting
-            return self.balance + f.get_pnl_xbt(self.qty, self.price, self.c.close)
+            return max(self.balance + f.get_pnl_xbt(self.qty, self.price, self.c.close), self._min_balance)
         else:
             # live trading
             return self._total_balance_margin

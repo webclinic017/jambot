@@ -127,7 +127,9 @@ signals = [
 ]
 
 # drop last rows which we cant set proper target
-df = sm.add_signals(df=df, signals=signals)
+# don't need to drop last n_periods rows if positive we aren't fitting on them
+df = sm.add_signals(df=df, signals=signals) \
+    # .iloc[:-1 * n_periods, :]
 
 if not regression:
     sk.show_prop(df=df)
@@ -153,11 +155,6 @@ if True:
             final=final_scorer
         )
 
-    # NOTE modified fit in lgbm.sklearn to accept callable... old?
-    # fit_params = dict(
-    #     lgbm__sample_weight=lambda x: np.linspace(0.5, 1, x.shape[0]))
-    fit_params = None
-
     cv_args = dict(cv=cv, n_jobs=1, return_train_score=True, scoring=scoring)
     mm = md.make_model_manager(name=name, df=df) \
         .init_cv(scoring=scoring, cv_args=cv_args, scorer=scorer)
@@ -167,6 +164,7 @@ if True:
         split_date=dt(2021, 1, 1))
 
 # %% - CROSS VALIDATION
+#  --%%prun -s cumulative -l 40
 LGBM = LGBMRegressor if regression else LGBMClassifier
 
 models = dict(
@@ -179,7 +177,7 @@ models = dict(
     # qda=QuadraticDiscriminantAnalysis(),
     # lgbm=LGBM,
     lgbm=LGBM(
-        num_leaves=50, n_estimators=50, max_depth=10, boosting_type='dart', learning_rate=0.1)
+        num_leaves=50, n_estimators=50, max_depth=30, boosting_type='dart', learning_rate=0.1)
     # lgbm=LGBM(num_leaves=100, n_estimators=25, max_depth=10, boosting_type='gbdt')
 )
 
@@ -187,7 +185,8 @@ models = dict(
 #     (1, ('pca', PCA(n_components=20, random_state=0)))]
 steps = None
 
-mm.cross_val(models, steps=steps)
+fit_params = dict(fit_params=sk.weighted_fit(name, weights=sg.WeightedPercent(8).get_weight(x_train)))
+mm.cross_val(models, steps=steps, extra_cv_args=fit_params)
 scorer.show_summary()
 
 # %% - MAXMIN PREDS
@@ -273,7 +272,8 @@ if run_ada:
 name = 'lgbm'
 # name = 'rnd_forest'
 # fit_params = sk.weighted_fit(name, n=mm.df_train.shape[0])
-fit_params = None
+fit_params = sk.weighted_fit(name, weights=sg.WeightedPercent(8).get_weight(x_train))
+# fit_params = None
 
 # import talib as tb
 # df['psar'] = tb.SAR(df.high, df.low, acceleration=0.02, maximum=0.2)
@@ -282,7 +282,7 @@ fit_params = None
 
 # TODO test iter_predict maxhigh/minlow
 
-if False:
+if True:
     # retrain every x hours (24 ish) and predict for the test set
     df_pred = mm \
         .add_predict_iter(
