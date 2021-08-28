@@ -887,7 +887,7 @@ class WeightedPercent(TargetMaxMin):
 
         self.signals |= dict(
             weight=lambda x: minmax_scale(
-                x[drop_cols].abs().max(axis=1),
+                x[drop_cols].abs().max(axis=1) * np.linspace(0.5, 1, len(x)),
                 feature_range=(0, 1)))
         # pd.qcut(
         #     x=x[drop_cols].abs().max(axis=1),
