@@ -13,6 +13,7 @@ from jambot import sklearn_utils as sk
 from jambot.common import DictRepr
 from jambot.database import db
 from jambot.ml import models as md
+from jambot.signals import WeightedPercent
 from jambot.utils.storage import BlobStorage
 
 log = getlog(__name__)
@@ -97,7 +98,7 @@ class ModelStorageManager(DictRepr):
 
         self.fit_save(
             df=db.get_df(symbol=SYMBOL, startdate=self.d_lower, interval=interval)
-            .pipe(md.add_signals, name=name, drop_ohlc=True)
+            .pipe(md.add_signals, name=name, drop_ohlc=False)
             .iloc[:-1 * n_periods, :],
             name=name,
             estimator=estimator)
@@ -123,28 +124,40 @@ class ModelStorageManager(DictRepr):
         # set back @cut hrs due to losing @n_periods for training preds
         # model is trained AT 1800, but only UP TO 1500
         cut_hrs = {1: 10, 15: 3}.get(self.interval)
+        reset_hour_offset = self.reset_hour - cut_hrs  # 15
 
         d_upper = f.date_to_dt(
-            df.query('timestamp.dt.hour >= @self.reset_hour').index.max().date()) \
-            + delta(hours=self.reset_hour - cut_hrs)
+            df.query('timestamp.dt.hour >= @reset_hour_offset').index.max().date()) \
+            + delta(hours=reset_hour_offset)
+
+        # print('d_upper: ', d_upper)
+
+        # get weights for fit params
+        weights = WeightedPercent(cfg['n_periods_weighted']).get_weight(df).loc[:d_upper]
 
         index = df.loc[:d_upper].index
-        df = df.loc[:d_upper].to_numpy(np.float32)
+        df = df \
+            .pipe(f.safe_drop, cols=cf.config['drop_cols']) \
+            .loc[:d_upper] \
+            .to_numpy(np.float32)
 
         # trim df to older dates by cutting off progressively larger slices
         for i in range(self.n_models):
 
             cut_rows = -i * self.batch_size_cdls
+            upper = cut_rows or None
 
             # fit - using weighted currently
             estimator.fit(
-                df[:cut_rows or None, :-1],
-                df[:cut_rows or None, -1],
-                **sk.weighted_fit(name=None, n=len(df) + cut_rows))
+                df[:upper, :-1],
+                df[:upper, -1],
+                **sk.weighted_fit(name=None, weights=weights.iloc[:upper])
+                # **sk.weighted_fit(name=None, n=len(df) + cut_rows)
+            )
 
             # save - add back cut hrs so always consistent
             # d = date model was trained
-            d = index[cut_rows - 1] + delta(hours=cut_hrs) + delta(days=1)
+            d = index[cut_rows - 1] + delta(hours=cut_hrs)  # + delta(days=1)
             fname = f'{name}_{d:{self.dt_format_path}}'
             f.save_pickle(estimator, p=self.p_model, name=fname)
             log.info(f'saved model: {fname}')

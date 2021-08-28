@@ -43,7 +43,8 @@ def model_cfg(name: str) -> dict:
                 boosting_type='dart',
                 random_state=0),
             model_cls=LGBMClassifier,
-            n_smooth_proba=3
+            n_smooth_proba=3,
+            n_periods_weighted=8
         ),
         ridge=dict(
             target=['target_max', 'target_min'],

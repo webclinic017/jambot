@@ -6,7 +6,7 @@ from collections import defaultdict as dd
 
 import numpy as np
 import pandas as pd
-from sklearn.preprocessing import MinMaxScaler
+from sklearn.preprocessing import MinMaxScaler, minmax_scale
 from ta.momentum import (AwesomeOscillatorIndicator, KAMAIndicator,  # noqa
                          PercentageVolumeOscillator, ROCIndicator,
                          RSIIndicator, StochasticOscillator, StochRSIIndicator,
@@ -106,18 +106,18 @@ class SignalManager():
             signal_group.slope = self.slope  # sketch too
             signal_group.sum = self.sum
             # df = df.pipe(signal_group.add_all_signals, **kw)
-            final_signals |= signal_group.assign_signals(df=df, **kw)
+            final_signals |= signal_group.make_signals(df=df, **kw)
             signal_group.df = None
             drop_cols += signal_group.drop_cols
 
         # self.df = df
         # remove first rows that can't be set with 200ema accurately
-        dtypes = {np.float32: np.float16}
+        # dtypes = {np.float32: np.float16}
 
         # .astype(np.float64) \
+        # .pipe(f.reduce_dtypes, dtypes=dtypes) \
         return df.assign(**final_signals) \
             .pipe(f.safe_drop, cols=drop_cols) \
-            .pipe(f.reduce_dtypes, dtypes=dtypes) \
             .iloc[self.cut_periods:, :] \
             .fillna(0)
 
@@ -146,7 +146,7 @@ class SignalManager():
                     param_single = {feature_name: {param: val}}  # eg {'rsi': {'window': 12}}
 
                     yield df.pipe(
-                        signal_group.assign_signals,
+                        signal_group.make_signals,
                         params=param_single,
                         force_overwrite=True), f'{feature_name}_{param}_{val}'
 
@@ -183,6 +183,7 @@ class SignalGroup():
         drop_cols, no_slope_cols, no_sum_cols, normal_slope_cols = [], [], [], []
         signals = self.init_signals(signals)
         slope = 0
+        sum = 0
         class_name = self.__class__.__name__.lower()
         f.set_self(vars())
 
@@ -226,15 +227,15 @@ class SignalGroup():
         feature_name = feature_name.replace(f'{self.prefix}_', '')
         return feature_name in self.signals
 
-    def add_all_signals(self, df, **kw):
+    def add_all_signals(self, df: pd.DataFrame, **kw) -> pd.DataFrame:
         """Convenience base wrapper to work with ta/non-ta signals
         NOTE not used with SignalManager now, but could be used for individual SignalGroup
         """
         return df \
-            .pipe(self.assign_signals, **kw) \
+            .assign(**self.make_signals(df=df)) \
             .pipe(f.safe_drop, cols=self.drop_cols)
 
-    def assign_signals(
+    def make_signals(
             self,
             df: pd.DataFrame,
             params: dict = None,
@@ -840,13 +841,13 @@ class TargetMaxMin(TargetClass):
     Create two outputs - min_low, max_high
     """
 
-    def __init__(self, n_periods, **kw):
+    def __init__(self, n_periods: int, **kw):
 
         items = [('max', 'high'), ('min', 'low')]
         kw['signals'] = {f'target_{fn}': lambda x, fn=fn, c=c: (
             x[c]
-            .shift(-1 * n_periods)
-            .rolling(n_periods).__getattribute__(fn)() - x.close) / x.close for fn, c in items}
+            .rolling(n_periods).__getattribute__(fn)()
+            .shift(-n_periods) - x.close) / x.close for fn, c in items}
 
         super().__init__(**kw)
 
@@ -855,11 +856,10 @@ class TargetMaxMin(TargetClass):
 
 class TargetUpsideDownside(TargetMaxMin):
     """
-    Create two outputs - min_low, max_high
-    - NOTE last n_periods of target will be -1, not NaN > need to make sure to drop
+    - NOTE last n_periods of target will be -1, NOT NaN > need to make sure to drop
     """
 
-    def __init__(self, n_periods, **kw):
+    def __init__(self, n_periods: int, **kw):
         super().__init__(n_periods=n_periods, **kw)
 
         self.signals |= dict(
@@ -869,9 +869,52 @@ class TargetUpsideDownside(TargetMaxMin):
         drop_cols = ['target_max', 'target_min']
 
         self.signals = self.init_signals(self.signals)
-        # print(self.signals)
 
         f.set_self(vars())
+
+
+class WeightedPercent(TargetMaxMin):
+    """
+    Create array of normalized weights based on absolute movement up/down from current close in next n periods
+    - eg weight periods where lots of movement happens higher = more consequential
+    - Also optional weight based on age eg np.linspace 0.5 > 1.0
+    """
+
+    def __init__(self, n_periods: int, **kw):
+        super().__init__(n_periods=n_periods, **kw)
+
+        drop_cols = ['target_max', 'target_min']
+
+        self.signals |= dict(
+            weight=lambda x: minmax_scale(
+                x[drop_cols].abs().max(axis=1),
+                feature_range=(0, 1)))
+        # pd.qcut(
+        #     x=x[drop_cols].abs().max(axis=1),
+        #     q=100,
+        #     labels=False,
+        #     duplicates='drop'),  # * np.linspace(0.5, 1, len(x))
+
+        self.signals = self.init_signals(self.signals)
+        f.set_self(vars())
+
+    def get_weight(self, df: pd.DataFrame) -> pd.Series:
+        """return single array of weighted values to pass as fit_params
+
+        Parameters
+        ----------
+        df : pd.DataFrame
+            df with ['high', 'low', 'close']
+
+        Returns
+        -------
+        pd.Series
+            column weighted by abs movement up/down in next n_periods
+        """
+        cols = ['high', 'low', 'close']
+        return df[cols] \
+            .pipe(self.add_all_signals) \
+            .assign(weight=lambda x: x.weight.fillna(x.weight.mean()).astype(np.float32))['weight']
 
 
 def add_emas(df, emas: list = None):

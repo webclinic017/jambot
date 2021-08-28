@@ -21,6 +21,7 @@ from sklearn.pipeline import Pipeline
 from jambot import config as cf
 from jambot import functions as f
 from jambot import signals as sg
+from jambot.ml import models as md
 
 # not needed when running on azure
 try:
@@ -74,7 +75,7 @@ class ModelManager(object):
         scorer : [type], optional
             jambot.tradesys.strategies.StratScorer, by default None
         """
-        f.f.set_self(vars())
+        f.set_self(vars())
         return self
 
     def make_column_transformer(self, features: dict, encoders: dict, **kw) -> ColumnTransformer:
@@ -200,7 +201,13 @@ class ModelManager(object):
 
         return pipe
 
-    def cross_val(self, models: dict, show: bool = True, steps: list = None, df_scores=None):
+    def cross_val(
+            self,
+            models: dict,
+            show: bool = True,
+            steps: list = None,
+            df_scores: pd.DataFrame = None,
+            extra_cv_args: dict = None):
         """Perform cross validation on multiple classifiers
 
         Parameters
@@ -234,6 +241,9 @@ class ModelManager(object):
             self.models[name] = model
 
             pipe = self.make_pipe(name=name, model=model, steps=steps)
+
+            if extra_cv_args:
+                self.cv_args |= extra_cv_args
 
             scores = cross_validate(
                 pipe, self.x_train, self.y_train, error_score='raise', **self.cv_args)  # .ravel()
@@ -332,6 +342,9 @@ class ModelManager(object):
         nrows = df.shape[0]
         num_batches = ((nrows - min_size) // batch_size) + 1
 
+        cfg = md.model_cfg(name)
+        weights = sg.WeightedPercent(cfg['n_periods_weighted']).get_weight(df)
+
         if pipe is None:
             pipe = self.make_pipe(name=name, model=model)
 
@@ -354,7 +367,8 @@ class ModelManager(object):
             pipe.fit(
                 x_train,
                 y_train,
-                **weighted_fit(name='lgbm', n=x_train.shape[0])
+                **weighted_fit(name=name, weights=weights.loc[x_train.index])
+                # **weighted_fit(name='lgbm', n=x_train.shape[0])
             )
 
             # add preds to model
@@ -1016,10 +1030,29 @@ def as_multi_out(models: dict) -> Dict[str, MultiOutputRegressor]:
     return {k: MultiOutputRegressor(model) for k, model in models.items()}
 
 
-def weighted_fit(name: str = None, n: int = None) -> dict:
-    """Create dict of weighted samples for fit params"""
+def weighted_fit(name: str = None, n: int = None, weights: np.ndarray = None) -> Dict[str, np.ndarray]:
+    """Create dict of weighted samples for fit params
+
+    Parameters
+    ----------
+    name : str, optional
+        model name to prepend to dict key, by default None
+    n : int, optional
+        length of array, by default None
+    weights : np.ndarray, optional
+        allow passing in other weights to just use this for dict formatting, by default None
+
+    Returns
+    -------
+    Dict[str, np.ndarray]
+        {lgbm__sample_weight: [0.5, ..., 1.0]}
+    """
     name = f'{name}__' if not name is None else ''
-    return {f'{name}sample_weight': np.linspace(0.5, 1, n)}
+
+    if weights is None:
+        weights = np.linspace(0.5, 1, n)
+
+    return {f'{name}sample_weight': weights}
 
 
 def plot_pred_dist(df: pd.DataFrame, cols: list = None) -> None:
