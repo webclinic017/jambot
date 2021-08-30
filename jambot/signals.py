@@ -110,14 +110,14 @@ class SignalManager():
             signal_group.df = None
             drop_cols += signal_group.drop_cols
 
-        # self.df = df
-        # remove first rows that can't be set with 200ema accurately
-        # dtypes = {np.float32: np.float16}
+        # saves ~70mb peak
+        dtypes = {np.float32: np.float16}
 
         # .astype(np.float64) \
-        # .pipe(f.reduce_dtypes, dtypes=dtypes) \
+        # remove first rows that can't be set with 200ema accurately
         return df.assign(**final_signals) \
             .pipe(f.safe_drop, cols=drop_cols) \
+            .pipe(f.reduce_dtypes, dtypes=dtypes) \
             .iloc[self.cut_periods:, :] \
             .fillna(0)
 
