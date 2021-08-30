@@ -856,13 +856,16 @@ class Bitmex(Exchange):
         actual_orders = self.get_orders(symbol=symbol, new_only=True, bot_only=True, as_bitmex=True, refresh=True)
         all_orders = self.validate_orders(expected_orders, actual_orders, show=True)
 
+        # perform action reqd for orders except valid/manual
         for action, orders in all_orders.items():
-            if orders and not action == 'valid':
+            if orders and not action in ('valid', 'manual'):
                 getattr(self, f'{action}_orders')(orders)
 
         # temp send order submit details to discord
         m = dict(user=self.user)
-        m_ords = {k: [o.short_stats for o in orders] for k, orders in all_orders.items() if orders}
+        m_ords = {k: [o.short_stats for o in orders]
+                  for k, orders in all_orders.items() if orders and not k == 'manual'}
+
         if m_ords:
             m['current_qty'] = f'{self.current_qty(symbol=symbol):+,}'
             m |= m_ords
@@ -895,12 +898,13 @@ class Bitmex(Exchange):
             - valid: (orders matched and have correct price/qty - no action reqd)
             - submit: (expected_order missing)
             - cancel: (actual_order not found in expected_orders)
+            - manual: (manually placed order, don't touch)
         """
 
         # convert to dicts for easier matching
         expected_orders = ords.list_to_dict(expected_orders)
         actual_orders = ords.list_to_dict(actual_orders)
-        all_orders = dd(list, {k: [] for k in ('valid', 'cancel', 'amend', 'submit')})
+        all_orders = dd(list, {k: [] for k in ('valid', 'cancel', 'amend', 'submit', 'manual')})
 
         for k, o in actual_orders.items():
             if k in expected_orders:
@@ -913,7 +917,10 @@ class Bitmex(Exchange):
                 else:
                     all_orders['valid'].append(o)
             else:
-                all_orders['cancel'].append(o)
+                if o.is_manual:
+                    all_orders['manual'].append(o)
+                else:
+                    all_orders['cancel'].append(o)
 
         all_orders['submit'] = [o for k, o in expected_orders.items() if not k in actual_orders]
 

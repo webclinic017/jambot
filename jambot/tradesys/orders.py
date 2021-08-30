@@ -108,6 +108,11 @@ class BaseOrder(object, metaclass=ABCMeta):
         return self.side == TradeSide.SHORT
 
     @property
+    def is_manual(self) -> bool:
+        """If order is from a manually placed order on Bitmex"""
+        return False
+
+    @property
     def trigger_switch(self):
         """Switch to determine direction to sort for checking order price"""
         if self.is_limit:
@@ -367,6 +372,11 @@ class BitmexOrder(BaseOrder, DictRepr, Serializable):
 
         # convert back to bitmex keys
         return {self.m_conv.get(k, k): v for k, v in m.items() if not v is None}
+
+    @property
+    def is_manual(self) -> bool:
+        """If order is from a manually placed order on Bitmex"""
+        return self.raw_spec('manual')
 
     @property
     def order_spec_amend(self) -> dict:
