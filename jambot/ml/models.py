@@ -90,7 +90,7 @@ def add_signals(df: pd.DataFrame, name: str, drop_ohlc: bool = False) -> pd.Data
         .pipe(f.safe_drop, cols=cf.config['drop_cols'], do=drop_ohlc)
 
 
-def make_model_manager(name: str, df: pd.DataFrame) -> sk.ModelManager:
+def make_model_manager(name: str, df: pd.DataFrame) -> 'sk.ModelManager':
     """Instantiate ModelManager
 
     Parameters

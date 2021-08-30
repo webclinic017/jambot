@@ -129,8 +129,6 @@ class ModelStorageManager(DictRepr):
             df.query('timestamp.dt.hour >= @reset_hour_offset').index.max().date()) \
             + delta(hours=reset_hour_offset)
 
-        # print('d_upper: ', d_upper)
-
         # get weights for fit params
         weights = WeightedPercent(cfg['n_periods_weighted']).get_weight(df).loc[:d_upper]
 
@@ -226,4 +224,4 @@ class ModelStorageManager(DictRepr):
 
 
 if __name__ == '__main__':
-    ModelStorageManager().fit_save_models()
+    ModelStorageManager(test=True).fit_save_models()

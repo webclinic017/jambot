@@ -136,7 +136,7 @@ if not regression:
 
 # %% - FEATURES, MODELMANAGER
 if True:
-    n_splits = 10
+    n_splits = 5
     train_size = 0.9
     # max_train_size = int(df.shape[0] * train_size / n_splits)
     max_train_size = None
@@ -253,20 +253,6 @@ if best_est:
 # %% - CLASSIFICATION REPORT
 # mm.class_rep('lgbm', best_est=best_est)
 
-# %% GRID - AdaBoostClassifier
-run_ada = False
-if run_ada:
-    params = dict(
-        algorithm=['SAMME', 'SAMME.R'],
-        n_estimators=[50, 100, 200, 400],
-        learning_rate=[0.0125, 0.25, 0.5, 1, 2])
-
-    grid = mm.search(
-        name='ada',
-        params=params,
-        search_type='random',
-        refit='acc')
-
 # %% - RUN STRAT
 
 name = 'lgbm'
@@ -278,7 +264,7 @@ name = 'lgbm'
 
 # TODO test iter_predict maxhigh/minlow
 
-if True:
+if False:
     # retrain every x hours (24 ish) and predict for the test set
     df_pred = mm \
         .add_predict_iter(
