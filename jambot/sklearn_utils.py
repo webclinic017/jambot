@@ -1099,3 +1099,22 @@ def plot_cols(df: pd.DataFrame, expr: str = '.') -> None:
 
     for col, ax in zip(cols, axs):
         df[col].plot(title=col, ax=ax)
+
+
+def is_fitted(estimator: BaseEstimator) -> bool:
+    """Check if model is fitted yet
+
+    Parameters
+    ----------
+    estimator : BaseEstimator
+
+    Returns
+    -------
+    bool
+        if fitted
+    """
+    try:
+        check_is_fitted(estimator)
+        return True
+    except NotFittedError:
+        return False
