@@ -1,6 +1,3 @@
-import logging
-
-import google.cloud.logging as gcl
 import numpy as np
 import pandas as pd
 import pygsheets
@@ -12,47 +9,21 @@ from pygsheets.client import Client
 from jambot import functions as f
 
 
-class GoogleFormatter(logging.Formatter):
-    """Custom formatter for google logging messages
-    - Not used currently
-    """
-
-    def format(self, record):
-        logmsg = super().format(record)
-        return dict(
-            msg=logmsg,
-            args=record.args)
-
-
 def get_creds(scopes: list = None) -> Credentials:
-    from jambot.utils.secrets import SecretsManager
-    m = SecretsManager('google_creds.json').load
-    return service_account.Credentials.from_service_account_info(m, scopes=scopes)
-
-
-def get_google_logging_client() -> gcl.Client:
-    """Create google logging client
-
-    Returns
-    -------
-    google.logging.cloud.Client
-        logging client to add handler to Python logger
-    """
-    return gcl.Client(credentials=get_creds())
-
-
-def add_google_logging_handler(log: logging.Logger) -> None:
-    """Add gcl handler to Python logger
+    """Create google oauth2 credentials
 
     Parameters
     ----------
-    log : logging.Logger
+    scopes : list, optional
+        default None
+
+    Returns
+    -------
+    Credentials
     """
-    gcl_client = get_google_logging_client()
-    handler = gcl_client.get_default_handler()
-    handler.setLevel(logging.INFO)
-    # handler.setFormatter(GoogleFormatter())
-    log.addHandler(handler)
+    from jambot.utils.secrets import SecretsManager
+    m = SecretsManager('google_creds.json').load
+    return service_account.Credentials.from_service_account_info(m, scopes=scopes)
 
 
 def get_google_client() -> Client:
@@ -251,7 +222,7 @@ class TradeHistory(Bitmex):
 
     def set_df(self, strat, last: int = 15, **kw) -> None:
         """Set df of trade history to gs"""
-        cols = ['ts', 'side', 'dur', 'entry', 'exit', 'pnl', 'pnl_acct', 'profitable']
+        cols = ['ts', 'side', 'dur', 'entry', 'exit', 'pnl', 'pnl_acct', 'profitable', 'status']
         df = strat.df_trades(last=last)[cols].copy() \
             .pipe(self.as_percent, cols=('pnl', 'pnl_acct')) \
             .pipe(f.remove_underscore)
@@ -286,9 +257,9 @@ class OpenPositions(Bitmex):
             value='maintMargin')
 
         data = [{k: pos[v] for k, v in m_conv.items()} for pos in exch._positions.values()]
-        df = pd.DataFrame(data=data) \
+        df = pd.DataFrame(data=data, columns=list(m_conv.keys())) \
             .assign(**{c: lambda x, c=c: x[c] / exch.div for c in ('pnl', 'value')}) \
-            .pipe(self.as_percent, cols=('pnl', 'pnl_pct', 'roe_pct')) \
+            .pipe(self.as_percent, cols=('pnl_pct', 'roe_pct')) \
             .pipe(f.remove_underscore)
 
         super().set_df(df=df, **kw)
