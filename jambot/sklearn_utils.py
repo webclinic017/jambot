@@ -896,6 +896,29 @@ def convert_proba_signal(df: pd.DataFrame, col: str = 'rolling_proba') -> pd.Dat
             signal=np.sign(np.diff(np.sign(s - 0.5), prepend=np.array([0]))))
 
 
+def weighted_score(
+        y_true: pd.Series,
+        y_pred: np.ndarray,
+        weights: pd.Series) -> float:
+    """Match weights with y_true series to get a weighted accuracy
+
+    Parameters
+    ----------
+    y_true : pd.Series
+    y_pred : np.ndarray
+    weights : pd.Series
+        from sg.WeightedScorer
+
+    Returns
+    -------
+    float
+    """
+
+    # slice full weights
+    weights = weights.loc[y_true.index]
+    return np.mean(np.where(y_true.astype(int) == y_pred.astype(int), 1, -1) * weights) * 100
+
+
 def smape(y_true, y_pred, h=1, **kw):
     """Calculate symmetric mean absolute percentage error
 
