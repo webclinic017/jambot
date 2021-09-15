@@ -1,4 +1,15 @@
 #!/bin/bash
+DUMMY := dummy
+DUMMY := dummy
+DUMMY := dummy
+DUMMY := dummy
+DUMMY := dummy
+DUMMY := dummy
+DUMMY := dummy
+DUMMY := dummy
+DUMMY := dummy
+DUMMY := dummy
+DUMMY := dummy
 
 SHELL := /bin/bash
 utils := @poetry run python -m scripts.utils
@@ -36,7 +47,7 @@ reqs:  ## make requirements.txt for function app
 	@poetry export -f requirements.txt --output requirements.txt --without-hashes
 
 .PHONY : test
-test: ## run tests
+test:  ## run tests
 	@poetry run pytest
 
 .PHONY : creds
@@ -45,7 +56,7 @@ creds:  ## re-encrypt credentials
 
 .PHONY : codecount
 codecount:  ## show lines of code
-    @pygount --suffix=py --format=summary jambot
+	@pygount --suffix=py --format=summary jambot
 
 help: ## show this help message
 	@## https://gist.github.com/prwhite/8168133#gistcomment-1716694
