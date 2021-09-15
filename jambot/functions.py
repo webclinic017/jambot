@@ -15,13 +15,28 @@ from typing import Any, Callable, List, Union
 import pandas as pd
 from dateutil.parser import parse
 
-from jambot import AZURE_WEB
+from jambot.config import AZURE_WEB
 
 
-def check_path(p: Path) -> None:
-    """Create bath if doesn't exist"""
-    if not p.exists():
-        p.mkdir(parents=True)
+def check_path(p: Path) -> Path:
+    """Create path if doesn't exist"""
+    if isinstance(p, str):
+        p = Path(p)
+
+    p_create = p if p.is_dir() or not '.' in p.name else p.parent
+
+    # if file, create parent dir, else create dir
+    if not p_create.exists():
+        p_create.mkdir(parents=True)
+
+    return p
+
+
+def clean_dir(p: Path) -> None:
+    """Clean all saved models in models dir"""
+    if p.is_dir():
+        for _p in p.glob('*'):
+            _p.unlink()
 
 
 def left_merge(df: pd.DataFrame, df_right: pd.DataFrame) -> pd.DataFrame:
@@ -559,7 +574,7 @@ def round_minutes(dt, resolution):
 def save_pickle(obj: object, p: Path, name: str):
     """Save object to pickle file"""
     p = p / f'{name}.pkl'
-    with open(p, 'wb') as file:
+    with open(check_path(p), 'wb') as file:
         pickle.dump(obj, file)
 
 
