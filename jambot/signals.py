@@ -3,6 +3,7 @@ import inspect
 import operator as opr
 import sys
 from collections import defaultdict as dd
+from typing import *
 
 import numpy as np
 import pandas as pd
@@ -20,11 +21,12 @@ from ta.volume import MFIIndicator  # noqa
 from ta.volume import ChaikinMoneyFlowIndicator
 
 from jambot import functions as f
+from jambot import getlog
 from jambot import sklearn_utils as sk
 
-from .__init__ import *
-
 log = getlog(__name__)
+
+# TODO distance to bolinger bands!
 
 
 class SignalManager():
@@ -113,8 +115,8 @@ class SignalManager():
         # saves ~70mb peak
         dtypes = {np.float32: np.float16}
 
-        # .astype(np.float64) \
         # remove first rows that can't be set with 200ema accurately
+        # NOTE using reduce_dtypes does affect the model's random seed and results
         return df.assign(**final_signals) \
             .pipe(f.safe_drop, cols=drop_cols) \
             .pipe(f.reduce_dtypes, dtypes=dtypes) \
@@ -806,7 +808,7 @@ class TargetMeanEMA(TargetClass):
         return df \
             .pipe(add_ema, p=self.p_ema) \
             .assign(
-                pct_future=lambda x: (x[predict_col].shift(-1 * self.n_periods) - x[predict_col]) / x[predict_col],
+                pct_future=lambda x: (x[predict_col].shift(-self.n_periods) - x[predict_col]) / x[predict_col],
                 target=lambda x: np.where(x.pct_future > pct_min, 1, np.where(x.pct_future < pct_min * -1, -1, 0))) \
             .drop(columns=['pct_future'])
 
@@ -817,19 +819,17 @@ class TargetMean(TargetClass):
     - maybe - bin into % ranges?
     """
 
-    def __init__(self, n_periods, regression=False, pct_min=0, **kw):
+    def __init__(self, n_periods: int, regression: bool = False, pct_min: float = 0, **kw):
 
         if not regression:
             kw['signals'] = dict(
-                pct_future=lambda x: (x.close.shift(-1 * n_periods).rolling(n_periods).mean() - x.close),
-                target=lambda x: np.where(x.pct_future > pct_min, 1, -1).astype(np.int8),
-            )
-            drop_cols = ['pct_future']
+                target=lambda x: np.sign(
+                    x.close.rolling(n_periods).mean().shift(-n_periods) - x.close))
 
         else:
             # just use % diff for regression instead of -1/1 classification
             kw['signals'] = dict(
-                target=lambda x: (x.close.shift(-1 * n_periods).rolling(n_periods).mean() - x.close) / x.close)
+                target=lambda x: (x.close.rolling(n_periods).mean().shift(-n_periods) - x.close) / x.close)
 
         super().__init__(**kw)
 
@@ -873,29 +873,13 @@ class TargetUpsideDownside(TargetMaxMin):
         f.set_self(vars())
 
 
-class WeightedPercent(TargetMaxMin):
-    """
-    Create array of normalized weights based on absolute movement up/down from current close in next n periods
-    - eg weight periods where lots of movement happens higher = more consequential
-    - Also optional weight based on age eg np.linspace 0.5 > 1.0
-    """
+class WeightedPercent(SignalGroup):
+    def __init__(self, weight_linear: bool = True, **kw):
+        super().__init__(**kw)
 
-    def __init__(self, n_periods: int, **kw):
-        super().__init__(n_periods=n_periods, **kw)
+        # weight history linearly if live training
+        self.linear = (lambda x: np.linspace(0.5, 1, len(x))) if weight_linear else lambda x: 1.0
 
-        drop_cols = ['target_max', 'target_min']
-
-        self.signals |= dict(
-            weight=lambda x: minmax_scale(
-                x[drop_cols].abs().max(axis=1) * np.linspace(0.5, 1, len(x)),
-                feature_range=(0, 1)))
-        # pd.qcut(
-        #     x=x[drop_cols].abs().max(axis=1),
-        #     q=100,
-        #     labels=False,
-        #     duplicates='drop'),  # * np.linspace(0.5, 1, len(x))
-
-        self.signals = self.init_signals(self.signals)
         f.set_self(vars())
 
     def get_weight(self, df: pd.DataFrame) -> pd.Series:
@@ -915,6 +899,64 @@ class WeightedPercent(TargetMaxMin):
         return df[cols] \
             .pipe(self.add_all_signals) \
             .assign(weight=lambda x: x.weight.fillna(x.weight.mean()).astype(np.float32))['weight']
+
+    def show_plot(self, weight: pd.Series = None, df: pd.DataFrame = None) -> None:
+        """Show scatter plot of dist of weights
+
+        Parameters
+        ----------
+        weight : pd.Series, optional
+            from self.get_weight(), by default None
+        df : pd.DataFrame, optional
+        """
+        if weight is None:
+            weight = self.get_weight(df)
+
+        weight.to_frame() \
+            .reset_index(drop=False) \
+            .plot(kind='scatter', x='timestamp', y='weight', s=1, alpha=0.1)
+
+
+class WeightedPercentMaxMin(WeightedPercent, TargetMaxMin):
+    """
+    Create array of normalized weights based on absolute movement up/down from current close in next n periods
+    - eg weight periods where lots of movement happens higher = more consequential
+    - Also optional weight based on age eg np.linspace 0.5 > 1.0
+    """
+
+    def __init__(self, n_periods: int, **kw):
+        super().__init__(n_periods=n_periods, **kw)
+        # TargetMaxMin.__init__(self, n_periods=n_periods, **kw)
+
+        drop_cols = ['target_max', 'target_min']
+
+        # clip at max 0.2 = 20% movement
+        self.signals |= dict(
+            weight=lambda x: minmax_scale(
+                x[drop_cols].abs().max(axis=1).clip(upper=0.2) * self.linear(x),
+                feature_range=(0, 1)))
+
+        self.signals = self.init_signals(self.signals)
+        f.set_self(vars())
+
+
+class WeightedPercentMean(WeightedPercent):
+    """
+    Create array of normalized weights based on mean pct change in next n_periods relative to close
+    """
+
+    def __init__(self, n_periods: int, **kw):
+
+        # clip at max 0.2 = 20% movement
+        kw['signals'] = dict(
+            weight=lambda x: minmax_scale(
+                ((x.close.rolling(n_periods).mean().shift(-n_periods) - x.close) / x.close)
+                .abs().clip(upper=0.1) * self.linear(x),
+                feature_range=(0, 1)))
+
+        # self.signals = self.init_signals(self.signals)
+        super().__init__(**kw)
+        f.set_self(vars())
 
 
 def add_emas(df, emas: list = None):
