@@ -1,7 +1,16 @@
+import os
+import sys
 from datetime import datetime as dt
 from pathlib import Path
 
-from jambot import AZURE_WEB
+# Set environments
+AZURE_LOCAL = not os.getenv('AZURE_FUNCTIONS_ENVIRONMENT') is None
+AZURE_WEB = not os.getenv('WEBSITE_SITE_NAME') is None
+SYMBOL = 'XBTUSD'
+
+if AZURE_LOCAL or AZURE_WEB:
+    sys.modules['__main__'] = None  # this isn't set properly when run in azure and throws KeyError
+
 
 p_proj = Path(__file__).parent  # jambot python files
 p_root = p_proj.parent  # root folter
