@@ -114,7 +114,7 @@ def check_filled_orders(minutes: int = 5, exch: Bitmex = None, test: bool = True
             f.discord(msg=msg, channel='orders')
 
 
-def _write_balance_google(syms, u, sht=None, ws=None, preservedf=False, df=None):
+def old_write_balance_google(syms, u, sht=None, ws=None, preservedf=False, df=None):
 
     if sht is None:
         sht = f.get_google_sheet()
@@ -181,7 +181,7 @@ def _write_balance_google(syms, u, sht=None, ws=None, preservedf=False, df=None)
     # return df
 
 
-def run_toploop(u=None, partial=False, dfall=None):
+def old_run_toploop(u=None, partial=False, dfall=None):
     # run every 1 hour, or when called by check_filled_orders()
     from jambot.database import db
 
