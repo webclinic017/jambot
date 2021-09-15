@@ -15,7 +15,7 @@ discord = "^1.0.1"
 PyPika = "^0.48.1"
 pyodbc = "^4.0.30"
 pandas = "^1.2.3"
-SQLAlchemy = "^1.4.7"
+SQLAlchemy = {version = ">=1.4,<1.4.23"}
 PyYAML = "^5.4.1"
 numpy = "^1.20.2"
 aenum = "^3.0.0"
@@ -27,7 +27,7 @@ azure-storage-blob = "^12.8.1"
 google-cloud-logging = "^2.6.0"
 pygsheets = "^2.0.5"
 
-[tool.poetry.dev-dependencies]
+[tool.poetry.group.dev.dependencies]
 jupyter = "^1.0.0"
 shap = "^0.39.0" # LLVM_CONFIG=/usr/local/Cellar/llvm@9/9.0.1_2/bin/llvm-config poetry add shap
 seaborn = "^0.11.1"
@@ -46,6 +46,8 @@ findiff = "^0.8.9"
 icecream = "^2.1.0"
 memory-profiler = "^0.58.0"
 filprofiler = "^2021.7.1"
+colored-traceback = "^0.3.0"
+colorlog = "^6.4.1"
 
 [tool.pytest.ini_options]
 testpaths = [
