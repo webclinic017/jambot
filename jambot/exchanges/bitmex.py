@@ -1,17 +1,24 @@
 import itertools
 import json
 import re
+import time
 import warnings
 from collections import defaultdict as dd
+from datetime import datetime as dt
+from datetime import timedelta as delta
+from datetime import timezone as tz
+from typing import *
 
+import pandas as pd
 from bitmex import bitmex
 from swagger_spec_validator.common import SwaggerValidationWarning
 
-from jambot import AZURE_WEB
+from jambot import SYMBOL, display
 from jambot import functions as f
+from jambot import getlog
+from jambot.config import AZURE_WEB
 from jambot.exchanges.exchange import Exchange
 from jambot.tradesys import orders as ords
-from jambot.tradesys.__init__ import *
 from jambot.tradesys.orders import BitmexOrder, Order
 from jambot.utils.secrets import SecretsManager
 
@@ -141,7 +148,7 @@ class Bitmex(Exchange):
 
     def get_position(self, symbol: str) -> dict:
         """Get position for specific symbol"""
-        return self._positions.get(symbol.lower())
+        return self._positions.get(symbol.lower(), {})
 
     def set_positions(self) -> None:
         """Set position for all symbols"""
@@ -201,7 +208,7 @@ class Bitmex(Exchange):
             single qty (if symbol given) or dict of all {symbol: currentQty}
         """
         if not symbol is None:
-            return self.get_position(symbol)['currentQty']
+            return self.get_position(symbol).get('currentQty', 0)
         else:
             # all position qty
             return {k: v['currentQty'] for k, v in self._positions.items()}
