@@ -1,9 +1,10 @@
 from abc import ABCMeta, abstractmethod
+from typing import *
 
 import pandas as pd
 
-from ..common import DictRepr
-from .__init__ import *
+from jambot import getlog
+from jambot.common import DictRepr
 
 log = getlog(__name__)
 

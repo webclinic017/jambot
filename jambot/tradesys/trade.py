@@ -1,12 +1,14 @@
 import operator as opr
 
+import numpy as np
+import pandas as pd
+
+from jambot import display
 from jambot import functions as f
 from jambot.tradesys.base import Observer, SignalEvent
 from jambot.tradesys.broker import Broker
 from jambot.tradesys.enums import TradeSide, TradeStatus
 from jambot.tradesys.orders import MarketOrder, Order
-
-from .__init__ import *
 
 
 class Trade(Observer):

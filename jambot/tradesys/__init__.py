@@ -1,1 +1,0 @@
-from jambot import *  # noqa

@@ -8,9 +8,6 @@ import yaml
 from cryptography.fernet import Fernet
 
 from jambot import config as cf
-from jambot import functions as f
-
-# from jambot import getlog
 
 # log = getlog(__name__)  # SecretsManager cant use logger, its used to init logger
 
@@ -38,12 +35,11 @@ class SecretsManager(object):
     >>> SecretsManager().encrypt_all_secrets()
     """
 
-    def __init__(self, load_filename=None):
-        p_secret = cf.p_sec
-        p_key = p_secret / 'jambot.key'
-        p_unencrypt = cf.p_proj / '_unencrypted'
-
-        f.set_self(vars())
+    def __init__(self, load_filename: Path = None):
+        self.p_secret = cf.p_sec
+        self.p_key = self.p_secret / 'jambot.key'
+        self.p_unencrypt = cf.p_proj / '_unencrypted'
+        self.load_filename = load_filename
 
     def __enter__(self):
         return self.get_secret_file(name=self.check_file)

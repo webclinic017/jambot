@@ -1,16 +1,19 @@
+from typing import *
+
+import pandas as pd
+
+from jambot import display
 from jambot import functions as f
 from jambot.tradesys.base import Observer
 from jambot.tradesys.broker import Broker
 from jambot.tradesys.trade import Trade
-
-from .__init__ import *  # noqa
 
 
 class StrategyBase(Observer):
     def __init__(self, symbol: str, weight=1, lev=5, slippage=0.02, live: bool = False, **kw):
         super().__init__(**kw)
 
-        trades = []
+        _trades = []
         broker = Broker(self)
         wallet = broker.get_wallet(symbol)
         wallet.lev = lev
@@ -47,11 +50,15 @@ class StrategyBase(Observer):
         return len([t for t in self.trades if abs(t.qty) > 0])
 
     @property
-    def trade(self) -> Union['Trade', None]:
+    def trades(self) -> List[Trade]:
+        return self._trades
+
+    @property
+    def trade(self) -> Union[Trade, None]:
         """Return last (current) trade"""
         return self.trades[-1] if len(self.trades) > 0 else None
 
-    def get_trade(self, i: int, open_only: bool = False) -> Union['Trade', None]:
+    def get_trade(self, i: int, open_only: bool = False) -> Union[Trade, None]:
         """Get trade by index
 
         Parameters
@@ -63,7 +70,7 @@ class StrategyBase(Observer):
 
         Returns
         -------
-        Union['Trade', None]
+        Union[Trade, None]
             Trade if exists
         """
         if open_only:
@@ -81,10 +88,11 @@ class StrategyBase(Observer):
         """Trades per day frequency"""
         return self.num_trades / (self.duration / 24)
 
-    def add_trade(self, trade: 'Trade'):
+    def add_trade(self, trade: Trade) -> None:
+        """Append trade to list of self.trades"""
         self.trades.append(trade)
 
-    def make_trade(self) -> 'Trade':
+    def make_trade(self) -> Trade:
         """Create trade object with wallet/broker"""
 
         trade = Trade(
@@ -161,7 +169,8 @@ class StrategyBase(Observer):
 
         return pd.DataFrame \
             .from_dict(data=data) \
-            .assign(profitable=lambda x: x.pnl > 0)
+            .assign(profitable=lambda x: x.pnl > 0) \
+            .drop_duplicates(subset=['t_num'], keep='first')
 
     def err_summary(self, last: int = 30) -> None:
         self.broker.show_orders(last=last)
