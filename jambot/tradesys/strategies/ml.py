@@ -1,15 +1,18 @@
 import warnings
+from typing import *
 
+import pandas as pd
 from sklearn.base import BaseEstimator
 
+from jambot import config as cf
+from jambot import display
 from jambot import functions as f
+from jambot import getlog
 from jambot.ml import models as md
 from jambot.tradesys.backtest import BacktestManager
 from jambot.tradesys.orders import LimitOrder, MarketOrder, Order, StopOrder
 from jambot.tradesys.strategies.base import StrategyBase
 from jambot.tradesys.trade import Trade
-
-from .__init__ import *
 
 log = getlog(__name__)
 warnings.filterwarnings(action='ignore', category=FutureWarning)
@@ -180,50 +183,99 @@ class Strategy(StrategyBase):
 class StratScorer():
     """Obj to allow scoring only for cross_val test but not train"""
 
-    def __init__(self, n_smooth: int = 6):
+    def __init__(self):
+        self.p_results = cf.p_data / 'scoring'
+        self.p_strats = cf.p_data / 'strats'
         self.reset()
-        f.set_self(vars())
 
     def reset(self):
         self.m_train = dict(final=True, max=True)
         self.runs = {}
+        f.clean_dir(self.p_results)
+        f.clean_dir(self.p_strats)
 
-    def show_summary(self):
-        """Show summary df of all backtest runs"""
+    @property
+    def summary_format(self):
+        """Dict to use for styling summary df
+        - NOTE copied from BacktestManager
+        """
+        return dict(
+            start='{:%Y-%m-%d}',
+            end='{:%Y-%m-%d}',
+            dur='{:,.0f}',
+            min='{:.3f}',
+            max='{:.3f}',
+            final='{:.3f}',
+            drawdown='{:.1%}',
+            tpd='{:.2f}',
+            good='{:,.0f}',
+            filled='{:,.0f}',
+            total='{:,.0f}',
+            pct='{:.0%}',
+            test_wt='{:.2f}',
+            train_wt='{:.2f}')
+
+    def show_summary(self, dfs: List[pd.DataFrame], scores: dict = None) -> None:
+        """Show summary df of all backtest runs
+
+        Parameters
+        ----------
+        dfs : List[pd.DataFrame]
+            summary dfs for each cv run
+        scores : dict
+            ModelManager cross_val scores to show with run results
+        """
         import jambot.utils.styles as st
-        fmt = list(self.runs.values())[0].summary_format
 
-        higher = ['drawdown', 'good_pct']
-        higher_centered = ['min', 'max', 'final']  # centered at 1.0
+        # bms = list(self.runs.values())  # BacktestManagers
+        # if bms:
+        #     fmt = bms[0].summary_format
+        # dfs = [bm.df_result for bm in bms]
+        # dfs = [f.load_pickle(p) for p in self.p_results.glob('*')]
 
-        dfs = [bm.df_result for bm in self.runs.values()]
         df = pd.concat(dfs) \
-            .reset_index(drop=True)
+            .sort_values('start') \
+            .reset_index(drop=True) \
+            .rename(columns=dict(good_pct='pct')) \
+            .pipe(f.safe_drop, cols='lev')
+
+        # add in test/train weight scores per run
+        if scores:
+            data = {k: v for k, v in scores.items() if 'wt' in k}
+            df = df.join(pd.DataFrame(data))
+
+        fmt = self.summary_format
+        higher = ['drawdown', 'pct']
+        higher_centered = ['min', 'max', 'final']  # centered at 1.0
+        higher_centered_2 = ['test_wt', 'train_wt']
 
         style = df \
             .style.format(fmt) \
             .pipe(st.bg, subset=higher, higher_better=True) \
             .pipe(st.bg, subset=['tpd'], higher_better=False) \
-            .apply(st.background_grad_center, subset=higher_centered, higher_better=True, center=1.0) \
+            .pipe(st.bg, subset=higher_centered_2, higher_better=True) \
+            .apply(st.background_grad_center, subset=higher_centered, higher_better=True, center=1.0, vmin=0, vmax=100)
 
-        ints = ('lev', 'good', 'filled', 'total')
+        # style.columns = df.pipe(f.remove_underscore).columns
+
+        ints = ('good', 'filled', 'total')
         df_tot = df.mean().to_frame().T \
             .astype({k: int for k in ints})
 
         style_tot = df_tot \
             .style.format(fmt)
 
-        display(style)
-        display(style_tot)
+        display(style.hide_index())
+        display(style_tot.hide_index())
 
     def score(
             self,
             estimator: BaseEstimator,
             x: pd.DataFrame,
-            y_true: np.ndarray,
+            y_true: pd.Series,
             _type: str = 'final',
             regression: bool = False,
-            **kw):
+            **kw) -> float:
         """Run strategy and return final balance
         - called for test then train for x number of splits
         """
@@ -252,6 +304,16 @@ class StratScorer():
 
             self.runs[idx[0]] = bm
 
+            # save df result to disk so can be used with multithreading
+            df_res = bm.df_result
+            f.save_pickle(df_res, p=self.p_results, name=id(df_res))
+
+            # save strat data to be returned from cross_val
+            estimator.cv_data = dict(
+                df_result=bm.df_result,
+                df_balance=strat.wallet.df_balance,
+                df_trades=strat.df_trades())
+
         wallet = bm.strat.wallet
         if _type == 'final':
             return wallet.balance  # final balance
@@ -266,7 +328,5 @@ def make_strat(**kw) -> Strategy:
     -------
     Strategy
     """
-    return Strategy(
-        lev=3,
-        market_on_timeout=True,
-        **kw)
+    m = dict(lev=3, market_on_timeout=True) | kw
+    return Strategy(**m)
