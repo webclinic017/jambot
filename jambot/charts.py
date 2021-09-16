@@ -1,17 +1,24 @@
 import inspect
 import operator as opr
+from datetime import datetime as dt
 from datetime import timedelta as delta
+from typing import *
 
 import numpy as np
+import pandas as pd
 import plotly.graph_objs as go
-import plotly.offline as py
 import seaborn as sns
 from icecream import ic
 from matplotlib import pyplot
+from pandas import DataFrame
 from plotly.subplots import make_subplots
 
+from jambot import SYMBOL
 from jambot import functions as f
+from jambot import getlog
 from jambot.config import colors
+
+log = getlog(__name__)
 
 ic.configureOutput(prefix='')
 
@@ -42,10 +49,6 @@ def heatmap(df, cols, title='', dims=(15, 15)):
     _, ax = pyplot.subplots(figsize=dims)
     ax.set_title(title)
     return sns.heatmap(ax=ax, data=matrix(df, cols), annot=True, annot_kws={'size': 8}, fmt='.1f')
-
-
-def plot_chart(df, symbol, df2=None):
-    py.iplot(chart(df=df, symbol=symbol, df2=df2))
 
 
 def add_order(order, ts, price=None):
@@ -149,7 +152,7 @@ def chart_orders(t, pre=36, post=None, width=900, fast=50, slow=200):
     fig.show()
 
 
-def add_traces(df, fig, traces):
+def add_traces(df: pd.DataFrame, fig: go.FigureWidget, traces: List[dict]) -> None:
     """Create traces from list of dicts and add to fig
     - trace must be created with a function"""
     def _append_trace(trace, m):
@@ -161,6 +164,7 @@ def add_traces(df, fig, traces):
     for m in traces:
         m['df'] = m.get('df', df)  # allow using different df (for balance)
         traces = m.get('func', scatter)(**m)
+
         if isinstance(traces, list):
             for trace in traces:
                 _append_trace(trace, m)
@@ -173,7 +177,7 @@ def add_traces(df, fig, traces):
             trace.update(xaxis='x2')
 
 
-def candlestick(df, **kw):
+def candlestick(df, **kw) -> go.Candlestick:
     return go.Candlestick(
         name='candles',
         x=df.index,
@@ -233,8 +237,8 @@ def add_pred_trace(df, offset=2):
     return df
 
 
-def predictions(df, name, regression=False, **kw):
-    """Add traces of predicted 1, 0, -1 vals as shapes"""
+def predictions(df, name, regression=False, **kw) -> List[go.Scatter]:
+    """Add 6 traces of predicted 1, 0, -1 vals as shapes"""
     df = df.copy() \
         .pipe(add_pred_trace)
 
@@ -410,24 +414,51 @@ def enum_traces(traces, base_num=2):
 
 
 def chart(
-        df,
-        symbol='XBTUSD',
-        periods=200,
-        last=True,
-        startdate=None,
-        df_balance=None,
-        traces=None,
-        default_range=None,
+        df: DataFrame,
+        symbol: str = SYMBOL,
+        periods: int = 200,
+        last: bool = True,
+        startdate: dt = None,
+        df_balance: DataFrame = None,
+        traces: List[dict] = None,
+        default_range: Tuple[dt, dt] = None,
         secondary_row_width: float = 0.12,
-        **kw):
-    """Main plotting func for showing main candlesticks with supporting subplots of features"""
+        **kw) -> go.FigureWidget:
+    """Main plotting func for showing main candlesticks with supporting subplots of features
+
+    Parameters
+    ----------
+    df : DataFrame
+        df with reqd cols
+    symbol : str, optional
+        default SYMBOL
+    periods : int, optional
+        plot only n periods, by default 200
+    last : bool, optional
+        plot LAST n periods, by default True
+    startdate : dt, optional
+        plot from start date, by default None
+    df_balance : DataFrame, optional
+        add trace of balance over time, by default None
+    traces : List[dict], optional
+        extra traces to show in addition to base traces, by default None
+    default_range : Tuple[dt, dt], optional
+        used to set default slider range, by default None
+    secondary_row_width : float, optional
+        make smaller/larger rows under main plot, by default 0.12
+
+    Returns
+    -------
+    go.FigureWidget
+        figure to show()
+    """
     bgcolor = '#000B15'
     gridcolor = '#182633'
 
     base_traces = [
-        dict(name='ema10', func=scatter, color='orange', hoverinfo='skip'),
-        dict(name='ema50', func=scatter, color='#18f27d', hoverinfo='skip'),
-        dict(name='ema200', func=scatter, color='#9d19fc', hoverinfo='skip'),
+        dict(name='ema_10', func=scatter, color='orange', hoverinfo='skip'),
+        dict(name='ema_50', func=scatter, color='#18f27d', hoverinfo='skip'),
+        dict(name='ema_200', func=scatter, color='#9d19fc', hoverinfo='skip'),
         dict(name='y_pred', func=predictions, **kw),
         dict(name='candle', func=candlestick),
     ]
@@ -439,10 +470,9 @@ def chart(
     traces = base_traces + traces
 
     if startdate:
-        df = df[df.index >= startdate] \
-            .iloc[:periods, :]
+        df = df[df.index >= startdate].iloc[:periods, :]
     elif last:
-        df = df.iloc[-1 * periods:, :]
+        df = df.iloc[-periods:, :]
     else:
         df = df.iloc[:periods, :]
 
@@ -484,7 +514,8 @@ def chart(
     )
 
     rng = None if default_range is None else [
-        df.index[-1 * default_range * 24].to_pydatetime(), df.index[-1].to_pydatetime()]
+        df.index[-1 * default_range * 24].to_pydatetime(),
+        df.index[-1].to_pydatetime()]
 
     xaxis = dict(
         type='date',
@@ -548,3 +579,71 @@ def chart(
         i['x'] = 0.05
 
     return fig
+
+
+def plot_strat_results(
+        df: DataFrame,
+        df_balance: DataFrame = None,
+        df_trades: DataFrame = None,
+        startdate: dt = dt(2021, 1, 1),
+        periods: int = 60 * 24,
+        regression: bool = False) -> None:
+    """Plot strategy results from single strat run
+
+    Parameters
+    ----------
+    df : DataFrame
+        main df with ~10 cols
+    df_balance : DataFrame, optional
+        balance from strat.wallet, by default None
+    df_trades : DataFrame, optional
+        trates from strat.df_trades(), by default None
+    startdate : dt, optional
+        filter df to start date, by default dt(2021, 1, 1)
+    periods : int, optional
+        filter df to n periods, by default 60*24
+    regression : bool, optional
+        by default False
+    """
+    df = df.astype(float)
+    split_val = 0.5 if not regression else 0
+    df = df.iloc[-periods:] if startdate is None else df.loc[startdate:]
+    rolling_col = 'proba_long' if not regression else 'y_pred'
+
+    traces = [
+        dict(name=rolling_col, func=split_trace, split_val=split_val),
+        dict(name='rolling_proba', func=split_trace, split_val=split_val),
+    ]
+
+    # merge balances to full df with forward fill
+    if not df_balance is None:
+        traces.append(dict(name='balance', func=scatter, color='#91ffff', stepped=True))
+
+        df = df \
+            .pipe(f.left_merge, df_balance) \
+            .assign(balance=lambda x: x.balance.fillna(method='ffill'))
+
+    # merge trades to show entry/exits as triangles in main chart
+    if not df_trades is None:
+        traces.append(dict(name='trades', func=trades, row=1))
+
+        rename_cols = dict(
+            side='trade_side',
+            pnl='trade_pnl',
+            entry='trade_entry',
+            exit='trade_exit')
+
+        df = df.pipe(f.left_merge, df_trades.rename(columns=rename_cols).set_index('ts'))
+
+    # create candlestick chart and show
+    # candle chart is VERY slow/crashes if np.float16 dtype
+    fig = chart(
+        df=df,
+        periods=periods,
+        last=True,
+        startdate=startdate,
+        df_balance=df_balance,
+        traces=traces,
+        regression=regression)
+
+    fig.show()
