@@ -1,9 +1,3 @@
-# PCA
-# try to idenfity areas with high probability of a large move?
-# weight more recent values higher
-# need to test constantly retraining model every x hours (24?)
-# additive interactions?
-
 # %% - IMPORTS
 if True:
     import json
@@ -52,15 +46,19 @@ if True:
     from jambot import charts as ch
     from jambot import data
     from jambot import functions as f
+    from jambot import getlog
     from jambot import signals as sg
     from jambot import sklearn_utils as sk
     from jambot.database import db
+    from jambot.exchanges.bitmex import Bitmex
     from jambot.ml import models as md
     from jambot.tradesys import backtest as bt
-    from jambot.tradesys.strategies import ml
+    from jambot.tradesys.strategies import ml as ml
     from jambot.utils import styles as st
 
-    plt.rcParams.update({'figure.figsize': (12, 5), 'font.size': 14})
+    log = getlog(__name__)
+
+    plt.rcParams |= {'figure.figsize': (12, 5), 'font.size': 14, 'lines.linewidth': 1.0}
     plt.style.use('dark_background')
     pd.set_option('display.max_columns', 200)
     colors = plt.rcParams['axes.prop_cycle'].by_key()['color']
@@ -69,35 +67,31 @@ if True:
 # %% - LOAD DF
 if True:
     interval = 15
-
-    kw = dict(
-        symbol='XBTUSD',
-        # daterange=365 * 6,
-        # startdate=dt(2018, 1, 1),
-        startdate=dt(2017, 1, 1),
-        interval=interval)
-
     p = Path('df.csv')
     # if p.exists(): p.unlink()
 
     # read from db or csv
     reload_df = False
     if reload_df or not p.exists() or dt.fromtimestamp(p.stat().st_mtime) < dt.now() + delta(days=-1):
-        print('Downloading from db')
-        df = db.get_df(**kw)
+        log.info('Downloading from db')
+        df = db.get_df(
+            symbol='XBTUSD',
+            startdate=dt(2017, 1, 1),
+            interval=interval)
 
         df.to_csv(p)
     else:
         df = data.default_df()
 
-    print(f'DateRange: {df.index.min()} - {df.index.max()}')
+    log.info(f'DateRange: {df.index.min()} - {df.index.max()}')
 
 # %% - ADD SIGNALS
 
 name = 'lgbm'
+cfg = md.model_cfg(name)
 sm = sg.SignalManager(slope=1, sum=12)
 
-n_periods = 10
+n_periods = cfg['target_kw']['n_periods']
 p_ema = None  # 6
 # Target = sg.TargetMeanEMA
 # Target = sg.TargetMean
@@ -142,20 +136,24 @@ if True:
     max_train_size = None
     cv = TimeSeriesSplit(n_splits=n_splits, max_train_size=max_train_size)
 
+    weights = sg.WeightedPercentMaxMin(
+        n_periods=cfg['n_periods_weighted'],
+        weight_linear=False) \
+        .get_weight(df)
+
     if regression:
         scoring = dict(rmse='neg_root_mean_squared_error')
     else:
-        scorer = ml.StratScorer(n_smooth=3)
-        final_scorer = lambda *args: scorer.score(*args, _type='final')
-        max_scorer = lambda *args: scorer.score(*args, _type='max')
+        scorer = ml.StratScorer()
 
         scoring = dict(
             acc='accuracy',
-            max=max_scorer,
-            final=final_scorer
+            wt=make_scorer(sk.weighted_score, weights=weights),
+            max=lambda *args: scorer.score(*args, _type='max'),
+            final=lambda *args: scorer.score(*args, _type='final')
         )
 
-    cv_args = dict(cv=cv, n_jobs=1, return_train_score=True, scoring=scoring)
+    cv_args = dict(cv=cv, n_jobs=-1, return_train_score=True, scoring=scoring)
     mm = md.make_model_manager(name=name, df=df) \
         .init_cv(scoring=scoring, cv_args=cv_args, scorer=scorer)
 
@@ -164,30 +162,26 @@ if True:
         split_date=dt(2021, 1, 1))
 
 # %% - CROSS VALIDATION
+# --%%time
 #  --%%prun -s cumulative -l 40
 LGBM = LGBMRegressor if regression else LGBMClassifier
 
 models = dict(
-    # rnd_forest=RandomForestClassifier,
-    # xgb=XGBClassifier,
-    # ada=AdaBoostClassifier(),
-    # log=LogisticRegression(),
-    # svc=SVC(gamma=2, C=1, probability=True),
-    # nbayes=GaussianNB(),
-    # qda=QuadraticDiscriminantAnalysis(),
-    # lgbm=LGBM,
     lgbm=LGBM(
         num_leaves=50, n_estimators=50, max_depth=30, boosting_type='dart', learning_rate=0.1)
-    # lgbm=LGBM(num_leaves=100, n_estimators=25, max_depth=10, boosting_type='gbdt')
 )
 
 # steps = [
 #     (1, ('pca', PCA(n_components=20, random_state=0)))]
 steps = None
 
-fit_params = dict(fit_params=sk.weighted_fit(name, weights=sg.WeightedPercent(8).get_weight(x_train)))
+fit_params = dict(
+    fit_params=sk.weighted_fit(name, weights=weights[x_train.index]),
+    return_estimator=True)
+
 mm.cross_val(models, steps=steps, extra_cv_args=fit_params)
-scorer.show_summary()
+res_dfs = [m.cv_data['df_result'] for m in mm.cv_data[name]]
+scorer.show_summary(dfs=res_dfs, scores=mm.scores[name])
 
 # %% - MAXMIN PREDS
 
@@ -255,33 +249,13 @@ if best_est:
 
 # %% - RUN STRAT
 
-name = 'lgbm'
-
-# import talib as tb
-# df['psar'] = tb.SAR(df.high, df.low, acceleration=0.02, maximum=0.2)
-# df['y_pred'] = np.where(df.close > df.psar, -1, 1)
-# df_pred = df.copy()
-
 # TODO test iter_predict maxhigh/minlow
 
-if False:
-    # retrain every x hours (24 ish) and predict for the test set
-    df_pred = mm \
-        .add_predict_iter(
-            df=df,
-            name=name,
-            pipe=mm.pipes[name],
-            batch_size=24 * 4 * 2,
-            min_size=mm.df_train.shape[0],
-            max_train_size=None,
-            regression=regression)
-
-    df_pred_iter = df_pred.copy()
-    # df_pred = df_pred_iter.copy()
-
-else:
+if True:
     # fit_params = sk.weighted_fit(name, n=mm.df_train.shape[0])
-    fit_params = sk.weighted_fit(name, weights=sg.WeightedPercent(8).get_weight(x_train))
+    fit_params = sk.weighted_fit(
+        name=name,
+        weights=sg.WeightedPercentMaxMin(8, weight_linear=False).get_weight(x_train))
     # fit_params = None
 
     df_pred = mm \
@@ -291,107 +265,46 @@ else:
             proba=not regression,
             fit_params=fit_params)
 
-n_smooth = 3
-rolling_col = 'proba_long' if not regression else 'y_pred'
+else:
+    # retrain every x hours (24 ish) and predict for the test set
+    df_pred = mm \
+        .add_predict_iter(
+            df=df,
+            name=name,
+            batch_size=24 * 4 * 2,
+            min_size=mm.df_train.shape[0],
+            max_train_size=None,
+            regression=regression)
+
+    df_pred_iter = df_pred.copy()
+    # df_pred = df_pred_iter.copy()
 
 df_pred = df_pred \
     .pipe(md.add_proba_trade_signal)
 
-strat = ml.Strategy(
-    lev=3,
-    slippage=0,
-    regression=regression,
-    market_on_timeout=True,
-    # stop_pct=0.025,
-)
-
-idx = mm.df_test.index
-kw = dict(
-    symbol='XBTUSD',
-    # daterange=365 * 3,
-    # startdate=dt(2020, 8, 1),
-    startdate=idx[0],
-    # interval=1
-)
+strat = ml.make_strat()
 
 cols = ['open', 'high', 'low', 'close', 'y_pred', 'proba_long',
         'rolling_proba', 'signal', 'pred_max', 'pred_min', 'target_max',
         'target_min']
-bm = bt.BacktestManager(**kw, strat=strat, df=df_pred.pipe(f.clean_cols, cols))
-bm.run()
-bm.print_final()
-wallet = strat.wallet
-wallet.plot_balance(logy=True)
-trades = strat.trades
-t = trades[-1]
+bm = bt.BacktestManager(
+    startdate=mm.df_test.index[0],
+    strat=strat,
+    df=df_pred.pipe(f.clean_cols, cols)).run(prnt=True)
 
 # %% - PLOT
 
 periods = 60 * 24
-# periods = 400
 startdate = dt(2021, 5, 1)
 startdate = dt(2021, 1, 1)
-# startdate = dt(2020, 3, 1)
 startdate = None
-split_val = 0.5 if not regression else 0
 
-df_chart = df_pred[df_pred.index >= x_test.index[0]]
-# df_chart = df.copy()
-
-traces = [
-    # dict(name='buy_pressure', func=ch.bar, color=ch.colors['lightblue']),
-    # dict(name='sell_pressure', func=ch.bar, color=ch.colors['lightred']),
-    # dict(name='probas', func=ch.probas),
-    # dict(name='target'),
-    dict(name=rolling_col, func=ch.split_trace, split_val=split_val),
-    dict(name='rolling_proba', func=ch.split_trace, split_val=split_val),
-    # dict(name='mnt_rsi_2', func=ch.scatter),
-    # dict(name='volume', func=ch.bar),
-]
-
-df_balance = strat.wallet.df_balance
-# df_balance = None
-
-if not df_balance is None:
-    traces.append(dict(name='balance', func=ch.scatter, color='#91ffff', stepped=True))
-
-    df_chart = df_chart \
-        .merge(right=df_balance, how='left', left_index=True, right_index=True) \
-        .assign(balance=lambda x: x.balance.fillna(method='ffill'))
-
-
-# Add trade_side for trade entry indicators in chart
-df_trades = strat.df_trades()
-
-if not df_trades is None:
-    traces.append(dict(name='trades', func=ch.trades, row=1))
-
-    rename_cols = dict(
-        side='trade_side',
-        pnl='trade_pnl',
-        entry='trade_entry',
-        exit='trade_exit')
-
-    df_trades = df_trades \
-        .set_index('ts') \
-        .rename(columns=rename_cols)
-
-    df_chart = df_chart.pipe(f.left_merge, df_trades)
-
-# enumerate row numbers
-# traces = [{**m, **dict(row=m.get('row', i+2))} for i, m in enumerate(traces)]
-# traces = None
-
-fig = ch.chart(
-    df=df_chart,
-    periods=periods,
-    last=True,
+ch.plot_strat_results(
+    df=df_pred.pipe(f.clean_cols, cols + ['target']),
+    df_balance=strat.wallet.df_balance,
+    df_trades=strat.df_trades(),
     startdate=startdate,
-    df_balance=df_balance,
-    traces=traces,
-    regression=regression)
-fig.show()
-
+    periods=periods)
 
 # %% - DENSITY PLOTS
 # # %% time
@@ -456,7 +369,7 @@ df_trans = sk.df_transformed(data=data, ct=ct).describe().T
 pipe_rfe = mm.pipes['lgbm_rfecv']
 pipe_rfe.fit(x_train, y_train)  # need fit pipe again outside of cross_validate
 rfecv = pipe_rfe.named_steps['rfecv']
-print('n_features: ', rfecv.n_features_)
+log.info('n_features: ', rfecv.n_features_)
 
 pd.DataFrame(
     data=rfecv.support_,
@@ -482,3 +395,13 @@ pipe_rfe = mm.pipes['lgbm_poly']
 pipe_rfe.fit(x_train, y_train)
 rfecv = pipe_rfe.named_steps['rfecv']
 rfecv.n_features_
+
+# %% ARCHIVE
+# rnd_forest=RandomForestClassifier,
+# xgb=XGBClassifier,
+# ada=AdaBoostClassifier(),
+# log=LogisticRegression(),
+# svc=SVC(gamma=2, C=1, probability=True),
+# nbayes=GaussianNB(),
+# qda=QuadraticDiscriminantAnalysis(),
+# lgbm=LGBM,
