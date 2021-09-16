@@ -1,62 +1,32 @@
+import pandas as pd
+
+from jambot import SYMBOL, display
 from jambot import functions as f
 from jambot.tradesys.base import Clock, SignalEvent
 from jambot.tradesys.strategies.base import StrategyBase
-
-from .__init__ import *
 
 
 class BacktestManager(Clock):
     """Organize and run strategies over dataframe with signals"""
 
     def __init__(
-            self,
-            strat: 'StrategyBase',
-            df: pd.DataFrame,
-            startdate: str,
-            symbol: str = 'XBTUSD',
-            u=None,
+        self,
+        strat: 'StrategyBase',
+        df: pd.DataFrame,
+        startdate: str,
+        symbol: str = SYMBOL,
+        u=None,
             **kw):
 
         super().__init__(df=df, **kw)
 
         self.end_session = SignalEvent()
 
-        # if not isinstance(strats, list): strats = [strats]
-
-        # if row is None:
-        #     dfsym = pd.read_csv(cf.p_res / 'symbols.csv')
-        #     dfsym = dfsym[dfsym['symbol'] == symbol]
-        #     row = list(dfsym.itertuples())[0]
-
-        # self.row = row
-        # symbolshort = row.symbolshort
-        # urlshort = row.urlshort
-        # symbolbitmex = row.symbolbitmex
-        # altstatus = bool(row.altstatus)
-        # decimal_figs = row.decimal_figs
-        # tradingenabled = True
-        # self.partial = partial
-
-        # self.symbol = symbol
         startdate = f.check_date(startdate)
 
         # actual backtest, not just admin info
         if not startdate is None:
-
             df = df[df.index >= startdate]
-
-            # if df is None:
-            #     df = db.get_df(symbol=symbol, startdate=startdate, daterange=daterange)
-
-            # if partial:
-            #     if u is None:
-            #         u = live.User()
-            #     df = u.append_partial(df)
-
-            # startrow = df.index.get_loc(startdate)
-
-            # for strat in self.strats:
-            # strat.init(bm=self, df=df)
 
         self.attach_listener(strat)
 
@@ -66,10 +36,26 @@ class BacktestManager(Clock):
         """Top level doesn't need to do anything"""
         pass
 
-    def run(self, prnt=True) -> 'BacktestManager':
-        """Top level step function"""
+    def run(self, prnt: bool = False) -> 'BacktestManager':
+        """Top level step function
+
+        Parameters
+        ----------
+        prnt : bool
+            print summary stats at end of run
+
+        Returns
+        -------
+        BacktestManager
+            self
+        """
         super().run()
         self.end_session.emit()
+
+        if prnt:
+            self.print_final()
+            self.strat.wallet.plot_balance(logy=True)
+
         return self
 
     @property
