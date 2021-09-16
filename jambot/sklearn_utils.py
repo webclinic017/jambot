@@ -1,7 +1,7 @@
 import copy
-import pickle
 import re
 import time
+from datetime import datetime as dt
 from typing import *
 
 import numpy as np
@@ -9,6 +9,7 @@ import pandas as pd
 from sklearn.base import BaseEstimator
 from sklearn.compose import ColumnTransformer
 from sklearn.decomposition import PCA
+from sklearn.exceptions import NotFittedError
 from sklearn.feature_extraction.text import _VectorizerMixin
 from sklearn.feature_selection._base import SelectorMixin
 from sklearn.linear_model import Ridge
@@ -17,9 +18,12 @@ from sklearn.model_selection import (GridSearchCV, RandomizedSearchCV,
                                      cross_validate, train_test_split)
 from sklearn.multioutput import MultiOutputRegressor
 from sklearn.pipeline import Pipeline
+from sklearn.utils.validation import check_is_fitted
 
 from jambot import config as cf
+from jambot import display
 from jambot import functions as f
+from jambot import getlog
 from jambot import signals as sg
 from jambot.ml import models as md
 
@@ -27,7 +31,6 @@ from jambot.ml import models as md
 try:
     import shap
     from icecream import ic
-    from IPython.display import display
     ic.configureOutput(prefix='')
 
     import matplotlib.pyplot as plt
@@ -35,6 +38,8 @@ try:
 
 except (ImportError, ModuleNotFoundError) as e:
     pass
+
+log = getlog(__name__)
 
 
 class ModelManager(object):
@@ -271,23 +276,36 @@ class ModelManager(object):
 
         show_scores(df)
 
-    def fit(self, name: str, best_est: bool = False, model=None, fit_params: dict = None):
-        """Fit model to training data"""
-        if best_est:
-            model = self.best_est(name)
+    def fit(
+            self,
+            model: BaseEstimator,
+            fit_params: dict = None,
+    ) -> BaseEstimator:
+        """Fit model to self.x_train with self.y_train (if not fit already)
 
-        if model is None:
-            model = self.pipes[name]
+        Parameters
+        ----------
+        model : BaseEstimator
+            estimator/pipeline
+        fit_params : dict, optional
+            eg lgbm__sample_weight, by default None
 
-        # allow passing in fit params eg lgbm__sample_weight=..
+        Returns
+        -------
+        BaseEstimator
+            fitted model
+        """
         fit_params = fit_params or {}
 
-        model.fit(self.x_train, self.y_train, **fit_params)  # .ravel()
+        if not is_fitted(model):
+            log.info('fitting model')
+            model.fit(self.x_train, self.y_train, **fit_params)
+
         return model
 
     def y_pred(self, x: pd.DataFrame, model=None, **kw):
-        if model is None:
-            model = self.fit(**kw)
+        # if model is None or not is_fitted(model):
+        model = self.fit(model=model, **kw)
 
         return model.predict(x)
 
@@ -307,36 +325,15 @@ class ModelManager(object):
         df = pd.DataFrame(m).T
         display(df)
 
-    def df_proba(self, df=None, model=None, **kw) -> pd.DataFrame:
-        """Return df of predict_proba, with timestamp index to join on"""
-        if df is None:
-            df = self.x_test
-
-        if df.shape[0] == 0:
-            raise ValueError(f'No rows in df: {len(df)}')
-
-        if model is None:
-            model = self.fit(**kw)
-
-        arr = model.predict_proba(df)
-        m = {-1: 'short', 0: 'neutral', 1: 'long'}
-        cols = [f'proba_{m.get(c)}' for c in model.classes_]
-        return pd.DataFrame(data=arr, columns=cols, index=df.index)
-
-    def add_proba(self, df, do=False, **kw):
-        """Concat df of predict_proba"""
-        return pd.concat([df, self.df_proba(**kw)], axis=1) if do else df
-
     def add_predict_iter(
             self,
-            df,
+            df: pd.DataFrame,
             name: str,
-            model=None,
-            pipe=None,
+            model: BaseEstimator = None,
             batch_size: int = 96,
             min_size: int = 180 * 24,
-            max_train_size=None,
-            regression=True):
+            max_train_size: int = None,
+            regression: bool = False) -> pd.DataFrame:
         """Retrain model every x periods and add predictions for next batch_size"""
         df_train = df.copy()
         df = df.copy()
@@ -349,10 +346,14 @@ class ModelManager(object):
         num_batches = ((nrows - min_size) // batch_size) + 1
 
         cfg = md.model_cfg(name)
-        weights = sg.WeightedPercent(cfg['n_periods_weighted']).get_weight(df)
+        weights = sg.WeightedPercentMaxMin(
+            cfg['n_periods_weighted'],
+            weight_linear=True).get_weight(df)
 
-        if pipe is None:
-            pipe = self.make_pipe(name=name, model=model)
+        if model is None:
+            model = self.pipes[name]
+
+        # TODO make this Parallel
 
         # return num_batches
         for i in tqdm(range(num_batches)):
@@ -370,7 +371,7 @@ class ModelManager(object):
                 df_train.iloc[0: i_lower],
                 target=self.target)
 
-            pipe.fit(
+            model.fit(
                 x_train,
                 y_train,
                 **weighted_fit(name=name, weights=weights.loc[x_train.index])
@@ -379,11 +380,12 @@ class ModelManager(object):
 
             # add preds to model
             x_test, _ = split(df_train.loc[idx], target=self.target)
-            y_pred = pipe.predict(x_test)
+            y_pred = model.predict(x_test)
             y_true = df.loc[idx, self.target]
 
             if not regression:
-                df.loc[idx, 'proba_long'] = self.df_proba(df=x_test, model=pipe)['proba_long'].values
+                # df.loc[idx, 'proba_long'] = self.df_proba(df=x_test, model=model)['proba_long'].values
+                df.loc[idx, 'proba_long'] = df_proba(x=x_test, model=model)['proba_long'].values
 
             # rmse = mean_squared_error(y_true=y_true, y_pred=y_pred, squared=False)
 
@@ -398,7 +400,15 @@ class ModelManager(object):
 
         return df
 
-    def add_predict(self, df: pd.DataFrame, proba: bool = True, **kw) -> pd.DataFrame:
+    def add_predict(
+            self,
+            df: pd.DataFrame,
+            x_test: pd.DataFrame = None,
+            proba: bool = True,
+            model: BaseEstimator = None,
+            name: str = None,
+            fit_params: dict = None,
+            **kw) -> pd.DataFrame:
         """Add predicted vals to df
 
         Parameters
@@ -413,13 +423,20 @@ class ModelManager(object):
         pd.DataFrame
             df with predictions and optionally probabilities
         """
+        if model is None:
+            model = self.pipes[name]
+
+        model = self.fit(model, fit_params=fit_params)
+
+        if x_test is None:
+            x_test = self.x_test
+
         df = df \
-            .assign(
-                y_pred=self.y_pred(x=df.drop(columns=f.as_list(self.target)), **kw)) \
-            .pipe(self.add_proba, do=proba, **kw)
+            .pipe(add_y_pred, model=model, x=x_test) \
+            .pipe(add_probas, model=model, x=x_test)
 
         # save predicted values for each model
-        self.df_preds[kw['name']] = df
+        self.df_preds[name] = df
 
         return df
 
@@ -494,20 +511,22 @@ class ModelManager(object):
 
         return grid
 
-    def save_model(self, name: str, **kw):
+    def save_model(self, name: str, **kw) -> None:
         model = self.get_model(name=name, **kw)
+        p = cf.p_res / 'models'
+        f.save_pickle(model, p, name)
 
-        p = cf.p_res / f'/models/{name}.pkl'
+    def load_model(self, name: str, **kw) -> Any:
+        p = p = cf.p_res / f'models/{name}.pkl'
+        return f.load_pickle(p)
 
-        with open(p, 'wb') as file:
-            pickle.dump(model, file)
-
-    def load_model(self, name: str, **kw):
-        filename = f'{name}.pkl'
-        with open(filename, 'rb') as file:
-            return pickle.load(file)
-
-    def make_train_test(self, df, target: list = None, split_date=None, train_size=0.8, **kw):
+    def make_train_test(
+            self,
+            df: pd.DataFrame,
+            target: List[str] = None,
+            split_date: dt = None,
+            train_size: float = 0.8,
+            **kw):
         """Make x_train, y_train etc from df
 
         Parameters
@@ -545,7 +564,7 @@ class ModelManager(object):
             **kw)
 
 
-def shap_explainer_values(X, y, ct, model, n_sample=2000):
+def shap_explainer_values(X, y, ct, model, n_sample: int = 2000):
     """Create shap values/explainer to be used with summary or force plot"""
     data = ct.fit_transform(X)
     X_enc = df_transformed(data=data, ct=ct)
@@ -562,7 +581,7 @@ def shap_explainer_values(X, y, ct, model, n_sample=2000):
     return explainer, shap_values, X_sample, X_enc
 
 
-def shap_plot(X, y, ct, model, n_sample=2000):
+def shap_plot(X, y, ct, model, n_sample: int = 2000):
     """Show shap summary plot"""
     explainer, shap_values, X_sample, X_enc = shap_explainer_values(X=X, y=y, ct=ct, model=model, n_sample=n_sample)
 
@@ -594,15 +613,15 @@ def show_prop(df, target_col='target'):
             prop='{:.2%}'))
 
 
-def split(df: pd.DataFrame, target: Union[list, str]) -> Tuple[pd.DataFrame, np.ndarray]:
+def split(df: pd.DataFrame, target: Union[list, str]) -> Tuple[pd.DataFrame, pd.Series]:
     """Split off target col to make X and y"""
     if isinstance(target, list) and len(target) == 1:
         target = target[0]
 
-    return df.pipe(f.safe_drop, cols=target), df[target].to_numpy(np.float32)
+    return df.pipe(f.safe_drop, cols=target), df[target]  # .to_numpy(np.float32)
 
 
-def show_scores(df, higher_better=False) -> None:
+def show_scores(df: pd.DataFrame, higher_better: bool = False) -> None:
     from jambot.utils.styles import bg, get_style
     subset = [col for col in df.columns if any(
         item in col for item in ('test', 'train')) and not 'std' in col]
@@ -614,44 +633,68 @@ def show_scores(df, higher_better=False) -> None:
     display(style)
 
 
-def append_fit_score(df, scores, name):
+def append_mean_std_score(
+        df: pd.DataFrame = None,
+        scores: dict = None,
+        name: str = None,
+        show: bool = False,
+        scoring: dict = None) -> pd.DataFrame:
+    """Create df with mean and std of all scoring metrics
 
-    return df
+    Parameters
+    ----------
+    df : pd.DataFrame, optional
+        df of scores, by default None
+    scores : dict, optional
+        results from cross_val scoring, by default None
+    name : str, optional
+        model name, by default None
+    show : bool, optional
+        display scores df, by default False
+    scoring : dict, optional
+        scoring funcs, by default None
 
-
-def append_mean_std_score(df=None, scores=None, name=None, show=False, scoring: dict = None):
-    """Create df with mean and std of all scoring metrics"""
+    Returns
+    -------
+    pd.DataFrame
+        df with mean/std of scoring dict
+    """
     if df is None:
         df = pd.DataFrame()
 
+    # assume preprocessor then model name in pipeline.steps[1]
     if isinstance(name, Pipeline):
-        # assume preprocessor then model name in pipeline.steps[1]
         name = name.steps[1][0]
 
-    exclude = ['fit_time', 'score_time']
+    # NOTE specific to strat scorer
+    exclude = ['train_max', 'train_final']
+    exclude_std = ['fit_time', 'score_time'] + exclude
 
     def name_cols(cols, type_):
         return {col: f'{type_}{col}' for col in cols}
 
-    score_cols = [col for col in scores.keys() if not col in exclude]
+    score_cols = [col for col in scores.keys() if not col in exclude_std]
     mean_cols = name_cols(score_cols, '')
     std_cols = name_cols(score_cols, 'std_')
 
-    df_scores = pd.DataFrame(scores).mean() \
+    # this is a series for scores from a single cv run
+    s_scores = pd.DataFrame(scores) \
+        .mean() \
         .rename(mean_cols) \
         .append(
             pd.DataFrame(scores)
-        .drop(columns=exclude)
-        .std()
-        .rename(std_cols))
+            .pipe(f.safe_drop, exclude_std)
+            .std()
+            .rename(std_cols)) \
+        .drop(exclude)
 
-    df.loc[name, df_scores.index] = df_scores
+    df.loc[name, s_scores.index] = s_scores
 
     # flip sign of mean cols for scorer where lower is better, eg MASE
     if scoring:
         for scorer_name, scorer in scoring.items():
 
-            if hasattr(scorer, '_sign') or 'neg' in str(scorer):
+            if (hasattr(scorer, '_sign') and scorer._sign == -1) or 'neg' in str(scorer):
                 scorer_cols = [c for c in df.columns if not 'std' in c and all(
                     item in c.split('_') for item in (scorer_name,))]
 
@@ -856,7 +899,7 @@ def add_probas(df: pd.DataFrame, model: BaseEstimator, x: pd.DataFrame, **kw) ->
     if 'proba_long' in df.columns:
         return df
 
-    return df.join(df_proba(x=x, model=model))
+    return df.pipe(f.left_merge, df_right=df_proba(x=x, model=model))
 
 
 def add_y_pred(df: pd.DataFrame, model: BaseEstimator, x: pd.DataFrame) -> pd.DataFrame:
@@ -876,9 +919,7 @@ def add_y_pred(df: pd.DataFrame, model: BaseEstimator, x: pd.DataFrame) -> pd.Da
     pd.DataFrame
         df with y_pred added
     """
-
-    return df \
-        .assign(y_pred=model.predict(x))
+    return df.pipe(f.left_merge, df_right=df_y_pred(x=x, model=model))
 
 
 def convert_proba_signal(df: pd.DataFrame, col: str = 'rolling_proba') -> pd.DataFrame:
@@ -964,7 +1005,6 @@ def mase(y_true, y_pred, h=1, **kw):
     d = np.abs(np.diff(y_true)).sum() / (y_pred.shape[0] - 1)
     errors = np.abs(y_true - y_pred)
     return errors.mean() / (d * h)
-    # assert mase(np.array([1,2,3,4,5,6]),np.array([2,3,4,5,6,7])) == 1.0, "MASE bust"
 
 
 def avg_mase_smape(y_true, y_pred, h=1, **kw):
