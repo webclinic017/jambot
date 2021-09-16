@@ -57,13 +57,14 @@ class ModelManager(object):
         models = {}
         grids = {}
         df_preds = {}
+        cv_data = {}  # used to return estimator/strats for each cv fold
         v = {**vars(), **kw}
         f.set_self(v)
 
         if any(item in kw for item in ('features', 'encoders')):
             self.make_column_transformer(**kw)
 
-    def init_cv(self, scoring: dict, cv_args: dict, scorer=None) -> None:
+    def init_cv(self, scoring: dict, cv_args: dict, scorer=None) -> 'ModelManager':
         """Convenience func to make sure all reqd cross val params are set
 
         Parameters
@@ -246,7 +247,12 @@ class ModelManager(object):
                 self.cv_args |= extra_cv_args
 
             scores = cross_validate(
-                pipe, self.x_train, self.y_train, error_score='raise', **self.cv_args)  # .ravel()
+                pipe, self.x_train, self.y_train, error_score='raise', **self.cv_args)
+
+            # use estimator obj to return dfs from cross_val for plotting
+            if 'return_estimator' in self.cv_args:
+                self.cv_data[name] = scores['estimator']
+                scores = {k: v for k, v in scores.items() if not k == 'estimator'}
 
             self.scores[name] = scores
             df_scores = df_scores \
