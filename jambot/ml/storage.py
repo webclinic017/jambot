@@ -13,7 +13,7 @@ from jambot import sklearn_utils as sk
 from jambot.common import DictRepr
 from jambot.database import db
 from jambot.ml import models as md
-from jambot.signals import WeightedPercent
+from jambot.signals import WeightedPercentMaxMin
 from jambot.utils.storage import BlobStorage
 
 log = getlog(__name__)
@@ -71,8 +71,7 @@ class ModelStorageManager(DictRepr):
 
     def clean(self) -> None:
         """Clean all saved models in models dir"""
-        for p in self.p_model.glob('*'):
-            p.unlink()
+        f.clean_dir(self.p_model)
 
     def fit_save_models(
             self,
@@ -130,7 +129,7 @@ class ModelStorageManager(DictRepr):
             + delta(hours=reset_hour_offset)
 
         # get weights for fit params
-        weights = WeightedPercent(cfg['n_periods_weighted']).get_weight(df).loc[:d_upper]
+        weights = WeightedPercentMaxMin(cfg['n_periods_weighted']).get_weight(df).loc[:d_upper]
 
         index = df.loc[:d_upper].index
         df = df \
@@ -169,7 +168,7 @@ class ModelStorageManager(DictRepr):
         Parameters
         ----------
         df : pd.DataFrame
-            truncated df (~400 rows?) with signals added and OHLC cols dropped,/*----- for live trading
+            truncated df (~400 rows?) with signals added and OHLC cols dropped, for live trading
         name : str
             model name
 
@@ -205,16 +204,19 @@ class ModelStorageManager(DictRepr):
             # split into 24 hr slices
             x, _ = sk.split(df.loc[d: max_date], target=target)
 
-            # add y_pred and proba_ for slice of df
-            df_pred = sk.df_proba(
-                x=x.pipe(f.safe_drop, cols=cf.config['drop_cols']),
-                model=estimator)
+            # btwn 18:00 to 18:15 last df won't have any rows
+            # eg new model has been trained, but next candle not imported yet
+            if len(x) > 0:
+                # add y_pred and proba_ for slice of df
+                df_pred = sk.df_proba(
+                    x=x.pipe(f.safe_drop, cols=cf.config['drop_cols']),
+                    model=estimator)
 
-            idx = df_pred.index
-            fmt = self.dt_format
-            log.info(f'Adding preds: {len(df_pred):02}, {idx.min():{fmt}}, {idx.max():{fmt}}')
+                idx = df_pred.index
+                fmt = self.dt_format
+                log.info(f'Adding preds: {len(df_pred):02}, {idx.min():{fmt}}, {idx.max():{fmt}}')
 
-            pred_dfs.append(df_pred)
+                pred_dfs.append(df_pred)
 
         return df.pipe(f.left_merge, pd.concat(pred_dfs)) \
             .pipe(md.add_proba_trade_signal)
