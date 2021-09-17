@@ -1,3 +1,5 @@
+import copy
+
 import pandas as pd
 from lightgbm.sklearn import LGBMClassifier
 from sklearn.base import BaseEstimator
@@ -90,7 +92,7 @@ def add_signals(df: pd.DataFrame, name: str, drop_ohlc: bool = False) -> pd.Data
         .pipe(f.safe_drop, cols=cf.config['drop_cols'], do=drop_ohlc)
 
 
-def make_model_manager(name: str, df: pd.DataFrame) -> 'sk.ModelManager':
+def make_model_manager(name: str, df: pd.DataFrame, use_important: bool = False) -> 'sk.ModelManager':
     """Instantiate ModelManager
 
     Parameters
@@ -107,8 +109,16 @@ def make_model_manager(name: str, df: pd.DataFrame) -> 'sk.ModelManager':
     cfg = model_cfg(name)
     target = cfg.get('target')
 
+    drop_cols = copy.copy(cf.config['drop_cols'])
+
+    # only use n most imporant features from shap_vals
+    if use_important:
+        include_cols = f.load_pickle(p=cf.p_data / 'important_feats/important_cols.pkl') + target + drop_cols
+        drop_cols += [c for c in df.columns if not c in include_cols]
+        log.info(f'drop_cols: {len(drop_cols)}')
+
     # for azure training, drop cols will have been dropped first to save memory
-    drop_cols = [c for c in cf.config['drop_cols'] if c in df.columns]
+    drop_cols = [c for c in drop_cols if c in df.columns]
 
     features = dict(
         target=target,
@@ -119,6 +129,7 @@ def make_model_manager(name: str, df: pd.DataFrame) -> 'sk.ModelManager':
     encoders = dict(
         drop='drop',
         numeric=MinMaxScaler(feature_range=(0, 1))
+        # numeric='passthrough'
     )
 
     return sk.ModelManager(
