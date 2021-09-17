@@ -195,7 +195,6 @@ class ModelManager(object):
             steps=[
                 ('ct', self.ct),
                 (name, model)],
-            # ('pca', PCA(n_components=10, random_state=self.random_state)),
         )
 
         # insert extra steps in pipe, eg RFECV
@@ -554,42 +553,147 @@ class ModelManager(object):
 
         return x_train, y_train, x_test, y_test
 
-    def shap_plot(self, name, **kw):
+    def shap_plot(self, name: str, n_sample: int = 10_000, **kw):
         """Convenience wrapper for shap_plot from ModelManager"""
-        shap_plot(
-            X=self.x_train,
-            y=self.y_train,  # .ravel(),
+        sm = ShapManager(
+            x=self.x_train,
+            y=self.y_train,
             ct=self.ct,
             model=self.models[name],
-            **kw)
+            n_sample=n_sample)
+
+        sm.plot(plot_type='violin', **kw)
 
 
-def shap_explainer_values(X, y, ct, model, n_sample: int = 2000):
-    """Create shap values/explainer to be used with summary or force plot"""
-    data = ct.fit_transform(X)
-    X_enc = df_transformed(data=data, ct=ct)
-    model.fit(X_enc, y)
+class ShapManager():
+    """Helper to manage shap values and plots"""
 
-    # use smaller sample to speed up plot
-    X_sample = X_enc
-    if not n_sample is None:
-        X_sample = X_enc.sample(n_sample, random_state=0)
+    def __init__(
+            self,
+            x: pd.DataFrame,
+            y: pd.Series,
+            ct: ColumnTransformer,
+            model: BaseEstimator,
+            n_sample: int = 10_000):
+        """
+        Parameters
+        ----------
+        x : pd.DataFrame
+            x_train/test
+        y : pd.Series
+            y_train/test
+        ct : ColumnTransformer
+        model : BaseEstimator
+        n_sample : int, optional
+            by default 2000
+        """
+        f.set_self(vars())
 
-    explainer = shap.TreeExplainer(model)
-    shap_values = explainer.shap_values(X_sample)
+    def check_init(self):
+        """Check if shap explainer init"""
+        if not hasattr(self, 'explainer'):
+            self.init_explainer()
 
-    return explainer, shap_values, X_sample, X_enc
+    def init_explainer(self) -> None:
+        """Create shap values/explainer to be used with summary or force plot, set to self
 
+        Parameters
+        ----------
+        n_sample : int, optional
+            by default 2000
 
-def shap_plot(X, y, ct, model, n_sample: int = 2000):
-    """Show shap summary plot"""
-    explainer, shap_values, X_sample, X_enc = shap_explainer_values(X=X, y=y, ct=ct, model=model, n_sample=n_sample)
+        Sets
+        -------
+        Tuple[shap.TreeExplainer, List[np.array], pd.DataFrame, pd.DataFrame]
+        """
+        data = self.ct.fit_transform(self.x)
+        x_enc = df_transformed(data=data, ct=self.ct)
+        self.model.fit(x_enc, self.y)
 
-    shap.summary_plot(
-        shap_values=shap_values[0],
-        features=X_sample,
-        plot_type='violin',
-        axis_color='white')
+        # use smaller sample to speed up plot
+        x_sample = x_enc.sample(self.n_sample, random_state=0)
+
+        self.explainer = shap.TreeExplainer(self.model)
+        self.shap_values = self.explainer.shap_values(x_sample)
+        self.x_sample = x_sample
+        self.x_enc = x_enc
+
+    def plot(self, plot_type: str = 'violin') -> None:
+        """Show shap summary plot"""
+        self.check_init()
+
+        # bar plot needs both classes
+        vals = self.shap_values
+        if plot_type == 'violin':
+            vals = vals[0]
+
+        shap.summary_plot(
+            shap_values=vals,
+            features=self.x_sample,
+            plot_type=plot_type,
+            axis_color='white')
+
+    def force_plot(self, sample_n: int = 0) -> None:
+        """Show force plot for single sample
+
+        Parameters
+        ----------
+        sample_n : int, optional
+            row to show from self.samples, default 0
+        """
+        self.check_init()
+        shap.initjs()
+        shap.force_plot(
+            self.explainer.expected_value[1],
+            self.shap_values[0][sample_n, :],
+            self.x_enc.iloc[sample_n, :])
+
+    def shap_n_important(
+            self,
+            n: int = 50,
+            as_list: bool = True,
+            save: bool = True) -> Union[list, pd.DataFrame]:
+        """Get list of n most important shap values
+
+        Parameters
+        ----------
+        n : int, optional
+            num important feats, default 50
+        as_list : bool, optional
+            return as list or DataFrame, default True
+        save : bool, optional
+            save important feats to pickle, default True
+
+        Returns
+        -------
+        Union[list, pd.DataFrame]
+        """
+        self.check_init()
+
+        # get correct column transformer index for numeric
+        transformer = 'numeric'
+        transformers = self.ct.transformers
+        t_idx = [t[0] for t in transformers].index(transformer)
+
+        # 0/1 could be positive/negative class, not sure which
+        # NOTE could maybe try mean of both?
+        data = np.abs(self.shap_values[0]).mean(axis=0)
+        # data2 = np.abs(self.shap_values[1]).mean(axis=0)
+        # data = np.vstack((data1, data2)).T
+        num_cols = transformers[t_idx][2]  # 2 is column names
+
+        # cols = ['cls_0', 'cls_1']
+        # .assign(importance=lambda x: x[cols].mean(axis=1)) \
+        cols = ['importance']
+        df = pd.DataFrame(data=data, index=num_cols, columns=cols) \
+            .sort_values('importance', ascending=False) \
+            .iloc[: n]
+
+        lst = df.index.tolist()
+        if save:
+            f.save_pickle(lst, p=cf.p_data / 'important_feats', name='important_cols')
+
+        return lst if as_list else df
 
 
 def shap_top_features(shap_vals, X_sample):

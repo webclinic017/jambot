@@ -44,6 +44,7 @@ if True:
     from xgboost import XGBClassifier
 
     from jambot import charts as ch
+    from jambot import config as cf
     from jambot import data
     from jambot import functions as f
     from jambot import getlog
@@ -87,52 +88,54 @@ if True:
 
 # %% - ADD SIGNALS
 
-name = 'lgbm'
-cfg = md.model_cfg(name)
-sm = sg.SignalManager(slope=1, sum=12)
+if True:
+    name = 'lgbm'
+    cfg = md.model_cfg(name)
+    sm = sg.SignalManager(slope=1, sum=12)
 
-n_periods = cfg['target_kw']['n_periods']
-p_ema = None  # 6
-# Target = sg.TargetMeanEMA
-# Target = sg.TargetMean
-Target = sg.TargetUpsideDownside
-# regression = True
-regression = False
-# pct_min = 0.01
-# pct_min = 0.000000005 # long or short, no neutral
-pct_min = 0
-target_signal = Target(
-    p_ema=p_ema,
-    n_periods=n_periods,
-    pct_min=pct_min,
-    regression=regression)
+    n_periods = cfg['target_kw']['n_periods']
+    p_ema = None  # 6
+    # Target = sg.TargetMeanEMA
+    # Target = sg.TargetMean
+    Target = sg.TargetUpsideDownside
+    # regression = True
+    regression = False
+    # pct_min = 0.01
+    # pct_min = 0.000000005 # long or short, no neutral
+    pct_min = 0
+    target_signal = Target(
+        p_ema=p_ema,
+        n_periods=n_periods,
+        pct_min=pct_min,
+        regression=regression)
 
-signals = [
-    'EMA',
-    'Momentum',
-    'Trend',
-    'Candle',
-    'Volatility',
-    'Volume',
-    # 'MACD',
-    # 'SFP',
-    # 'CandlePatterns',
-    target_signal
-]
+    signals = [
+        'EMA',
+        'Momentum',
+        'Trend',
+        'Candle',
+        'Volatility',
+        'Volume',
+        # 'MACD',
+        # 'SFP',
+        # 'CandlePatterns',
+        target_signal
+    ]
 
-# drop last rows which we cant set proper target
-# don't need to drop last n_periods rows if positive we aren't fitting on them
-df = sm.add_signals(df=df, signals=signals) \
-    # .iloc[:-1 * n_periods, :]
+    # drop last rows which we cant set proper target
+    # don't need to drop last n_periods rows if positive we aren't fitting on them
+    df = sm.add_signals(df=df, signals=signals) \
+        # .iloc[:-1 * n_periods, :]
 
-if not regression:
-    sk.show_prop(df=df)
+    if not regression:
+        sk.show_prop(df=df)
 
 # %% - FEATURES, MODELMANAGER
 if True:
     n_splits = 5
     train_size = 0.9
     # max_train_size = int(df.shape[0] * train_size / n_splits)
+    # max_train_size = 20_000
     max_train_size = None
     cv = TimeSeriesSplit(n_splits=n_splits, max_train_size=max_train_size)
 
@@ -154,12 +157,14 @@ if True:
         )
 
     cv_args = dict(cv=cv, n_jobs=-1, return_train_score=True, scoring=scoring)
-    mm = md.make_model_manager(name=name, df=df) \
+    mm = md.make_model_manager(name=name, df=df, use_important=True) \
         .init_cv(scoring=scoring, cv_args=cv_args, scorer=scorer)
 
     x_train, y_train, x_test, y_test = mm.make_train_test(
         df=df,
         split_date=dt(2021, 1, 1))
+
+    log.info(f'num_feats: {len(mm.ct.transformers[1][2])}')
 
 # %% - CROSS VALIDATION
 # --%%time
@@ -251,7 +256,7 @@ if best_est:
 
 # TODO test iter_predict maxhigh/minlow
 
-if True:
+if False:
     # fit_params = sk.weighted_fit(name, n=mm.df_train.shape[0])
     fit_params = sk.weighted_fit(
         name=name,
@@ -294,15 +299,26 @@ bm = bt.BacktestManager(
 
 # %% - PLOT
 
-periods = 60 * 24
+periods = 60 * 24 * 4
 startdate = dt(2021, 5, 1)
 startdate = dt(2021, 1, 1)
 startdate = None
 
+df_balance = strat.wallet.df_balance
+df_trades = strat.df_trades()
+
+# cv data
+i = 3
+m = mm.cv_data['lgbm'][i].cv_data
+startdate = m['startdate']
+startdate = dt(2020, 3, 1)
+df_balance = m['df_balance']
+df_trades = m['df_trades']
+
 ch.plot_strat_results(
     df=df_pred.pipe(f.clean_cols, cols + ['target']),
-    df_balance=strat.wallet.df_balance,
-    df_trades=strat.df_trades(),
+    df_balance=df_balance,
+    df_trades=df_trades,
     startdate=startdate,
     periods=periods)
 
@@ -343,40 +359,56 @@ fg \
 
 plt.show()
 
+# %% - INIT SHAP MANAGER
+sm = sk.ShapManager(x=x_train, y=y_train, ct=mm.ct, model=mm.models['lgbm'], n_sample=10_000)
+
 # %% - SHAP PLOT
-mm.shap_plot(name=name)
+sm.plot(plot_type='violin')
 
 # %%
-explainer, shap_values, x_sample, x_enc = sk \
-    .shap_explainer_values(x_test, y_test, mm.ct, mm.models['lgbm'])
+sm.force_plot(sample_n=0)
 
 # %%
-shap.initjs()
-shap.force_plot(explainer.expected_value[1], shap_values[1][0, :], x_enc.iloc[0, :])
+sm.shap_n_important(n=60)
 
 # %% - RIDGE
 models = dict(
     lgbm_rfecv=mm.models['lgbm'])
 
-extra_steps = (1, ('rfecv', RFE(Ridge())))  # must insert rfecv BEFORE other model
+extra_steps = (1, ('rfecv', RFE(
+    estimator=Ridge(),
+    n_features_to_select=50)))  # must insert rfecv BEFORE other model
 mm.cross_val(models, steps=extra_steps)
 scorer.show_summary()
 
 # %% - RFECV SHOW FEATURES
+ct = mm.ct
 data = ct.fit_transform(x_train)
 df_trans = sk.df_transformed(data=data, ct=ct).describe().T
 
-pipe_rfe = mm.pipes['lgbm_rfecv']
-pipe_rfe.fit(x_train, y_train)  # need fit pipe again outside of cross_validate
-rfecv = pipe_rfe.named_steps['rfecv']
-log.info('n_features: ', rfecv.n_features_)
+model_rfe = RFE(estimator=Ridge(), n_features_to_select=50, step=3)
+pipe = mm.make_pipe(name='rfe', model=model_rfe)
 
-pd.DataFrame(
-    data=rfecv.support_,
-    columns=['Included'],
-    index=df_trans.index) \
+fit_params = sk.weighted_fit(
+    name='rfe',
+    weights=sg.WeightedPercentMaxMin(8, weight_linear=False).get_weight(x_train))
+pipe.fit(x_train, y_train)
+
+# pipe_rfe = mm.pipes['lgbm_rfecv']
+# pipe_rfe.fit(x_train, y_train)  # need fit pipe again outside of cross_validate
+# rfecv = pipe_rfe.named_steps['rfecv']
+log.info(f'n_features: {model_rfe.n_features_}')
+
+df_rfe = pd.DataFrame(
+    data=model_rfe.support_,
+    columns=['included'],
+    index=df_trans.index)
+
+style_rfe = df_rfe \
     .style \
-    .apply(st.highlight_val, subset=['Included'], m={True: (ch.colors['lightblue'], 'black')})
+    .apply(st.highlight_val, subset=['included'], m={True: (ch.colors['lightblue'], 'black')})
+
+style_rfe
 
 # %%
 # POLY
