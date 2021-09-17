@@ -129,7 +129,9 @@ class ModelStorageManager(DictRepr):
             + delta(hours=reset_hour_offset)
 
         # get weights for fit params
-        weights = WeightedPercentMaxMin(cfg['n_periods_weighted']).get_weight(df).loc[:d_upper]
+        weights = WeightedPercentMaxMin(
+            n_periods=cfg['n_periods_weighted'],
+            weight_linear=True).get_weight(df).loc[:d_upper]
 
         index = df.loc[:d_upper].index
         df = df \

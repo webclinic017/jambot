@@ -172,6 +172,11 @@ class StrategyBase(Observer):
             .assign(profitable=lambda x: x.pnl > 0) \
             .drop_duplicates(subset=['t_num'], keep='first')
 
+    def trade_dist(self) -> None:
+        """Show trade % win/loss histogram"""
+        df = self.df_trades()
+        df.pnl.plot(kind='hist', bins=50)
+
     def err_summary(self, last: int = 30) -> None:
         self.broker.show_orders(last=last)
         self.wallet.show_orders(last=last)

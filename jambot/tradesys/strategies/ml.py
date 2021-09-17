@@ -310,6 +310,7 @@ class StratScorer():
 
             # save strat data to be returned from cross_val
             estimator.cv_data = dict(
+                startdate=bm.startdate,
                 df_result=bm.df_result,
                 df_balance=strat.wallet.df_balance,
                 df_trades=strat.df_trades())
