@@ -97,7 +97,7 @@ class ModelStorageManager(DictRepr):
 
         self.fit_save(
             df=db.get_df(symbol=SYMBOL, startdate=self.d_lower, interval=interval)
-            .pipe(md.add_signals, name=name, drop_ohlc=False)
+            .pipe(md.add_signals, name=name, drop_ohlc=False, use_important=True)
             .iloc[:-1 * n_periods, :],
             name=name,
             estimator=estimator)

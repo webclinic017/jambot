@@ -59,7 +59,11 @@ def model_cfg(name: str) -> dict:
     ).get(name)
 
 
-def add_signals(df: pd.DataFrame, name: str, drop_ohlc: bool = False) -> pd.DataFrame:
+def add_signals(
+        df: pd.DataFrame,
+        name: str,
+        drop_ohlc: bool = False,
+        use_important: bool = True) -> pd.DataFrame:
     """Add signal cols to df
 
     Parameters
@@ -68,6 +72,10 @@ def add_signals(df: pd.DataFrame, name: str, drop_ohlc: bool = False) -> pd.Data
         raw df with no features
     name : str
         model name
+    drop_ohlc : bool
+        drop ohlcv columns from raw df, default False
+    use_important : bool
+        exclude least important columns from model, default True
 
     Returns
     -------
@@ -88,7 +96,7 @@ def add_signals(df: pd.DataFrame, name: str, drop_ohlc: bool = False) -> pd.Data
         target_signal]
 
     return sg.SignalManager(**cf.config['signalmanager_kw']) \
-        .add_signals(df=df, signals=signals) \
+        .add_signals(df=df, signals=signals, use_important=use_important) \
         .pipe(f.safe_drop, cols=cf.config['drop_cols'], do=drop_ohlc)
 
 
