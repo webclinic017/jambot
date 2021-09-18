@@ -118,7 +118,7 @@ class ModelManager(object):
 
         data = self.ct.fit_transform(x_train)
         df_trans = df_transformed(data=data, ct=self.ct)
-        print(df_trans.shape)
+        log.info(df_trans.shape)
 
         with pd.option_context('display.max_rows', 200):
             display(df_trans.describe().T)
