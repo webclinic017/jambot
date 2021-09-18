@@ -34,6 +34,7 @@ class BlobStorage():
         _p_local = None
         if isinstance(container, Path):
             _p_local = container
+            f.check_path(_p_local)
             container = container.name
 
         f.set_self(vars())
