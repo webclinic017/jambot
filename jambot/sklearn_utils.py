@@ -206,11 +206,50 @@ class ModelManager(object):
 
         return pipe
 
+    def init_models(self, models: Dict[str, BaseEstimator], **kw) -> None:
+        """Convenience func to init dict of models
+
+        Parameters
+        ----------
+        models : Dict[str, BaseEstimator]
+        """
+        for name, model in models.items():
+            pipe = self.init_model(name=name, model=model, **kw)
+
+    def init_model(
+            self,
+            name: str,
+            model: BaseEstimator,
+            steps: List[Tuple[int, tuple]] = None) -> Pipeline:
+        """Init single model
+
+        Parameters
+        ----------
+        name : str
+            model name
+        model : BaseEstimator
+        steps : List[Tuple[int, tuple]], optional
+            default None
+
+        Returns
+        -------
+        Pipeline
+            initialized Pipeline with ColumnTransformer
+        """
+
+        # allow passing model definition, or instantiated model
+        if isinstance(model, type):
+            model = model()
+
+        model.random_state = self.random_state
+        self.models[name] = model
+        return self.make_pipe(name=name, model=model, steps=steps)
+
     def cross_val(
             self,
             models: dict,
             show: bool = True,
-            steps: list = None,
+            steps: List[Tuple[int, tuple]] = None,
             df_scores: pd.DataFrame = None,
             extra_cv_args: dict = None):
         """Perform cross validation on multiple classifiers
@@ -235,17 +274,7 @@ class ModelManager(object):
             self.scorer.reset()
 
         for name, model in models.items():
-
-            # allow passing model definition, or instantiated model
-            if isinstance(model, type):
-                model = model()
-
-            model.random_state = self.random_state
-
-            # safe model/pipeline by name
-            self.models[name] = model
-
-            pipe = self.make_pipe(name=name, model=model, steps=steps)
+            pipe = self.init_model(name=name, model=model, steps=steps)
 
             if extra_cv_args:
                 self.cv_args |= extra_cv_args
