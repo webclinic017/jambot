@@ -18,6 +18,21 @@ from dateutil.parser import parse
 from jambot.config import AZURE_WEB
 
 
+def flatten_list_list(lst: List[list]) -> list:
+    """Flatten single level nested list of lists
+
+    Parameters
+    ----------
+    lst : List[list]
+
+    Returns
+    -------
+    list
+        flattened list
+    """
+    return [item for sublist in lst for item in sublist]
+
+
 def check_path(p: Path) -> Path:
     """Create path if doesn't exist"""
     if isinstance(p, str):
