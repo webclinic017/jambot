@@ -118,6 +118,7 @@ if True:
         'Candle',
         'Volatility',
         'Volume',
+        # 'DateTime',
         # 'MACD',
         # 'SFP',
         # 'CandlePatterns',
@@ -259,7 +260,7 @@ if best_est:
 
 # TODO test iter_predict maxhigh/minlow
 
-if True:
+if False:
     # fit_params = sk.weighted_fit(name, n=mm.df_train.shape[0])
     fit_params = sk.weighted_fit(
         name=name,

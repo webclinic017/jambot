@@ -656,6 +656,19 @@ class EMA(SignalGroup):
         return y.astype(np.float32)
 
 
+class DateTime(SignalGroup):
+    def __init__(self, **kw):
+        kw['signals'] = dict(
+            day_week=lambda x: x.index.dayofweek,
+            time_day=lambda x: x.index.hour)
+
+        super().__init__(**kw)
+        no_slope_cols = list(kw['signals'].keys())
+        no_sum_cols = no_slope_cols
+
+        f.set_self(vars())
+
+
 class MACD(SignalGroup):
     """MACD signals
     - NOTE not used currently
