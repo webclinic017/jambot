@@ -113,7 +113,7 @@ def make_model_manager(name: str, df: pd.DataFrame, use_important: bool = False)
 
     # only use n most imporant features from shap_vals
     if use_important:
-        drop_cols += f.load_pickle(p=cf.p_data / 'important_feats/least_imp_cols.pkl')
+        drop_cols += f.load_pickle(p=cf.p_data / 'feats/least_imp_cols.pkl')
 
     # for azure training, drop cols will have been dropped first to save memory
     drop_cols = [c for c in drop_cols if c in df.columns]

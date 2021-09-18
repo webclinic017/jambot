@@ -159,7 +159,7 @@ if True:
         )
 
     cv_args = dict(cv=cv, n_jobs=-1, return_train_score=True, scoring=scoring)
-    mm = md.make_model_manager(name=name, df=df, use_important=False) \
+    mm = md.make_model_manager(name=name, df=df, use_important=False)
 
     x_train, y_train, x_test, y_test = mm.make_train_test(
         df=df,
@@ -372,7 +372,7 @@ sm.plot(plot_type='violin')
 sm.force_plot(sample_n=0)
 
 # %%
-sm.shap_n_important(n=60)
+sm.shap_n_important(n=60, save=True, upload=False)
 
 # %% - RIDGE
 models = dict(

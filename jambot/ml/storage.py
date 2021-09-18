@@ -14,7 +14,7 @@ from jambot.common import DictRepr
 from jambot.database import db
 from jambot.ml import models as md
 from jambot.signals import WeightedPercentMaxMin
-from jambot.utils.storage import BlobStorage
+from jambot.utils.azureblob import BlobStorage
 
 log = getlog(__name__)
 
@@ -131,7 +131,8 @@ class ModelStorageManager(DictRepr):
         # get weights for fit params
         weights = WeightedPercentMaxMin(
             n_periods=cfg['n_periods_weighted'],
-            weight_linear=True).get_weight(df).loc[:d_upper]
+            weight_linear=True) \
+            .get_weight(df).loc[:d_upper]
 
         index = df.loc[:d_upper].index
         df = df \
