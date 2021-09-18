@@ -26,6 +26,7 @@ from jambot import functions as f
 from jambot import getlog
 from jambot import signals as sg
 from jambot.ml import models as md
+from jambot.utils.azureblob import BlobStorage
 
 # not needed when running on azure
 try:
@@ -616,6 +617,7 @@ class ShapManager():
         n_sample : int, optional
             by default 2000
         """
+        bs = BlobStorage(container=cf.p_data / 'feats')
         f.set_self(vars())
 
     def check_init(self):
@@ -681,7 +683,8 @@ class ShapManager():
             self,
             n: int = 50,
             as_list: bool = True,
-            save: bool = True) -> Union[list, pd.DataFrame]:
+            save: bool = True,
+            upload: bool = False) -> Union[list, pd.DataFrame]:
         """Get list of n most important shap values
 
         Parameters
@@ -692,6 +695,8 @@ class ShapManager():
             return as list or DataFrame, default True
         save : bool, optional
             save important feats to pickle, default True
+        upload : bool, optional
+            upload least_imp_cols to azureblob, default False
 
         Returns
         -------
@@ -722,8 +727,11 @@ class ShapManager():
             least=df.iloc[n:].index.tolist())
 
         if save:
-            for name, lst in m_imp.items():
-                f.save_pickle(lst, p=cf.p_data / 'important_feats', name=f'{name}_imp_cols')
+            # for name, lst in m_imp.items():
+            f.save_pickle(m_imp['least'], p=self.bs.p_local, name='least_imp_cols')
+
+            if upload:
+                self.bs.upload_dir()
 
         return m_imp if as_list else df
 
