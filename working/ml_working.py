@@ -87,6 +87,8 @@ if True:
     log.info(f'DateRange: {df.index.min()} - {df.index.max()}')
 
 # %% - ADD SIGNALS
+# --%%prun -s cumulative -l 40
+# --%%time
 
 if True:
     name = 'lgbm'
@@ -124,7 +126,7 @@ if True:
 
     # drop last rows which we cant set proper target
     # don't need to drop last n_periods rows if positive we aren't fitting on them
-    df = sm.add_signals(df=df, signals=signals) \
+    df = sm.add_signals(df=df, signals=signals, use_important=True) \
         # .iloc[:-1 * n_periods, :]
 
     if not regression:
@@ -157,34 +159,35 @@ if True:
         )
 
     cv_args = dict(cv=cv, n_jobs=-1, return_train_score=True, scoring=scoring)
-    mm = md.make_model_manager(name=name, df=df, use_important=True) \
-        .init_cv(scoring=scoring, cv_args=cv_args, scorer=scorer)
+    mm = md.make_model_manager(name=name, df=df, use_important=False) \
 
     x_train, y_train, x_test, y_test = mm.make_train_test(
         df=df,
         split_date=dt(2021, 1, 1))
 
+    cv_args |= dict(
+        fit_params=sk.weighted_fit(name, weights=weights[x_train.index]),
+        return_estimator=True)
+
+    mm.init_cv(scoring=scoring, cv_args=cv_args, scorer=scorer)
+
+    models = dict(
+        lgbm=LGBMClassifier(
+            num_leaves=50, n_estimators=50, max_depth=30, boosting_type='dart', learning_rate=0.1))
+
+    mm.init_models(models)
+
     log.info(f'num_feats: {len(mm.ct.transformers[1][2])}')
 
 # %% - CROSS VALIDATION
+
 # --%%time
 #  --%%prun -s cumulative -l 40
-LGBM = LGBMRegressor if regression else LGBMClassifier
-
-models = dict(
-    lgbm=LGBM(
-        num_leaves=50, n_estimators=50, max_depth=30, boosting_type='dart', learning_rate=0.1)
-)
 
 # steps = [
 #     (1, ('pca', PCA(n_components=20, random_state=0)))]
 steps = None
-
-fit_params = dict(
-    fit_params=sk.weighted_fit(name, weights=weights[x_train.index]),
-    return_estimator=True)
-
-mm.cross_val(models, steps=steps, extra_cv_args=fit_params)
+mm.cross_val(models, steps=steps)
 res_dfs = [m.cv_data['df_result'] for m in mm.cv_data[name]]
 scorer.show_summary(dfs=res_dfs, scores=mm.scores[name])
 
@@ -256,7 +259,7 @@ if best_est:
 
 # TODO test iter_predict maxhigh/minlow
 
-if False:
+if True:
     # fit_params = sk.weighted_fit(name, n=mm.df_train.shape[0])
     fit_params = sk.weighted_fit(
         name=name,

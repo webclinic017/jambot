@@ -3,6 +3,7 @@ import inspect
 import operator as opr
 import sys
 from collections import defaultdict as dd
+from collections import deque
 from typing import *
 
 import numpy as np
@@ -20,6 +21,7 @@ from ta.volume import AccDistIndexIndicator  # noqa
 from ta.volume import MFIIndicator  # noqa
 from ta.volume import ChaikinMoneyFlowIndicator
 
+from jambot import config as cf
 from jambot import functions as f
 from jambot import getlog
 from jambot import sklearn_utils as sk
@@ -80,9 +82,9 @@ class SignalManager():
             df: pd.DataFrame,
             signals: list = None,
             signal_params: dict = None,
+            use_important: bool = False,
             **kw) -> pd.DataFrame:
         """Add multiple initialized signals to dataframe"""
-        # df = self.df
         if signals is None:
             signals = self.signals_list
 
@@ -94,23 +96,55 @@ class SignalManager():
         signal_params = signal_params or {}
         final_signals = {}
         drop_cols = []
+        require_cols = {}  # from signal_group, dict of all cols w their requirements
 
-        # SignalGroup obj, not single column
+        # Loop SignalGroup objs (not single columns)
         for signal_group in signals or []:
 
             # if str, init obj with defauls args
             if isinstance(signal_group, str):
                 signal_group = getattr(sys.modules[__name__], signal_group)()
 
+            # save to dict of self.signal_groups
             self.signal_groups[signal_group.class_name] = signal_group
 
             signal_group.df = df  # NOTE kinda sketch
             signal_group.slope = self.slope  # sketch too
             signal_group.sum = self.sum
-            # df = df.pipe(signal_group.add_all_signals, **kw)
             final_signals |= signal_group.make_signals(df=df, **kw)
             signal_group.df = None
             drop_cols += signal_group.drop_cols
+            require_cols |= signal_group.require_cols
+
+        # filter only most imporant cols before adding all
+        if use_important:
+            processed, dep_only = [], []
+            exclude_cols = f.load_pickle(p=cf.p_data / 'important_feats/least_imp_cols.pkl')
+            include_cols = [c for c in final_signals.keys() if not c in exclude_cols]
+            # important_cols.append('target')  # need target col, but won't be included in include_cols
+            q = deque(include_cols)
+            # log.info(f'loaded include_cols: {len(q)}')
+
+            # recursively handle identify cols which important cols are dependent on
+            while q:
+                col = q.pop()
+
+                # get list of columns that this col depends on, add to queue
+                dep_cols = require_cols.get(col, None)
+                if dep_cols:
+                    q.extend([c for c in f.as_list(dep_cols) if not c in processed])
+
+                # final cols which will be included
+                if not col in processed:
+                    processed.append(col)
+
+                    # cols which will be dropped after
+                    if not col in include_cols:
+                        dep_only.append(col)
+
+            final_signals = {k: v for k, v in final_signals.items() if k in processed}
+            drop_cols.extend(dep_only)
+            # print('drop_cols: ', drop_cols)
 
         # saves ~70mb peak
         dtypes = {np.float32: np.float16}
@@ -183,6 +217,7 @@ class SignalGroup():
 
     def __init__(self, df=None, signals=None, fillna=True, prefix: str = None, **kw):
         drop_cols, no_slope_cols, no_sum_cols, normal_slope_cols = [], [], [], []
+        require_cols = {}
         signals = self.init_signals(signals)
         slope = 0
         sum = 0
@@ -301,6 +336,19 @@ class SignalGroup():
 
         return final_signals
 
+    def update_deps(self, m: dict, prefix: str) -> None:
+        """Add original cols as dependency of new col with prefix
+
+        Parameters
+        ----------
+        m : dict
+            dict to add deps of
+        prefix : str
+            prefix to remove in dependent col
+        """
+        m_update = {k: k.replace(prefix, '') for k in m.keys()}
+        self.require_cols |= m_update
+
     def add_slope(self, signals: dict) -> dict:
         """Create dict of slope siglals for all input signals
         - add simple rate of change for all signal columns
@@ -317,11 +365,15 @@ class SignalGroup():
         """
         exclude = self.drop_cols + self.no_slope_cols
 
-        return {
+        m_dyx = {
             f'dyx_{c}': lambda x, c=c: self.make_slope(
                 s=x[c],
                 n_periods=self.slope,
                 normal_slope=c in self.normal_slope_cols) for c in signals if not c in exclude}
+
+        self.update_deps(m_dyx, prefix='dyx_')
+
+        return m_dyx
 
     def add_sum(self, signals: dict) -> dict:
         """Create dict of sum siglals for all input signals
@@ -337,9 +389,14 @@ class SignalGroup():
             slope signals
         """
         exclude = self.drop_cols + self.no_sum_cols
-        return {
+
+        m_sum = {
             f'sum_{c}': lambda x, c=c:
                 x[c].rolling(self.sum).sum().astype(np.float32) for c in signals if not c in exclude}
+
+        self.update_deps(m_sum, prefix='sum_')
+
+        return m_sum
 
     @property
     def default_cols(self) -> Dict[str, pd.Series]:
@@ -473,7 +530,7 @@ class Momentum(SignalGroup):
         )
 
         super().__init__(prefix='mnt', **kw)
-        drop_cols = ['awesome']
+        # drop_cols = ['awesome']
         f.set_self(vars())
 
 
@@ -512,11 +569,11 @@ class Volatility(SignalGroup):
 
         super().__init__(**kw)
         drop_cols = ['spread', 'vty_maxhigh', 'vty_minlow']
+        require_cols = dict(
+            vty_spread=['vty_maxhigh', 'vty_minlow'],
+            vty_ema='vty_spread',
+            vty_sma='vty_spread')
         f.set_self(vars())
-
-    def final(self, c):
-        # return self.df.norm_ema[i]
-        return c.norm_ema
 
 
 class Trend(SignalGroup):
@@ -539,9 +596,6 @@ class Trend(SignalGroup):
         # accept 1 to n series of trend signals, eg 1 or -1
         f.set_self(vars())
 
-    def final(self, c):
-        return c.trend
-
 
 class EMA(SignalGroup):
     """Add pxhigh, pxlow for rolling period, depending if ema_trend is positive or neg
@@ -549,9 +603,15 @@ class EMA(SignalGroup):
     w = with, a = agains, n = neutral (neutral not used)
     """
 
-    def __init__(self, fast=50, slow=200, speed=(24, 18), offset=1, **kw):
+    def __init__(
+            self,
+            fast: int = 50,
+            slow: int = 200,
+            # speed: Tuple[int, int] = (24, 18),
+            # offset: int = 1,
+            **kw):
 
-        against, wth, neutral = speed[0], speed[1], int(np.average(speed))
+        # against, wth, neutral = speed[0], speed[1], int(np.average(speed))
         colfast, colslow = f'ema_{fast}', f'ema_{slow}'
         c = self.get_c(maxspread=0.1)
 
@@ -561,40 +621,30 @@ class EMA(SignalGroup):
 
         kw['signals'] |= dict(
             ema_spread=lambda x: (x[colfast] - x[colslow]) / ((x[colfast] + x[colslow]) / 2),
-            # ema_trend=lambda x: np.where(x[colfast] > x[colslow], 1, -1),
-            ema_conf=lambda x: self.ema_exp(x=x.ema_spread, c=c),
+            ema_conf=lambda x: self.ema_exp(s=x.ema_spread, c=c),
         )
 
         super().__init__(**kw)
-        # drop_cols = ['mha', 'mhw', 'mla', 'mlw', 'mhn', 'mln']
-        no_sum_cols = list(m_emas)
-        normal_slope_cols = list(m_emas)
+
+        drop_cols = list(m_emas)
         no_slope_cols = ['ema_trend']
+
+        require_cols = dict(
+            ema_spread=[colfast, colslow],
+            ema_conf='ema_spread')
+
         f.set_self(vars())
 
-    # def add_all_signals(self, df):
-    #     return df \
-    #         .pipe(add_emas, emas=[self.fast, self.slow]) \
-    #         .pipe(super().add_all_signals)
-
-    def final(self, side, c):
-        temp_conf = abs(c.ema_conf)
-
-        if side * c.ema_trend == 1:
-            conf = 1.5 - temp_conf * 2
-        else:
-            conf = 0.5 + temp_conf * 2
-
-        return conf * self.weight
-
-    def get_c(self, maxspread):
+    def get_c(self, maxspread: float) -> float:
+        """C coefficient for use in ema_exp"""
         m = -2.9
         b = 0.135
         return round(m * maxspread + b, 2)
 
-    def ema_exp(self, x, c):
-        side = np.where(x >= 0, 1, -1)
-        x = abs(x)
+    def ema_exp(self, s: pd.Series, c: float) -> np.ndarray:
+        """Sigmoid ish func to squash difference btwn emas"""
+        side = np.where(s >= 0, 1, -1)
+        x = abs(s)
 
         aLim = 2
         a = -1000
@@ -608,6 +658,10 @@ class EMA(SignalGroup):
 
 
 class MACD(SignalGroup):
+    """MACD signals
+    - NOTE not used currently
+    """
+
     def __init__(self, fast=50, slow=200, smooth=50, **kw):
 
         kw['signals'] = dict(
@@ -699,9 +753,9 @@ class Candle(SignalGroup):
             cdl_full=lambda x: (x.high - x.low) / x.open,
             cdl_body=lambda x: (x.close - x.open) / x.open,
             cdl_full_rel=lambda x: relative_self(x.cdl_full, n=n_periods),
-            cdl_body_rel_6=lambda x: relative_self(x.cdl_body, n=6),
-            cdl_body_rel_12=lambda x: relative_self(x.cdl_body, n=12),
-            cdl_body_rel_24=lambda x: relative_self(x.cdl_body, n=24),
+            # cdl_body_rel_6=lambda x: relative_self(x.cdl_body, n=6),
+            # cdl_body_rel_12=lambda x: relative_self(x.cdl_body, n=12),
+            # cdl_body_rel_24=lambda x: relative_self(x.cdl_body, n=24),
             cdl_tail_high=lambda x: np.abs(x.high - x[['close', 'open']].max(axis=1)) / x.open,
             cdl_tail_low=lambda x: np.abs(x.low - x[['close', 'open']].min(axis=1)) / x.open,
             ema200_v_high=lambda x: np.abs(x.high - x.ema_200) / x.open,
@@ -720,7 +774,10 @@ class Candle(SignalGroup):
         ns = (6, 12, 24, 48, 96, 192)
         m_cvr = {f'cvr_{n}': lambda x, n=n: self.close_v_range(x, n_periods=n) for n in ns}
 
-        kw['signals'] |= m_cvr
+        ns = (6, 12, 24)
+        m_cdl_body = {f'cdl_body_rel_{n}': lambda x, n=n: relative_self(x.cdl_body, n=n) for n in ns}
+
+        kw['signals'] |= m_cvr | m_cdl_body
 
         super().__init__(**kw)
         drop_cols = ['min_n', 'range_n', 'pxhigh', 'pxlow']
@@ -734,6 +791,16 @@ class Candle(SignalGroup):
             'close_below_prevlow',
             'pxhigh',
             'pxlow']
+
+        require_cols = dict(
+            cdl_full_rel='cdl_full',
+            ema200_v_high='ema_200',
+            ema200_v_low='ema_200',
+            high_above_prevhigh='pxhigh',
+            close_above_prevhigh='pxhigh',
+            low_below_prevlow='pxlow',
+            close_below_prevlow='pxlow') \
+            | {k: 'cdl_body' for k in m_cdl_body}
 
         f.set_self(vars())
 
@@ -869,6 +936,9 @@ class TargetUpsideDownside(TargetMaxMin):
         drop_cols = ['target_max', 'target_min']
 
         self.signals = self.init_signals(self.signals)
+
+        require_cols = dict(
+            target=drop_cols)
 
         f.set_self(vars())
 

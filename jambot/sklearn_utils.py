@@ -715,14 +715,17 @@ class ShapManager():
         # .assign(importance=lambda x: x[cols].mean(axis=1)) \
         cols = ['importance']
         df = pd.DataFrame(data=data, index=num_cols, columns=cols) \
-            .sort_values('importance', ascending=False) \
-            .iloc[: n]
+            .sort_values('importance', ascending=False)
 
-        lst = df.index.tolist()
+        m_imp = dict(
+            most=df.iloc[: n].index.tolist(),
+            least=df.iloc[n:].index.tolist())
+
         if save:
-            f.save_pickle(lst, p=cf.p_data / 'important_feats', name='important_cols')
+            for name, lst in m_imp.items():
+                f.save_pickle(lst, p=cf.p_data / 'important_feats', name=f'{name}_imp_cols')
 
-        return lst if as_list else df
+        return m_imp if as_list else df
 
 
 def shap_top_features(shap_vals, X_sample):
