@@ -25,6 +25,8 @@ from jambot import config as cf
 from jambot import functions as f
 from jambot import getlog
 from jambot import sklearn_utils as sk
+from jambot.config import AZURE_WEB
+from jambot.utils.azureblob import BlobStorage
 
 log = getlog(__name__)
 
@@ -43,15 +45,11 @@ class SignalManager():
         signal_groups = {}
         features = {}  # map of {feature_name: signal_group}
         scaler = MinMaxScaler()
+
+        # cant add any new cols, but CAN exclude cols without pushing new code
+        bs = BlobStorage(container=cf.p_data / 'feats')
+
         f.set_self(vars())
-
-    def fit(self, X, y=None, **fit_params):
-        print('fit')
-        return self
-
-    def get_params(self, deep=True):
-        # NOTE not using as a transformer yet
-        return dict(thing1=1, thing2=2)
 
     def get_signal_group(self, feature_name: str) -> 'SignalGroup':
         """Return signal_group object from feature_name"""
@@ -119,11 +117,12 @@ class SignalManager():
         # filter only most imporant cols before adding all
         if use_important:
             processed, dep_only = [], []
-            exclude_cols = f.load_pickle(p=cf.p_data / 'important_feats/least_imp_cols.pkl')
+            if AZURE_WEB:
+                self.bs.download_dir()
+
+            exclude_cols = f.load_pickle(p=self.bs.p_local / 'least_imp_cols.pkl')
             include_cols = [c for c in final_signals.keys() if not c in exclude_cols]
-            # important_cols.append('target')  # need target col, but won't be included in include_cols
             q = deque(include_cols)
-            # log.info(f'loaded include_cols: {len(q)}')
 
             # recursively handle identify cols which important cols are dependent on
             while q:
