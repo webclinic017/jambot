@@ -19,7 +19,7 @@ log = getlog(__name__)
 
 
 class BlobStorage():
-    def __init__(self, container: str = 'jambot-app') -> None:
+    def __init__(self, container: Union[str, Path] = 'jambot-app') -> None:
         """
 
         Parameters
@@ -30,7 +30,21 @@ class BlobStorage():
         creds = SecretsManager('azure_blob.yaml').load
         client = BlobServiceClient.from_connection_string(creds['connection_string'])
 
+        # pass in full dir, but only use name
+        _p_local = None
+        if isinstance(container, Path):
+            _p_local = container
+            container = container.name
+
         f.set_self(vars())
+
+    @property
+    def p_local(self) -> Path:
+        """Local directory to upload/download to/from"""
+        if self._p_local is None:
+            raise RuntimeError('self.p_local not set!')
+
+        return self._p_local
 
     def get_container(self, container: Union[str, ContainerClient] = None) -> ContainerClient:
         """Get container object
@@ -66,17 +80,24 @@ class BlobStorage():
         # Delete blobs
         container.delete_blobs(*blob_list)
 
-    def upload_dir(self, p: Path, container: Union[str, ContainerClient] = None, mirror: bool = True) -> None:
+    def upload_dir(
+            self,
+            p: Path = None,
+            container: Union[str, ContainerClient] = None,
+            mirror: bool = True) -> None:
         """Upload entire dir files to container
 
         Parameters
         ----------
         p : Path
-            dir to upload
+            dir to upload, default self.p_local
         container : Union[str, ContainerClient], optional
         mirror : bool, optional
             if true, delete all contents from container first
         """
+        if p is None:
+            p = self.p_local
+
         self._validate_dir(p)
         container = self.get_container(container)
 
@@ -91,7 +112,11 @@ class BlobStorage():
 
         log.info(f'Uploaded [{i}] file(s) to container "{container.container_name}"')
 
-    def download_dir(self, p: Path, container: Union[str, ContainerClient] = None, mirror: bool = True) -> None:
+    def download_dir(
+            self,
+            p: Path = None,
+            container: Union[str, ContainerClient] = None,
+            mirror: bool = True) -> None:
         """Download entire container to local dir
 
         Parameters
@@ -102,6 +127,9 @@ class BlobStorage():
         mirror : bool, optional
             if true, clear local dir first, by default True
         """
+        if p is None:
+            p = self.p_local
+
         self._validate_dir(p)
         container = self.get_container(container)
 
