@@ -850,7 +850,7 @@ class Bitmex(Exchange):
 
         return df
 
-    def reconcile_orders(self, symbol: str, expected_orders: List[Order]) -> None:
+    def reconcile_orders(self, symbol: str, expected_orders: List[Order], discord_user: str = None) -> None:
         """Compare expected and actual (current) orders, adjust as required
 
         Parameters
@@ -869,7 +869,9 @@ class Bitmex(Exchange):
                 getattr(self, f'{action}_orders')(orders)
 
         # temp send order submit details to discord
-        m = dict(user=self.user)
+        user = self.user if discord_user is None else discord_user
+        # m = dict(user=user)
+        m = {}
         m_ords = {k: [o.short_stats for o in orders]
                   for k, orders in all_orders.items() if orders and not k == 'manual'}
 
@@ -877,7 +879,7 @@ class Bitmex(Exchange):
             m['current_qty'] = f'{self.current_qty(symbol=symbol):+,}'
             m |= m_ords
             msg = f.pretty_dict(m, prnt=False, bold_keys=True)
-            f.discord(msg=msg, channel='orders')
+            f.discord(msg=f'{user}\n{msg}', channel='orders')
 
         s = ', '.join([f'{action}={len(orders)}' for action, orders in all_orders.items()])
         log.info(f'{self.user} - Reconciled orders: {s}')

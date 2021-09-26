@@ -200,10 +200,15 @@ class UserSettings(GoogleSheet):
 
     def process_df(self, df: pd.DataFrame) -> pd.DataFrame:
 
+        m_types = {c: float for c in df.columns} \
+            | {
+                'bot_enabled': bool,
+                'discord': str}
+
         df = df \
             .replace(dict(TRUE=1, FALSE=0)) \
-            .astype(float) \
-            .assign(bot_enabled=lambda x: x.bot_enabled.astype(bool))
+            .astype(m_types) \
+            .assign(discord=lambda x: '<@' + x.discord + '>')
 
         # NOTE kinda sketch but works for now
         sym_cols = [c for c in df.columns if len(c) == 3]

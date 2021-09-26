@@ -94,6 +94,9 @@ def check_filled_orders(minutes: int = 5, exch: Bitmex = None, test: bool = True
     """
     starttime = dt.utcnow() + delta(minutes=minutes * -1)
 
+    # get discord username for tagging
+    df_users = gg.UserSettings().get_df()
+
     for exch in iter_exchanges(refresh=False):
 
         orders = exch.get_filled_orders(starttime=starttime)
@@ -110,7 +113,10 @@ def check_filled_orders(minutes: int = 5, exch: Bitmex = None, test: bool = True
                 prnt=False,
                 bold_keys=True)
 
-            msg = f'{f.py_codeblock(msg)}{current_qty}\n@here'
+            msg = '{}\n{}{}'.format(
+                df_users.loc[exch.user]['discord'],
+                f.py_codeblock(msg),
+                current_qty)
             f.discord(msg=msg, channel='orders')
 
 
@@ -384,6 +390,7 @@ def run_strat_live(interval: int = 15) -> None:
     symbol = SYMBOL
     name = 'lgbm'
     strat = run_strat(interval=interval, symbol=symbol, name=name)
+    df_users = gg.UserSettings().get_df()
 
     m_exch = {}
     for exch in iter_exchanges():
@@ -391,7 +398,8 @@ def run_strat_live(interval: int = 15) -> None:
 
         exch.reconcile_orders(
             symbol=symbol,
-            expected_orders=strat.broker.expected_orders(symbol=symbol, exch=exch))
+            expected_orders=strat.broker.expected_orders(symbol=symbol, exch=exch),
+            discord_user=df_users.loc[exch.user]['discord'])
 
     # write current strat trades/open positions to google
     write_balance_google(strat=strat, exch=m_exch['jayme'])
