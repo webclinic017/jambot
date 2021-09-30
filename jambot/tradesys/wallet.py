@@ -401,6 +401,7 @@ class Wallet(Observer):
         ax.yaxis.set_major_formatter(mticker.StrMethodFormatter('{x:.0f}'))
 
         ax.grid(axis='y', linewidth=0.3, which='both')
+        ax.grid(axis='x', linewidth=0.3, which='major')
         ax.autoscale_view()
         plt.xticks(rotation=45)
 
