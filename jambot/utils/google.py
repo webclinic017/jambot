@@ -225,12 +225,15 @@ class Bitmex(GoogleSheet):
 class TradeHistory(Bitmex):
     rng_start = (1, 15)
 
-    def set_df(self, strat, last: int = 15, **kw) -> None:
+    def set_df(self, strat, last: int = 20, **kw) -> None:
         """Set df of trade history to gs"""
         cols = ['ts', 'side', 'dur', 'entry', 'exit', 'pnl', 'pnl_acct', 'profitable', 'status']
         df = strat.df_trades(last=last)[cols].copy() \
             .pipe(self.as_percent, cols=('pnl', 'pnl_acct')) \
-            .pipe(f.remove_underscore)
+            .pipe(f.remove_underscore) \
+            .pipe(lambda df: df.append(pd.DataFrame(index=range(last - len(df))), ignore_index=True)) \
+            .assign(ts=lambda x: x.ts.dt.strftime('%Y-%m-%d %H:%M')) \
+            .fillna(dict(ts=''))
 
         super().set_df(df=df, **kw)
 
