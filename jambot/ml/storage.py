@@ -75,7 +75,6 @@ class ModelStorageManager(DictRepr):
 
     def fit_save_models(
             self,
-            df: pd.DataFrame = None,
             interval: int = 15) -> None:
         """Main control function for retraining new models each day
 
