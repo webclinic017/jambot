@@ -93,7 +93,12 @@ if True:
 if True:
     name = 'lgbm'
     cfg = md.model_cfg(name)
-    sm = sg.SignalManager(slope=1, sum=12)
+
+    slope = [1, 4, 8, 16, 32, 64]
+    _sum = [12, 24, 96]
+    # slope = 1
+    # _sum = 12
+    sm = sg.SignalManager(slope=slope, sum=_sum)
 
     n_periods = cfg['target_kw']['n_periods']
     p_ema = None  # 6
@@ -127,8 +132,11 @@ if True:
 
     # drop last rows which we cant set proper target
     # don't need to drop last n_periods rows if positive we aren't fitting on them
-    df = sm.add_signals(df=df, signals=signals, use_important=True) \
+    use_important = True
+    df = sm.add_signals(df=df, signals=signals, use_important=use_important) \
         # .iloc[:-1 * n_periods, :]
+    if not use_important:
+        df_all = df.copy()
 
     if not regression:
         sk.show_prop(df=df)
@@ -160,7 +168,7 @@ if True:
         )
 
     cv_args = dict(cv=cv, n_jobs=-1, return_train_score=True, scoring=scoring)
-    mm = md.make_model_manager(name=name, df=df, use_important=False)
+    mm = md.make_model_manager(name=name, df=df, use_important=use_important)
 
     x_train, y_train, x_test, y_test = mm.make_train_test(
         df=df,
@@ -264,7 +272,7 @@ if False:
     # fit_params = sk.weighted_fit(name, n=mm.df_train.shape[0])
     fit_params = sk.weighted_fit(
         name=name,
-        weights=sg.WeightedPercentMaxMin(8, weight_linear=False).get_weight(x_train))
+        weights=sg.WeightedPercentMaxMin(8, weight_linear=True).get_weight(x_train))
     # fit_params = None
 
     df_pred = mm \
@@ -326,6 +334,27 @@ ch.plot_strat_results(
     startdate=startdate,
     periods=periods)
 
+# %% - INIT SHAP MANAGER
+# x_shap = df.drop(columns=['target'])
+# y_shap = df.target
+# x_shap = x_test
+# y_shap = y_test
+x_shap = x_train
+y_shap = y_train
+sm = sk.ShapManager(x=x_shap, y=y_shap, ct=mm.ct, model=mm.models['lgbm'], n_sample=10_000)
+
+# %% - SHAP PLOT
+sm.plot(plot_type='violin')
+
+# %%
+sm.force_plot(sample_n=0)
+
+# %%
+res = sm.shap_n_important(n=60, save=True, upload=False, as_list=True)
+cols = res['most']
+cols
+
+
 # %% - DENSITY PLOTS
 # # %% time
 data = mm.ct.fit_transform(x_train)
@@ -363,17 +392,6 @@ fg \
 
 plt.show()
 
-# %% - INIT SHAP MANAGER
-sm = sk.ShapManager(x=x_train, y=y_train, ct=mm.ct, model=mm.models['lgbm'], n_sample=10_000)
-
-# %% - SHAP PLOT
-sm.plot(plot_type='violin')
-
-# %%
-sm.force_plot(sample_n=0)
-
-# %%
-sm.shap_n_important(n=60, save=True, upload=False)
 
 # %% - RIDGE
 models = dict(

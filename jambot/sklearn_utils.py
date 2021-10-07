@@ -637,9 +637,15 @@ class ShapManager():
         -------
         Tuple[shap.TreeExplainer, List[np.array], pd.DataFrame, pd.DataFrame]
         """
+        # TODO add weights!!
         data = self.ct.fit_transform(self.x)
         x_enc = df_transformed(data=data, ct=self.ct)
-        self.model.fit(x_enc, self.y)
+        self.model.fit(
+            x_enc,
+            self.y,
+            **weighted_fit(
+                name=None,
+                weights=sg.WeightedPercentMaxMin(8, weight_linear=True).get_weight(self.x)))
 
         # use smaller sample to speed up plot
         x_sample = x_enc.sample(self.n_sample, random_state=0)
@@ -1280,9 +1286,11 @@ def plot_pred_dist(df: pd.DataFrame, cols: list = None) -> None:
             .plot(kind='bar', ax=ax, title=col)
 
 
-def plot_cols(df: pd.DataFrame, expr: str = '.') -> None:
+def plot_cols(df: pd.DataFrame, expr: str = '.', cols: List[str] = None) -> None:
     """Plot all cols filtered by regex expr"""
-    cols = [c for c in df.columns if re.search(expr, c)]
+    if cols is None:
+        cols = [c for c in df.columns if re.search(expr, c)]
+
     ncols = len(cols)
 
     fig, axs = plt.subplots(nrows=ncols, sharex=True, figsize=(12, 2 * ncols))

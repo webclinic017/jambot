@@ -363,16 +363,21 @@ class SignalGroup():
             slope signals
         """
         exclude = self.drop_cols + self.no_slope_cols
+        m_dy = {}
 
-        m_dyx = {
-            f'dyx_{c}': lambda x, c=c: self.make_slope(
-                s=x[c],
-                n_periods=self.slope,
-                normal_slope=c in self.normal_slope_cols) for c in signals if not c in exclude}
+        for n_periods in f.as_list(self.slope):
+            prefix = f'dy{n_periods:02}_'
 
-        self.update_deps(m_dyx, prefix='dyx_')
+            m_temp = {
+                f'{prefix}{c}': lambda x, c=c, n_periods=n_periods: self.make_slope(
+                    s=x[c],
+                    n_periods=n_periods,
+                    normal_slope=c in self.normal_slope_cols) for c in signals if not c in exclude}
 
-        return m_dyx
+            self.update_deps(m_temp, prefix=prefix)
+            m_dy |= m_temp
+
+        return m_dy
 
     def add_sum(self, signals: dict) -> dict:
         """Create dict of sum siglals for all input signals
@@ -388,12 +393,17 @@ class SignalGroup():
             slope signals
         """
         exclude = self.drop_cols + self.no_sum_cols
+        m_sum = {}
 
-        m_sum = {
-            f'sum_{c}': lambda x, c=c:
-                x[c].rolling(self.sum).sum().astype(np.float32) for c in signals if not c in exclude}
+        for n_periods in f.as_list(self.sum):
+            prefix = f'sm{n_periods:02}_'
 
-        self.update_deps(m_sum, prefix='sum_')
+            m_temp = {
+                f'{prefix}{c}': lambda x, c=c, n_periods=n_periods:
+                    x[c].rolling(n_periods).sum().astype(np.float32) for c in signals if not c in exclude}
+
+            self.update_deps(m_temp, prefix=prefix)
+            m_sum |= m_temp
 
         return m_sum
 
@@ -511,11 +521,15 @@ class Momentum(SignalGroup):
             rsi_6=dict(cls=RSIIndicator, ta_func='rsi', window=6),
             rsi_12=dict(cls=RSIIndicator, ta_func='rsi', window=12),
             # rsi_24=dict(cls=RSIIndicator, ta_func='rsi', window=24),
-            pvo=dict(cls=PercentageVolumeOscillator, ta_func='pvo'),
-            roc=dict(cls=ROCIndicator, ta_func='roc', window=window),
+            pvo=dict(cls=PercentageVolumeOscillator, ta_func='pvo', window_slow=26, window_fast=12, window_sign=9),
+            roc=dict(cls=ROCIndicator, ta_func='roc', window=12),  # Rate of Change (similar to pct_change?)
             stoch=dict(cls=StochasticOscillator, ta_func='stoch', window=12, smooth_window=12),
-            tsi=dict(cls=TSIIndicator, ta_func='tsi'),
-            ultimate=dict(cls=UltimateOscillator, ta_func='ultimate_oscillator'),
+            tsi=dict(cls=TSIIndicator, ta_func='tsi', window_slow=25, window_fast=13),
+            ultimate=dict(
+                cls=UltimateOscillator,
+                ta_func='ultimate_oscillator',
+                window1=7, window2=14, window3=28,
+                weight1=4.0, weight2=2.0, weight3=1.0),
             # awesome=dict(
             #     cls=AwesomeOscillatorIndicator,
             #     ta_func='awesome_oscillator',
@@ -582,7 +596,7 @@ class Trend(SignalGroup):
             aroon=dict(cls=AroonIndicator, ta_func='aroon_indicator', window=25),
             cci=dict(cls=CCIIndicator, ta_func='cci', window=20, constant=0.015),
             # mass=dict(cls=MassIndex, ta_func='mass_index', window_fast=9, window_slow=25),
-            stc=dict(cls=STCIndicator, ta_func='stc'),
+            stc=dict(cls=STCIndicator, ta_func='stc', window_slow=50, window_fast=23, cycle=10, smooth1=3, smooth2=3),
             # dpo=dict(cls=DPOIndicator, ta_func='dpo'),
             # kst=dict(cls=KSTIndicator, ta_func='kst'),
             # trix=dict(cls=TRIXIndicator, ta_func='trix', window=48),
@@ -761,13 +775,11 @@ class Candle(SignalGroup):
             pct=lambda x: x.close.pct_change(24),
             # min_n=lambda x: x.low.rolling(n_periods).min(),
             # range_n=lambda x: (x.high.rolling(n_periods).max() - x.min_n),
-            cdl_side=lambda x: np.where(x.close > x.open, 1, -1).astype(np.int8),
+            # cdl_side=lambda x: np.where(x.close > x.open, 1, -1).astype(np.int8),
             cdl_full=lambda x: (x.high - x.low) / x.open,
             cdl_body=lambda x: (x.close - x.open) / x.open,
-            cdl_full_rel=lambda x: relative_self(x.cdl_full, n=n_periods),
-            # cdl_body_rel_6=lambda x: relative_self(x.cdl_body, n=6),
-            # cdl_body_rel_12=lambda x: relative_self(x.cdl_body, n=12),
-            # cdl_body_rel_24=lambda x: relative_self(x.cdl_body, n=24),
+            cdl_full_rel=lambda x: relative_self(x.cdl_full, n=24),
+            cdl_body_rel=lambda x: relative_self(x.cdl_body, n=24),
             cdl_tail_high=lambda x: np.abs(x.high - x[['close', 'open']].max(axis=1)) / x.open,
             cdl_tail_low=lambda x: np.abs(x.low - x[['close', 'open']].min(axis=1)) / x.open,
             ema200_v_high=lambda x: np.abs(x.high - x.ema_200) / x.open,
@@ -783,13 +795,13 @@ class Candle(SignalGroup):
         )
 
         # close v range
-        ns = (6, 12, 24, 48, 96, 192)
-        m_cvr = {f'cvr_{n}': lambda x, n=n: self.close_v_range(x, n_periods=n) for n in ns}
+        ns = (24, 48, 96, 192)
+        m_cvr = {f'cvr{n:03}': lambda x, n=n: self.close_v_range(x, n_periods=n) for n in ns}
 
-        ns = (6, 12, 24)
-        m_cdl_body = {f'cdl_body_rel_{n}': lambda x, n=n: relative_self(x.cdl_body, n=n) for n in ns}
+        # ns = (6, 12, 24)
+        # m_cdl_body = {f'cdl_body_rel_{n}': lambda x, n=n: relative_self(x.cdl_body, n=n) for n in ns}
 
-        kw['signals'] |= m_cvr | m_cdl_body
+        kw['signals'] |= m_cvr  # | m_cdl_body
 
         super().__init__(**kw)
         drop_cols = ['min_n', 'range_n', 'pxhigh', 'pxlow']
@@ -806,13 +818,14 @@ class Candle(SignalGroup):
 
         require_cols = dict(
             cdl_full_rel='cdl_full',
+            cdl_body_rel='cdl_body',
             ema200_v_high='ema_200',
             ema200_v_low='ema_200',
             high_above_prevhigh='pxhigh',
             close_above_prevhigh='pxhigh',
             low_below_prevlow='pxlow',
             close_below_prevlow='pxlow') \
-            | {k: 'cdl_body' for k in m_cdl_body}
+            # | {k: 'cdl_body' for k in m_cdl_body}
 
         f.set_self(vars())
 

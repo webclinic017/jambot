@@ -25,7 +25,9 @@ config = dict(
     interval=15,
     symbol='XBTUSD',
     drop_cols=['open', 'high', 'low', 'close', 'volume', 'ema_10', 'ema_50', 'ema_200'],
-    signalmanager_kw=dict(slope=1, sum=12)
+    signalmanager_kw=dict(
+        slope=[1, 4, 8, 16, 32, 64],
+        sum=[12, 24, 96])
 )
 
 colors = dict(
