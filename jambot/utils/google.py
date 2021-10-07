@@ -232,8 +232,7 @@ class TradeHistory(Bitmex):
             .pipe(self.as_percent, cols=('pnl', 'pnl_acct')) \
             .pipe(f.remove_underscore) \
             .pipe(lambda df: df.append(pd.DataFrame(index=range(last - len(df))), ignore_index=True)) \
-            .assign(ts=lambda x: x.ts.dt.strftime('%Y-%m-%d %H:%M')) \
-            .fillna(dict(ts=''))
+            .assign(ts=lambda x: x.ts.dt.strftime('%Y-%m-%d %H:%M'))
 
         super().set_df(df=df, **kw)
 
