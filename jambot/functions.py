@@ -509,7 +509,10 @@ def py_codeblock(msg: str) -> str:
     str
         msg with py codeblock wrapper
     """
-    return f'```py\n{msg}```\n'
+    n = 2000
+    out = [(msg[i:i + n]) for i in range(0, len(msg), n)]
+
+    return ''.join([f'```py\n{_msg}```\n' for _msg in out])
 
 
 def send_error(msg: str = None, prnt: bool = False, force: bool = False) -> None:
