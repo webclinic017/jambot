@@ -263,6 +263,7 @@ class BitmexOrder(BaseOrder, DictRepr, Serializable):
             key: str = None,
             stop_px: float = None,
             name: str = '',
+            prevent_market_fill: bool = False,
             **kw):
 
         # convert stop_px to price for stop orders
@@ -324,7 +325,7 @@ class BitmexOrder(BaseOrder, DictRepr, Serializable):
         - TODO will probably need to allow adding extra exec_inst specs
         """
         lst = []
-        if self.is_limit:
+        if self.is_limit and self.prevent_market_fill:
             # prevents order from market filling if wrong side or price
             lst.append('ParticipateDoNotInitiate')
 
