@@ -201,19 +201,19 @@ webencodings = "*"
 
 [[package]]
 name = "bravado"
-version = "11.0.3"
+version = "10.4.1"
 description = "Library for accessing Swagger-enabled API's"
 category = "main"
 optional = false
-python-versions = "!=3.0,!=3.1,!=3.2,!=3.3,!=3.4,!=3.5.0"
+python-versions = "*"
 
 [package.dependencies]
-bravado-core = ">=5.16.1"
+bravado-core = ">=5.0.1"
 monotonic = "*"
-msgpack = "*"
+msgpack-python = "*"
 python-dateutil = "*"
 pyyaml = "*"
-requests = ">=2.17"
+requests = ">=2.4"
 simplejson = "*"
 six = "*"
 typing-extensions = "*"
@@ -240,6 +240,18 @@ pyyaml = "*"
 simplejson = "*"
 six = "*"
 swagger-spec-validator = ">=2.0.1"
+
+[[package]]
+name = "bybit"
+version = "0.2.12"
+description = "Client for connecting to the Bybit Restful API."
+category = "dev"
+optional = false
+python-versions = "*"
+
+[package.dependencies]
+bravado = "10.4.1"
+urllib3 = "1.24.2"
 
 [[package]]
 name = "cachetools"
@@ -442,7 +454,7 @@ python-versions = "*"
 
 [[package]]
 name = "filprofiler"
-version = "2021.9.0"
+version = "2021.8.0"
 description = "A memory profiler for data batch processing applications."
 category = "dev"
 optional = false
@@ -1102,6 +1114,14 @@ tests = ["pytest (>=4.6)"]
 [[package]]
 name = "msgpack"
 version = "1.0.2"
+description = "MessagePack (de)serializer."
+category = "main"
+optional = false
+python-versions = "*"
+
+[[package]]
+name = "msgpack-python"
+version = "0.5.6"
 description = "MessagePack (de)serializer."
 category = "main"
 optional = false
@@ -2071,14 +2091,13 @@ python-versions = ">=2.7, !=3.0.*, !=3.1.*, !=3.2.*, !=3.3.*"
 
 [[package]]
 name = "urllib3"
-version = "1.26.7"
+version = "1.24.2"
 description = "HTTP library with thread-safe connection pooling, file post, and more."
 category = "main"
 optional = false
-python-versions = ">=2.7, !=3.0.*, !=3.1.*, !=3.2.*, !=3.3.*, !=3.4.*, <4"
+python-versions = ">=2.7, !=3.0.*, !=3.1.*, !=3.2.*, !=3.3.*, <4"
 
 [package.extras]
-brotli = ["brotlipy (>=0.6.0)"]
 secure = ["pyOpenSSL (>=0.14)", "cryptography (>=1.3.4)", "idna (>=2.0.0)", "certifi", "ipaddress"]
 socks = ["PySocks (>=1.5.6,!=1.5.7,<2.0)"]
 
@@ -2170,7 +2189,7 @@ multidict = ">=4.0"
 [metadata]
 lock-version = "1.1"
 python-versions = "^3.9"
-content-hash = "fca317e7fe1eccde9c5ad46573f784a48844bba83647b47ac7c8846ff0924a52"
+content-hash = "cdaa0c20cb5960332aacec05978e96cc243f16cbb81a8fca733da49be404c50a"
 
 [metadata.files]
 aenum = [
@@ -2287,12 +2306,15 @@ bleach = [
     {file = "bleach-4.1.0.tar.gz", hash = "sha256:0900d8b37eba61a802ee40ac0061f8c2b5dee29c1927dd1d233e075ebf5a71da"},
 ]
 bravado = [
-    {file = "bravado-11.0.3-py2.py3-none-any.whl", hash = "sha256:8ac8bbb645e49607917a5c07808116c708521f51e80d9c29bc4a168ff4dd22c6"},
-    {file = "bravado-11.0.3.tar.gz", hash = "sha256:1bb6ef75d84140c851fffe6420baaee5037d840070cfe11d60913be6ab8e0530"},
+    {file = "bravado-10.4.1-py2.py3-none-any.whl", hash = "sha256:0020c6426affaf39b8d8e9d75fba6abb1271248440ee8fa62253d32dd3a4ea31"},
+    {file = "bravado-10.4.1.tar.gz", hash = "sha256:0fd1bd1d24dd246846c931edfcd04617e83689a91dc6b415db28384568bf8961"},
 ]
 bravado-core = [
     {file = "bravado-core-5.17.0.tar.gz", hash = "sha256:b3b06ae86d3c80de5694340e55df7c9097857ff965b76642979e2a961f332abf"},
     {file = "bravado_core-5.17.0-py2.py3-none-any.whl", hash = "sha256:fa53e796ea574f905635a43871439a44713c2ef128c62a8fcc1d0ca8765cf855"},
+]
+bybit = [
+    {file = "Bybit-0.2.12.tar.gz", hash = "sha256:0718b2f9dfc69ddae4ebb7c644aa981cd5c5c6e2f6bb83e912328c63467c683b"},
 ]
 cachetools = [
     {file = "cachetools-4.2.2-py3-none-any.whl", hash = "sha256:2cc0b89715337ab6dbba85b5b50effe2b0c74e035d83ee8ed637cf52f12ae001"},
@@ -2433,14 +2455,14 @@ filelock = [
     {file = "filelock-3.0.12.tar.gz", hash = "sha256:18d82244ee114f543149c66a6e0c14e9c4f8a1044b5cdaadd0f82159d6a6ff59"},
 ]
 filprofiler = [
-    {file = "filprofiler-2021.9.0-cp36-cp36m-macosx_11_0_x86_64.whl", hash = "sha256:bf422d73c9e48477ef7672177cb9f7abbe669ef58751ee0f65fd05ad3d04d47b"},
-    {file = "filprofiler-2021.9.0-cp36-cp36m-manylinux_2_12_x86_64.manylinux2010_x86_64.whl", hash = "sha256:8c2d94696d6af035cf1c64dea642a5726957203657c7fbf53461470cf497ea66"},
-    {file = "filprofiler-2021.9.0-cp37-cp37m-macosx_11_0_x86_64.whl", hash = "sha256:2b4b0505c907925de628e38581debc05274727990f629bad602ec9997988aa91"},
-    {file = "filprofiler-2021.9.0-cp37-cp37m-manylinux_2_12_x86_64.manylinux2010_x86_64.whl", hash = "sha256:dbc1dcd79a2fb172b3e04110771f0dc15d23a51f61b30960f16ebe3f13afd49a"},
-    {file = "filprofiler-2021.9.0-cp38-cp38-macosx_11_0_x86_64.whl", hash = "sha256:dba2103fda530655140c34ccf342426466fcfaa3afb93c66cdf681067fc64935"},
-    {file = "filprofiler-2021.9.0-cp38-cp38-manylinux_2_12_x86_64.manylinux2010_x86_64.whl", hash = "sha256:7bd4ba283c750ed1e2b4f23ade6162e7b990ab95766a13aac6fe480192dcd96c"},
-    {file = "filprofiler-2021.9.0-cp39-cp39-macosx_11_0_x86_64.whl", hash = "sha256:cfeba022d7a38d221a8c8bc1260e807b5cedb76f5ab1c0f21e497fa98a7a3e5d"},
-    {file = "filprofiler-2021.9.0-cp39-cp39-manylinux_2_12_x86_64.manylinux2010_x86_64.whl", hash = "sha256:81e309fdc9785f43fda456ea7a9b91497ea458116f6b97483cdd3eb81661ef50"},
+    {file = "filprofiler-2021.8.0-cp36-cp36m-macosx_10_15_x86_64.whl", hash = "sha256:ac25487783ce5c06c3f3678d1e3f040cb2cb54f608619ef9082113120f7a5da7"},
+    {file = "filprofiler-2021.8.0-cp36-cp36m-manylinux_2_12_x86_64.manylinux2010_x86_64.whl", hash = "sha256:6a6028efd2180e41cb735cd49c534d5d9223f4ab6e47d76151e29800ade7c966"},
+    {file = "filprofiler-2021.8.0-cp37-cp37m-macosx_10_15_x86_64.whl", hash = "sha256:eaa0903fc2b87c62823cf44c47852f438298627649634f8d31112bf560e34a1d"},
+    {file = "filprofiler-2021.8.0-cp37-cp37m-manylinux_2_12_x86_64.manylinux2010_x86_64.whl", hash = "sha256:ed01e4efd09cc586c8f0b5bca8240b1a545c9a379c345fbd5df3fe6dcb9af12f"},
+    {file = "filprofiler-2021.8.0-cp38-cp38-macosx_10_15_x86_64.whl", hash = "sha256:f170e880b1c6f312dfead268264422099d8643d3818f6b825b82c8476ecd5784"},
+    {file = "filprofiler-2021.8.0-cp38-cp38-manylinux_2_12_x86_64.manylinux2010_x86_64.whl", hash = "sha256:51bdb474512dd017cac8bed1fc941a31f5b49189fc0dc1d9b000d24d0e935c05"},
+    {file = "filprofiler-2021.8.0-cp39-cp39-macosx_10_15_x86_64.whl", hash = "sha256:805c8d56f9e23075ef737aeceaeae0f4f6e42ec38df14a11e830d0e8a274d990"},
+    {file = "filprofiler-2021.8.0-cp39-cp39-manylinux_2_12_x86_64.manylinux2010_x86_64.whl", hash = "sha256:1682b0dd4f344f8226de10f5aea42d9516af43f96183a23163ce1b3e08a150e0"},
 ]
 findiff = [
     {file = "findiff-0.8.9.tar.gz", hash = "sha256:c89eade4ad7f7adfa3871ba00235c582ef42b6dba0e2d84c78e242be70cdbe64"},
@@ -2885,6 +2907,9 @@ msgpack = [
     {file = "msgpack-1.0.2-cp39-cp39-win32.whl", hash = "sha256:c747c0cc08bd6d72a586310bda6ea72eeb28e7505990f342552315b229a19b33"},
     {file = "msgpack-1.0.2-cp39-cp39-win_amd64.whl", hash = "sha256:d8167b84af26654c1124857d71650404336f4eb5cc06900667a493fc619ddd9f"},
     {file = "msgpack-1.0.2.tar.gz", hash = "sha256:fae04496f5bc150eefad4e9571d1a76c55d021325dcd484ce45065ebbdd00984"},
+]
+msgpack-python = [
+    {file = "msgpack-python-0.5.6.tar.gz", hash = "sha256:378cc8a6d3545b532dfd149da715abae4fda2a3adb6d74e525d0d5e51f46909b"},
 ]
 msrest = [
     {file = "msrest-0.6.21-py2.py3-none-any.whl", hash = "sha256:c840511c845330e96886011a236440fafc2c9aff7b2df9c0a92041ee2dee3782"},
@@ -3659,8 +3684,8 @@ uritemplate = [
     {file = "uritemplate-3.0.1.tar.gz", hash = "sha256:5af8ad10cec94f215e3f48112de2022e1d5a37ed427fbd88652fa908f2ab7cae"},
 ]
 urllib3 = [
-    {file = "urllib3-1.26.7-py2.py3-none-any.whl", hash = "sha256:c4fdf4019605b6e5423637e01bc9fe4daef873709a7973e195ceba0a62bbc844"},
-    {file = "urllib3-1.26.7.tar.gz", hash = "sha256:4987c65554f7a2dbf30c18fd48778ef124af6fab771a377103da0585e2336ece"},
+    {file = "urllib3-1.24.2-py2.py3-none-any.whl", hash = "sha256:4c291ca23bbb55c76518905869ef34bdd5f0e46af7afe6861e8375643ffee1a0"},
+    {file = "urllib3-1.24.2.tar.gz", hash = "sha256:9a247273df709c4fedb38c711e44292304f73f39ab01beda9f6b9fc375669ac3"},
 ]
 virtualenv = [
     {file = "virtualenv-20.8.1-py2.py3-none-any.whl", hash = "sha256:10062e34c204b5e4ec5f62e6ef2473f8ba76513a9a617e873f1f8fb4a519d300"},

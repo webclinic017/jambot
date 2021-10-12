@@ -45,9 +45,10 @@ TA-Lib = "^0.4.19"
 findiff = "^0.8.9"
 icecream = "^2.1.0"
 memory-profiler = "^0.58.0"
-filprofiler = "^2021.7.1"
+filprofiler = "==2021.8.0"
 colored-traceback = "^0.3.0"
 colorlog = "^6.4.1"
+Bybit = "^0.2.12"
 
 [tool.pytest.ini_options]
 testpaths = [
