@@ -143,16 +143,10 @@ class SignalManager():
 
             final_signals = {k: v for k, v in final_signals.items() if k in processed}
             drop_cols.extend(dep_only)
-            # print('drop_cols: ', drop_cols)
-
-        # saves ~70mb peak
-        dtypes = {np.float32: np.float16}
 
         # remove first rows that can't be set with 200ema accurately
-        # NOTE using reduce_dtypes does affect the model's random seed and results
         return df.assign(**final_signals) \
             .pipe(f.safe_drop, cols=drop_cols) \
-            .pipe(f.reduce_dtypes, dtypes=dtypes) \
             .iloc[self.cut_periods:, :] \
             .fillna(0)
 
