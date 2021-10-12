@@ -30,6 +30,7 @@ class Strategy(StrategyBase):
             min_agree_pct: float = 0.8,
             regression: bool = False,
             market_on_timeout: bool = False,
+            order_offset: float = -0.0005,
             **kw):
         super().__init__(symbol=symbol, **kw)
 
@@ -148,7 +149,7 @@ class Strategy(StrategyBase):
 
         if not trade is None:
             if trade.is_open:
-                order = self.limit_close(target_price, side, -0.0005).add(trade)
+                order = self.limit_close(target_price, side, self.order_offset).add(trade)
             elif trade.is_pending:
                 trade.close()
 
@@ -159,7 +160,7 @@ class Strategy(StrategyBase):
         trade = self.make_trade()
 
         # order = self.market_open(target_price, side)
-        order = self.limit_open(target_price, side, -0.0005).add(trade)
+        order = self.limit_open(target_price, side, self.order_offset).add(trade)
         trade_prev = self.get_trade(-2)
 
         if not trade_prev is None:
