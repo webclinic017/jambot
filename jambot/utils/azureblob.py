@@ -164,9 +164,11 @@ class BlobStorage():
         with open(p, 'wb') as file:
             file.write(blob.download_blob().readall())
 
+        log.info(f'Downloaded "{blob.blob_name}"" from container "{container.container_name}"')
+
         return blob
 
-    def upload_file(self, p: Path, container: str = None) -> None:
+    def upload_file(self, p: Path, container: Union[str, ContainerClient] = None) -> None:
         """Save local file to container
 
         Parameters
@@ -182,7 +184,9 @@ class BlobStorage():
             raise FileNotFoundError(f'Data file: "{p.name}" does not exist.')
 
         with open(p, 'rb') as file:
-            blob = container.upload_blob(name=p.name, data=file)
+            blob = container.upload_blob(name=p.name, data=file, overwrite=True)
+
+        log.info(f'Uploaded "{blob.blob_name}"" to container "{container.container_name}"')
 
     def show_containers(self) -> None:
         """Show list of container names"""
