@@ -199,7 +199,7 @@ class BaseOrder(object, metaclass=ABCMeta):
 
     def to_dict(self) -> dict:
 
-        price = f'{self.price:,.0f}' if not self.price is None else None
+        price = f'{self.price:_.0f}' if not self.price is None else None
 
         return dict(
             ts=self.format_ts(self.timestamp_start),
