@@ -54,6 +54,11 @@ test:  ## run tests
 creds:  ## re-encrypt credentials
 	$(utils) --encrypt_creds
 
+.PHONY : fit_models
+fit_models:  ## fit models for last 3 days, upload to azure
+	$(utils) --fit_models
+
+
 .PHONY : codecount
 codecount:  ## show lines of code
 	@pygount --suffix=py --format=summary jambot
