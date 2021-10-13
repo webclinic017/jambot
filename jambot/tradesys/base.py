@@ -200,7 +200,7 @@ class Observer(DictRepr, metaclass=ABCMeta):
         max_depth : int, optional
             max depth of listeners to print, by default 10
         """
-        from jambot.sklearn_utils import pretty_dict
+        from jambot.functions import pretty_dict
         pretty_dict(self.listener_tree(max_depth=max_depth))
 
 

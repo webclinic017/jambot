@@ -268,7 +268,7 @@ if best_est:
 
 # TODO test iter_predict maxhigh/minlow
 
-if False:
+if True:
     # fit_params = sk.weighted_fit(name, n=mm.df_train.shape[0])
     fit_params = sk.weighted_fit(
         name=name,
@@ -288,7 +288,7 @@ else:
         .add_predict_iter(
             df=df,
             name=name,
-            batch_size=24 * 4 * 2,
+            batch_size=24 * 4 * 4,
             min_size=mm.df_train.shape[0],
             max_train_size=None,
             regression=regression)
@@ -313,19 +313,19 @@ bm = bt.BacktestManager(
 
 periods = 60 * 24 * 4
 startdate = dt(2021, 5, 1)
-startdate = dt(2021, 1, 1)
+startdate = dt(2021, 8, 1)
 startdate = None
 
 df_balance = strat.wallet.df_balance
 df_trades = strat.df_trades()
 
 # cv data
-i = 3
-m = mm.cv_data['lgbm'][i].cv_data
-startdate = m['startdate']
-startdate = dt(2020, 3, 1)
-df_balance = m['df_balance']
-df_trades = m['df_trades']
+# i = 3
+# m = mm.cv_data['lgbm'][i].cv_data
+# startdate = m['startdate']
+# startdate = dt(2020, 3, 1)
+# df_balance = m['df_balance']
+# df_trades = m['df_trades']
 
 ch.plot_strat_results(
     df=df_pred.pipe(f.clean_cols, cols + ['target']),
@@ -335,12 +335,12 @@ ch.plot_strat_results(
     periods=periods)
 
 # %% - INIT SHAP MANAGER
-# x_shap = df.drop(columns=['target'])
-# y_shap = df.target
+x_shap = df.drop(columns=['target'])
+y_shap = df.target
 # x_shap = x_test
 # y_shap = y_test
-x_shap = x_train
-y_shap = y_train
+# x_shap = x_train
+# y_shap = y_train
 sm = sk.ShapManager(x=x_shap, y=y_shap, ct=mm.ct, model=mm.models['lgbm'], n_sample=10_000)
 
 # %% - SHAP PLOT
