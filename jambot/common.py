@@ -2,7 +2,11 @@ import json
 from abc import ABCMeta, abstractmethod
 
 from joblib import Parallel
-from tqdm.auto import tqdm
+
+try:
+    from tqdm.auto import tqdm
+except ModuleNotFoundError:
+    pass
 
 
 class DictRepr(object, metaclass=ABCMeta):
