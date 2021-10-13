@@ -16,8 +16,6 @@ from jambot.config import SYMBOL
 from jambot.tradesys.base import Observer, SignalEvent
 from jambot.tradesys.enums import OrderStatus, OrderType, TradeSide
 
-# from .__init__ import *
-
 log = getlog(__name__)
 
 
@@ -535,6 +533,7 @@ class Order(BaseOrder, Observer, metaclass=ABCMeta):
             self,
             order_id: str = None,
             timeout: int = float('inf'),
+            trail_close: float = None,
             **kw):
 
         super().__init__(**kw)
@@ -597,10 +596,28 @@ class Order(BaseOrder, Observer, metaclass=ABCMeta):
     def stoppx(self):
         return self.price * (1 + self.slippage * self.side)
 
+    def max_qty(self, price: float = None) -> float:
+        """get max available qty at current price"""
+        price = price or self.price
+        return self.parent.wallet.available_quantity(price=price) * self.side
+
     def adjust_max_qty(self) -> None:
-        """Set qty to max available"""
-        qty = self.parent.wallet.available_quantity(price=self.price) * self.side
-        self.parent.broker.amend_order(order=self, qty=qty)
+        """Set qty to max available
+        """
+        self.parent.broker.amend_order(order=self, qty=self.max_qty())
+
+    def adjust_price(self, price: float) -> None:
+        """Adjust price and max qty
+
+        Parameters
+        ----------
+        price : float
+        """
+
+        # can't change close order's qty
+        qty = None if self.is_reduce else self.max_qty(price)
+
+        self.parent.broker.amend_order(order=self, qty=qty, price=price)
 
     def to_dict(self) -> dict:
         """Add t_num for strat Orders"""
@@ -617,6 +634,13 @@ class LimitOrder(Order):
     @classmethod
     def example(cls):
         return cls(qty=-1000, price=8888)
+
+    def step(self):
+
+        # adjust price/qty to offset from current close
+        if not self.trail_close is None and not self.is_filled:
+            price = f.get_price(pnl=self.trail_close, entry_price=self.c.close, side=self.side)
+            self.adjust_price(price=price)
 
 
 class MarketOrder(Order):

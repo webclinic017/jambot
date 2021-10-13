@@ -123,7 +123,9 @@ class Strategy(StrategyBase):
             price=limit_price,
             offset=offset,
             timeout=timeout,
-            name=f'limit_{name}')
+            name=f'limit_{name}',
+            trail_close=self.order_offset
+        )
 
         if self.market_on_timeout or name == 'close':
             order.timedout.connect(lambda order, name=name: self.market_late(order, name=name))
