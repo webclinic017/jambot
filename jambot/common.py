@@ -1,6 +1,9 @@
 import json
 from abc import ABCMeta, abstractmethod
 
+from joblib import Parallel
+from tqdm.auto import tqdm
+
 
 class DictRepr(object, metaclass=ABCMeta):
     """Class to add better string rep with to_dict"""
@@ -53,3 +56,22 @@ class Serializable(dict, metaclass=ABCMeta):
     def to_json(self) -> str:
         """Json dump self to string"""
         return json.dumps(self)
+
+
+class ProgressParallel(Parallel):
+    """Modified from https://stackoverflow.com/a/61900501/6278428"""
+
+    def __init__(self, use_tqdm: bool = True, total: int = None, *args, **kwargs):
+        self._use_tqdm = use_tqdm
+        self._total = total
+        super().__init__(*args, **kwargs)
+
+    def __call__(self, *args, **kwargs):
+        with tqdm(disable=not self._use_tqdm, total=self._total) as self._pbar:
+            return Parallel.__call__(self, *args, **kwargs)
+
+    def print_progress(self):
+        if self._total is None:
+            self._pbar.total = self.n_dispatched_tasks
+        self._pbar.n = self.n_completed_tasks
+        self._pbar.refresh()
