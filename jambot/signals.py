@@ -808,7 +808,9 @@ class Candle(SignalGroup):
             'low_below_prevlow',
             'close_below_prevlow',
             'pxhigh',
-            'pxlow']
+            'pxlow',
+            'cdl_tail_low',
+            'cdl_tail_high']
 
         require_cols = dict(
             cdl_full_rel='cdl_full',
