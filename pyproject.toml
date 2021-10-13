@@ -49,6 +49,7 @@ filprofiler = "==2021.8.0"
 colored-traceback = "^0.3.0"
 colorlog = "^6.4.1"
 Bybit = "^0.2.12"
+graphviz = "^0.17"
 
 [tool.pytest.ini_options]
 testpaths = [
