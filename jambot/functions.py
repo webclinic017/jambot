@@ -489,11 +489,49 @@ def discord(msg: str, channel: str = 'jambot', log: Callable = None) -> None:
     # Create webhook
     webhook = Webhook.partial(r.id, r.token, adapter=RequestsWebhookAdapter())
 
-    # split into strings of max 2000 char for discord
-    n = 2000
-    out = [(msg[i:i + n]) for i in range(0, len(msg), n)]
+    # check for py codeblocks
+    expr = r'(\`\`\`py.+?\`\`\`)'
+    expr2 = r'\`\`\`py\n(.+?)\`\`\`'
+    res = re.split(expr, msg, flags=re.MULTILINE | re.DOTALL)
 
+    # split_n = lambda msg, n: [msg[i:i + n] for i in range(0, len(msg), n)]
+
+    def split_n(msg, n):
+        """split msg into groups less than length n, considering newlines"""
+        temp = ''
+        out = []
+
+        for msg in msg.split('\n'):
+            if len(temp) + len(msg) > n:
+                out.append(temp)
+                temp = ''
+
+            temp += f'\n{msg}'
+
+        return out + [temp]
+
+    # split into strings of max 2000 char for discord
+    out = []
+    for msg in res:
+        if '```py' in msg:
+            # extract long error
+            msg = re.search(expr2, msg, flags=re.MULTILINE | re.DOTALL).groups()[0]
+            split = [py_codeblock(s) for s in split_n(msg, 1980)]
+        else:
+            split = split_n(msg, 2000)
+
+        out.extend(split)
+
+    temp = ''
+    final = []
     for msg in out:
+        if len(temp) + len(msg) > 2000:
+            final.append(temp)
+            temp = ''
+
+        temp += msg
+
+    for msg in final + [temp]:
         webhook.send(msg)
 
 
@@ -509,10 +547,7 @@ def py_codeblock(msg: str) -> str:
     str
         msg with py codeblock wrapper
     """
-    n = 2000
-    out = [(msg[i:i + n]) for i in range(0, len(msg), n)]
-
-    return ''.join([f'```py\n{_msg}```\n' for _msg in out])
+    return f'```py\n{msg}```'
 
 
 def send_error(msg: str = None, prnt: bool = False, force: bool = False) -> None:
@@ -536,7 +571,7 @@ def send_error(msg: str = None, prnt: bool = False, force: bool = False) -> None
         err = f'{py_codeblock(err)}{dt.utcnow():%Y-%m-%d %H:%M:%S}'
 
     # add custom msg to traceback if paassed
-    msg = err if msg is None else f'{msg}\n{err}'  # .replace(':\nNoneType: None', '')
+    msg = err if msg is None else f'{msg}\n{err}'
 
     # print if local dev, else send to discord
     if prnt or not to_discord:
