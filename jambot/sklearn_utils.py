@@ -6,6 +6,7 @@ from typing import *
 
 import numpy as np
 import pandas as pd
+from joblib import delayed
 from sklearn.base import BaseEstimator
 from sklearn.compose import ColumnTransformer
 from sklearn.decomposition import PCA
@@ -25,6 +26,7 @@ from jambot import display
 from jambot import functions as f
 from jambot import getlog
 from jambot import signals as sg
+from jambot.common import ProgressParallel
 from jambot.ml import models as md
 from jambot.utils.azureblob import BlobStorage
 
@@ -35,7 +37,6 @@ try:
     ic.configureOutput(prefix='')
 
     import matplotlib.pyplot as plt
-    from tqdm import tqdm
 
 except (ImportError, ModuleNotFoundError) as e:
     pass
@@ -365,11 +366,6 @@ class ModelManager(object):
             regression: bool = False) -> pd.DataFrame:
         """Retrain model every x periods and add predictions for next batch_size"""
         df_train = df.copy()
-        df = df.copy()
-
-        df['y_pred'] = np.NaN
-        if not regression:
-            df['proba_long'] = np.NaN
 
         nrows = df.shape[0]
         num_batches = ((nrows - min_size) // batch_size) + 1
@@ -382,18 +378,12 @@ class ModelManager(object):
         if model is None:
             model = self.pipes[name]
 
-        # TODO make this Parallel
+        # TODO speed up by not using full pipeline? no drop cols/column transformer?
 
-        # return num_batches
-        for i in tqdm(range(num_batches)):
-
+        def _fit(i: int) -> pd.DataFrame:
             i_lower = min_size + i * batch_size
             i_upper = min(i_lower + batch_size, nrows + 1)
             idx = df.index[i_lower: i_upper]
-
-            # max number of rows to train on
-            # if max_train_size is None:
-            #     max_train_size = i_lower
 
             # train model up to current position
             x_train, y_train = split(
@@ -404,30 +394,18 @@ class ModelManager(object):
                 x_train,
                 y_train,
                 **weighted_fit(name=name, weights=weights.loc[x_train.index])
-                # **weighted_fit(name='lgbm', n=x_train.shape[0])
             )
 
-            # add preds to model
             x_test, _ = split(df_train.loc[idx], target=self.target)
-            y_pred = model.predict(x_test)
-            y_true = df.loc[idx, self.target]
 
-            if not regression:
-                # df.loc[idx, 'proba_long'] = self.df_proba(df=x_test, model=model)['proba_long'].values
-                df.loc[idx, 'proba_long'] = df_proba(x=x_test, model=model)['proba_long'].values
+            return pd.DataFrame(
+                index=idx,
+                data=dict(
+                    y_pred=model.predict(x_test),
+                    proba_long=df_proba(x=x_test, model=model)['proba_long']))
 
-            # rmse = mean_squared_error(y_true=y_true, y_pred=y_pred, squared=False)
-
-            df.loc[idx, 'y_pred'] = y_pred
-
-        df_final = df[[self.target, 'y_pred']].dropna()
-        # rmse_final = mean_squared_error(
-        #     y_true=df_final[self.target].values,
-        #     y_pred=df_final['y_pred'].values,
-        #     squared=False)
-        # print(f'\nrmse_final: {rmse_final:.4f}')
-
-        return df
+        result = ProgressParallel(n_jobs=-1, total=num_batches)(delayed(_fit)(i=i) for i in range(num_batches))
+        return df.pipe(f.left_merge, pd.concat(result))
 
     def add_predict(
             self,
