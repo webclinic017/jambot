@@ -108,7 +108,7 @@ class BlobStorage():
         i = 0
         for _p in p.iterdir():
             if not _p.is_dir():
-                self.upload_file(p=_p, container=container)
+                self.upload_file(p=_p, container=container, _log=False)
                 i += 1
 
         log.info(f'Uploaded [{i}] file(s) to container "{container.container_name}"')
@@ -141,7 +141,7 @@ class BlobStorage():
         # blob here is BlobProperties
         i = 0
         for blob in container.list_blobs():
-            self.download_file(p=p / blob.name, container=container)
+            self.download_file(p=p / blob.name, container=container, _log=False)
             i += 1
 
         log.info(f'Downloaded [{i}] file(s) from container "{container.container_name}"')
@@ -149,7 +149,8 @@ class BlobStorage():
     def download_file(
             self,
             p: Path,
-            container: Union[str, ContainerClient] = None) -> Path:
+            container: Union[str, ContainerClient] = None,
+            _log: bool = True) -> Path:
         """Download file from container and save to local file
 
         Parameters
@@ -164,11 +165,12 @@ class BlobStorage():
         with open(p, 'wb') as file:
             file.write(blob.download_blob().readall())
 
-        log.info(f'Downloaded "{blob.blob_name}"" from container "{container.container_name}"')
+        if _log:
+            log.info(f'Downloaded "{blob.blob_name}"" from container "{container.container_name}"')
 
         return blob
 
-    def upload_file(self, p: Path, container: Union[str, ContainerClient] = None) -> None:
+    def upload_file(self, p: Path, container: Union[str, ContainerClient] = None, _log: bool = True) -> None:
         """Save local file to container
 
         Parameters
@@ -186,7 +188,8 @@ class BlobStorage():
         with open(p, 'rb') as file:
             blob = container.upload_blob(name=p.name, data=file, overwrite=True)
 
-        log.info(f'Uploaded "{blob.blob_name}"" to container "{container.container_name}"')
+        if _log:
+            log.info(f'Uploaded "{blob.blob_name}"" to container "{container.container_name}"')
 
     def show_containers(self) -> None:
         """Show list of container names"""
