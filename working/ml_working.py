@@ -7,6 +7,7 @@ if True:
     from datetime import timedelta as delta
     from pathlib import Path
 
+    import lightgbm as lgb
     import matplotlib as mpl
     import matplotlib.pyplot as plt
     import numpy as np
@@ -354,6 +355,11 @@ res = sm.shap_n_important(n=60, save=True, upload=False, as_list=True)
 cols = res['most']
 cols
 
+# %% LGBM Tree Digraph
+lgb.create_tree_digraph(
+    sm.model,
+    show_info=['internal_count', 'leaf_count', 'data_percentage'],
+    orientation='vertical')
 
 # %% - DENSITY PLOTS
 # # %% time
