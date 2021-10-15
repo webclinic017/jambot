@@ -95,10 +95,10 @@ if True:
     name = 'lgbm'
     cfg = md.model_cfg(name)
 
-    slope = [1, 4, 8, 16, 32, 64]
-    _sum = [12, 24, 96]
-    # slope = 1
-    # _sum = 12
+    # slope = [1, 4, 8, 16, 32, 64]
+    # _sum = [12, 24, 96]
+    slope = cf.config['signalmanager_kw']['slope']
+    _sum = cf.config['signalmanager_kw']['sum']
     sm = sg.SignalManager(slope=slope, sum=_sum)
 
     n_periods = cfg['target_kw']['n_periods']
@@ -269,7 +269,7 @@ if best_est:
 
 # TODO test iter_predict maxhigh/minlow
 
-if True:
+if False:
     # fit_params = sk.weighted_fit(name, n=mm.df_train.shape[0])
     fit_params = sk.weighted_fit(
         name=name,
@@ -289,7 +289,7 @@ else:
         .add_predict_iter(
             df=df,
             name=name,
-            batch_size=24 * 4 * 4,
+            batch_size=24 * 4 * 1,
             min_size=mm.df_train.shape[0],
             max_train_size=None,
             regression=regression)
@@ -342,22 +342,23 @@ y_shap = df.target
 # y_shap = y_test
 # x_shap = x_train
 # y_shap = y_train
-sm = sk.ShapManager(x=x_shap, y=y_shap, ct=mm.ct, model=mm.models['lgbm'], n_sample=10_000)
+spm = sk.ShapManager(x=x_shap, y=y_shap, ct=mm.ct, model=mm.models['lgbm'], n_sample=10_000)
 
 # %% - SHAP PLOT
-sm.plot(plot_type='violin')
+spm.plot(plot_type='violin')
 
 # %%
-sm.force_plot(sample_n=0)
+spm.force_plot(sample_n=0)
 
 # %%
-res = sm.shap_n_important(n=60, save=True, upload=False, as_list=True)
+res = spm.shap_n_important(n=60, save=True, upload=False, as_list=True)
 cols = res['most']
 cols
 
 # %% LGBM Tree Digraph
+spm.check_init()
 lgb.create_tree_digraph(
-    sm.model,
+    spm.model,
     show_info=['internal_count', 'leaf_count', 'data_percentage'],
     orientation='vertical')
 
