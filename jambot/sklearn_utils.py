@@ -398,14 +398,17 @@ class ModelManager(object):
 
             x_test, _ = split(df_train.loc[idx], target=self.target)
 
-            return pd.DataFrame(
-                index=idx,
-                data=dict(
-                    y_pred=model.predict(x_test),
-                    proba_long=df_proba(x=x_test, model=model)['proba_long']))
+            if len(idx) == 0:
+                return None
+            else:
+                return pd.DataFrame(
+                    index=idx,
+                    data=dict(
+                        y_pred=model.predict(x_test),
+                        proba_long=df_proba(x=x_test, model=model)['proba_long']))
 
         result = ProgressParallel(n_jobs=-1, total=num_batches)(delayed(_fit)(i=i) for i in range(num_batches))
-        return df.pipe(f.left_merge, pd.concat(result))
+        return df.pipe(f.left_merge, pd.concat([df for df in result if not df is None]))
 
     def add_predict(
             self,
