@@ -121,6 +121,10 @@ class SignalManager():
                 self.bs.download_dir()
 
             exclude_cols = f.load_pickle(p=self.bs.p_local / 'least_imp_cols.pkl')
+
+            if not exclude_cols:
+                raise RuntimeError('No cols in exclude_cols')
+
             include_cols = [c for c in final_signals.keys() if not c in exclude_cols]
             q = deque(include_cols)
 
@@ -209,7 +213,8 @@ class SignalGroup():
         volume='volume')
 
     def __init__(self, df=None, signals=None, fillna=True, prefix: str = None, **kw):
-        drop_cols, no_slope_cols, no_sum_cols, normal_slope_cols = [], [], [], []
+        drop_cols, no_slope_cols, no_sum_cols, not_normal_cols = [], [], [], []
+        force_slope_cols = []
         require_cols = {}
         signals = self.init_signals(signals)
         slope = 0
@@ -356,7 +361,7 @@ class SignalGroup():
         dict
             slope signals
         """
-        exclude = self.drop_cols + self.no_slope_cols
+        exclude = list(set(self.drop_cols + self.no_slope_cols) - set(self.force_slope_cols))
         m_dy = {}
 
         for n_periods in f.as_list(self.slope):
@@ -366,7 +371,7 @@ class SignalGroup():
                 f'{prefix}{c}': lambda x, c=c, n_periods=n_periods: self.make_slope(
                     s=x[c],
                     n_periods=n_periods,
-                    normal_slope=c in self.normal_slope_cols) for c in signals if not c in exclude}
+                    normal_slope=not c in self.not_normal_cols) for c in signals if not c in exclude}
 
             self.update_deps(m_temp, prefix=prefix)
             m_dy |= m_temp
@@ -475,8 +480,8 @@ class SignalGroup():
             slope of series
         """
         # return (s - np.roll(s, n_periods, axis=0)) / n_periods
-        if normal_slope:
-            return (s.pct_change(n_periods) / n_periods).astype(np.float32)
+        if not normal_slope:
+            return s.pct_change(n_periods).astype(np.float32)
         else:
             return (s.diff(n_periods) / n_periods).astype(np.float32)
 
@@ -511,10 +516,6 @@ class FeatureInteraction(SignalGroup):
 class Momentum(SignalGroup):
     def __init__(self, window=2, **kw):
         kw['signals'] = dict(
-            rsi_2=dict(cls=RSIIndicator, ta_func='rsi', window=window, params=dict(window=[2, 6, 12, 18, 24, 36])),
-            rsi_6=dict(cls=RSIIndicator, ta_func='rsi', window=6),
-            rsi_12=dict(cls=RSIIndicator, ta_func='rsi', window=12),
-            # rsi_24=dict(cls=RSIIndicator, ta_func='rsi', window=24),
             pvo=dict(cls=PercentageVolumeOscillator, ta_func='pvo', window_slow=26, window_fast=12, window_sign=9),
             roc=dict(cls=ROCIndicator, ta_func='roc', window=12),  # Rate of Change (similar to pct_change?)
             stoch=dict(cls=StochasticOscillator, ta_func='stoch', window=12, smooth_window=12),
@@ -535,6 +536,9 @@ class Momentum(SignalGroup):
             # awesome_rel=lambda x: x.mnt_awesome / x.ema50
             # kama=dict(cls=KAMAIndicator, ta_func='kama', window=12, pow1=2, pow2=30, row=1)
         )
+        ns = (2, 6, 12, 24)
+        m_rsi = {f'rsi{n:02}': dict(cls=RSIIndicator, ta_func='rsi', window=n) for n in ns}
+        kw['signals'] |= m_rsi
 
         super().__init__(prefix='mnt', **kw)
         # drop_cols = ['awesome']
@@ -619,11 +623,11 @@ class EMA(SignalGroup):
             **kw):
 
         # against, wth, neutral = speed[0], speed[1], int(np.average(speed))
-        colfast, colslow = f'ema_{fast}', f'ema_{slow}'
+        colfast, colslow = f'ema{fast}', f'ema{slow}'
         c = self.get_c(maxspread=0.1)
 
         emas = [10, 50, 200]
-        m_emas = {f'ema_{n}': dict(cls=EMAIndicator, ta_func='ema_indicator', window=n) for n in emas}
+        m_emas = {f'ema{n}': dict(cls=EMAIndicator, ta_func='ema_indicator', window=n) for n in emas}
         kw['signals'] = copy.copy(m_emas)
 
         kw['signals'] |= dict(
@@ -634,6 +638,8 @@ class EMA(SignalGroup):
         super().__init__(**kw)
 
         drop_cols = list(m_emas)
+        force_slope_cols = list(m_emas)
+        not_normal_cols = list(m_emas)
         no_slope_cols = ['ema_trend']
 
         require_cols = dict(
@@ -776,8 +782,8 @@ class Candle(SignalGroup):
             cdl_body_rel=lambda x: relative_self(x.cdl_body, n=24),
             cdl_tail_high=lambda x: np.abs(x.high - x[['close', 'open']].max(axis=1)) / x.open,
             cdl_tail_low=lambda x: np.abs(x.low - x[['close', 'open']].min(axis=1)) / x.open,
-            ema200_v_high=lambda x: np.abs(x.high - x.ema_200) / x.open,
-            ema200_v_low=lambda x: np.abs(x.low - x.ema_200) / x.open,
+            ema200_v_high=lambda x: np.abs(x.high - x.ema200) / x.open,
+            ema200_v_low=lambda x: np.abs(x.low - x.ema200) / x.open,
             pxhigh=lambda x: x.high.rolling(n_periods).max().shift(1),
             pxlow=lambda x: x.low.rolling(n_periods).min().shift(1),
             high_above_prevhigh=lambda x: np.where(x.high > x.pxhigh, 1, 0).astype(bool),
@@ -815,8 +821,8 @@ class Candle(SignalGroup):
         require_cols = dict(
             cdl_full_rel='cdl_full',
             cdl_body_rel='cdl_body',
-            ema200_v_high='ema_200',
-            ema200_v_low='ema_200',
+            ema200_v_high='ema200',
+            ema200_v_low='ema200',
             high_above_prevhigh='pxhigh',
             close_above_prevhigh='pxhigh',
             low_below_prevlow='pxlow',
@@ -875,7 +881,7 @@ class TargetClass(SignalGroup):
 
     def __init__(self, p_ema=10, n_periods=10, pct_min=0.02, **kw):
         super().__init__(**kw)
-        ema_col = f'ema_{p_ema}'  # named so can drop later
+        ema_col = f'ema{p_ema}'  # named so can drop later
         pct_min = pct_min / 2
 
         f.set_self(vars())
@@ -1064,7 +1070,7 @@ def add_emas(df, emas: list = None):
 def add_ema(df, p, c='close', col=None, overwrite=True):
     """Add ema from close price to df if column doesn't already exist (more than one signal may add an ema"""
     if col is None:
-        col = f'ema_{p}'
+        col = f'ema{p}'
 
     if not col in df.columns or overwrite:
         # df[col] = df[c].ewm(span=p, min_periods=p).mean()
