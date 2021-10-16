@@ -10,6 +10,7 @@ from typing import *
 
 import pandas as pd
 from bitmex import bitmex
+from BitMEXAPIKeyAuthenticator import APIKeyAuthenticator
 
 from jambot import SYMBOL, display
 from jambot import functions as f
@@ -37,6 +38,10 @@ class Bitmex(SwaggerExchange):
         order_link_id='clOrdID'
     )
 
+    api_host = 'https://www.bitmex.com'
+    api_host_test = 'https://testnet.bitmex.com'
+    api_spec = '/api/explorer/swagger.json'
+
     def __init__(self, user: str, test: bool = False, refresh: bool = False, **kw):
         super().__init__(user=user, test=test, **kw)
         self.partialcandle = None
@@ -46,8 +51,13 @@ class Bitmex(SwaggerExchange):
         if refresh:
             self.refresh()
 
-    def client_cls(self):
+    @staticmethod
+    def client_cls():
         return bitmex
+
+    @staticmethod
+    def client_api_auth():
+        return APIKeyAuthenticator
 
     def _get_positions(self) -> List[dict]:
         return self.client.Position.Position_get().result()[0]
@@ -246,7 +256,7 @@ class Bitmex(SwaggerExchange):
             if not isinstance(item, dict):
                 raise AttributeError(f'Invalid order specs returned from bitmex. {type(item)}: {item}')
 
-        return ords.make_bitmex_orders(order_specs)
+        return ords.make_exch_orders(order_specs)
 
     def set_orders(
             self,

@@ -2,12 +2,16 @@ import json
 import re
 import time
 import warnings
-from abc import ABCMeta, abstractmethod, abstractproperty
+from abc import ABCMeta, abstractmethod, abstractproperty, abstractstaticmethod
+from datetime import datetime as dt
 from typing import *
 
+import requests
 from bravado.client import SwaggerClient
+from bravado.requests_client import RequestsClient
 from swagger_spec_validator.common import SwaggerValidationWarning
 
+from jambot import config as cf
 from jambot import functions as f
 from jambot import getlog
 from jambot.config import AZURE_WEB
@@ -19,10 +23,17 @@ log = getlog(__name__)
 class Exchange(object, metaclass=ABCMeta):
     """Base object to represent an exchange connection"""
 
-    def __init__(self, user: str, test: bool = False, pct_balance: float = 1, **kw):
+    def __init__(
+            self,
+            user: str,
+            test: bool = False,
+            pct_balance: float = 1,
+            from_local: bool = True,
+            **kw):
 
+        self.exchange_name = self.__class__.__name__.lower()
         self._creds = self.load_creds(user=user)
-        self._client = self.init_client(test=test)
+        self._client = self.init_client(test=test, from_local=from_local)
 
         f.set_self(vars())
 
@@ -69,9 +80,11 @@ class Exchange(object, metaclass=ABCMeta):
 class SwaggerExchange(Exchange, metaclass=ABCMeta):
     """Class for exchanges using Swagger spec"""
     div = abstractproperty()
-    client_cls = abstractproperty()
     wallet_keys = abstractproperty()
     order_keys = abstractproperty()
+    api_host = abstractproperty()
+    api_host_test = abstractproperty()
+    api_spec = abstractproperty()
 
     def __init__(self, *args, **kw):
         super().__init__(*args, **kw)
@@ -85,10 +98,96 @@ class SwaggerExchange(Exchange, metaclass=ABCMeta):
         self._orders = None
         self._positions = None
 
-    def init_client(self, test: bool = False) -> SwaggerClient:
-        """Init api swagger client"""
+    @staticmethod
+    @abstractstaticmethod
+    def client_cls():
+        pass
+
+    @staticmethod
+    @abstractstaticmethod
+    def client_api_auth():
+        """Bybit/bitmex have similar but slightly different api authenticators"""
+        pass
+
+    @classmethod
+    def load_swagger_spec(cls, test: bool) -> dict:
+        """Load swagger spec from local file"""
+        exchange = cls.__name__.lower()
+        name = exchange
+        if test:
+            name += '-test'
+
+        p = cf.p_res / f'swagger/{name}.json'
+        with open(p, 'rb') as file:
+            return json.load(file)
+
+    @classmethod
+    def update_local_spec(cls) -> None:
+        """Get updated swagger.json spec from exch api and write to local"""
+        hosts = [cls.api_host, cls.api_host_test]
+        urls = [host + cls.api_spec for host in hosts]
+        exchange = cls.__name__.lower()
+
+        for url in urls:
+            name = exchange
+            if 'test' in url:
+                name += '-test'
+
+            p = cf.p_res / f'swagger/{name}.json'
+
+            with open(p, 'w+', encoding='utf-8') as file:
+                m = json.loads(requests.get(url).text)
+                json.dump(m, file)
+
+            log.info(f'Saved swagger spec from: {url}')
+
+    def init_client(
+            self,
+            test: bool = False,
+            from_local: bool = True,
+            swagger_spec: dict = None) -> SwaggerClient:
+        """Init api swagger client
+
+        Parameters
+        ----------
+        test : bool, optional
+            use testnet api, by default False
+        from_local : bool, optional
+            load locally saved swagger spec instead of from html
+            (0.5s load total instead of ~1.3s per user), by default True
+            - NOTE not sure if this will work indefinitely, or fail quickly if exchange changes api
+
+        Returns
+        -------
+        SwaggerClient
+            initialized swagger api client
+        """
         warnings.simplefilter('ignore', SwaggerValidationWarning)
-        return self.client_cls()(test=test, api_key=self.key, api_secret=self.secret)
+
+        if from_local:
+            host = self.api_host_test if test else self.api_host
+            spec_uri = host + self.api_spec
+
+            config = dict(
+                use_models=False,
+                validate_responses=False,
+                also_return_response=True,
+                host=host)
+
+            request_client = RequestsClient()
+            request_client.authenticator = self.client_api_auth()(host, self.key, self.secret)
+
+            # either load from file, or pass in for faster loading per exchange user
+            spec = swagger_spec or self.load_swagger_spec(test=test)
+
+            return SwaggerClient.from_spec(
+                spec_dict=spec,
+                origin_url=spec_uri,
+                http_client=request_client,
+                config=config)
+
+        else:
+            return self.client_cls()(test=test, api_key=self.key, api_secret=self.secret)
 
     def refresh(self):
         """Set margin balance, current position info, all orders"""
@@ -245,7 +344,21 @@ class SwaggerExchange(Exchange, metaclass=ABCMeta):
                 raise RuntimeError('Order spec has already been processed!')
 
             o['processed'] = True
-            o['sideStr'] = o['side']
+            o['exchange'] = self.exchange_name
+
+            # bybit specific
+            if self.exchange_name == 'bybit':
+                o['price'] = float(o['price'])
+                o['currency'] = o['symbol'][-3:]
+
+                for key in ('stop_loss', 'take_profit'):
+                    if float(o[key]) == 0:
+                        o[key] = None
+
+                for key in ('created_at', 'updated_at'):
+                    o[key] = dt.strptime(o[key], '%Y-%m-%dT%H:%M:%S.%f%z')
+
+            o['side_str'] = o['side']
             o['side'] = 1 if o['side'] == 'Buy' else -1
 
             # some orders can have none qty if "close position" market order cancelled by bitmex

@@ -1,10 +1,10 @@
-# from datetime import timedelta as delta
 from datetime import datetime as dt
 from datetime import timezone as tz
 from typing import *
 
 import pandas as pd
 from bybit import bybit
+from BybitAuthenticator import APIKeyAuthenticator
 
 from jambot import functions as f
 from jambot import getlog
@@ -30,14 +30,23 @@ class Bybit(SwaggerExchange):
         order_link_id='order_link_id'
     )
 
+    api_host = 'https://api.bybit.com'
+    api_host_test = 'https://api-testnet.bybit.com'
+    api_spec = '/doc/swagger/v_0_2_12.txt'
+
     def __init__(self, user: str, test: bool = False, refresh: bool = False, **kw):
         super().__init__(user=user, test=test, **kw)
 
         if refresh:
             self.refresh()
 
-    def client_cls(self):
+    @staticmethod
+    def client_cls():
         return bybit
+
+    @staticmethod
+    def client_api_auth():
+        return APIKeyAuthenticator
 
     def _get_total_balance(self) -> dict:
         return self.check_request(self.client.Wallet.Wallet_getBalance(coin='BTC'))['result']['BTC']
