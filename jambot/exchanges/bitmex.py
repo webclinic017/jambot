@@ -1,6 +1,5 @@
 import itertools
 import json
-import re
 import time
 import warnings
 from collections import defaultdict as dd
@@ -11,37 +10,35 @@ from typing import *
 
 import pandas as pd
 from bitmex import bitmex
-from swagger_spec_validator.common import SwaggerValidationWarning
 
 from jambot import SYMBOL, display
 from jambot import functions as f
 from jambot import getlog
 from jambot.config import AZURE_WEB
-from jambot.exchanges.exchange import Exchange
+from jambot.exchanges.exchange import SwaggerExchange
 from jambot.tradesys import orders as ords
-from jambot.tradesys.orders import BitmexOrder, Order
-from jambot.utils.secrets import SecretsManager
+from jambot.tradesys.orders import ExchOrder, Order
 
 log = getlog(__name__)
 warnings.filterwarnings('ignore', category=Warning, message='.*format is not registered')
 
 
-class Bitmex(Exchange):
+class Bitmex(SwaggerExchange):
     div = 100000000
+    wallet_keys = dict(
+        avail_margin='excessMargin',
+        total_balance_margin='marginBalance',
+        total_balance_wallet='walletBalance',
+        unrealized_pnl='unrealisedPnl',
+        prev_pnl='prevRealisedPnl')
+
+    order_keys = dict(
+        qty='orderQty',
+        order_link_id='clOrdID'
+    )
 
     def __init__(self, user: str, test: bool = False, refresh: bool = False, **kw):
         super().__init__(user=user, test=test, **kw)
-        # self.name = ''
-        # self.nameshort = ''
-        self.balance_set = False
-        self.avail_margin = 0
-        self.total_balance_margin = 0
-        self.total_balance_wallet = 0
-        self.reserved_balance = 0
-        self.unrealized_pnl = 0
-        self.prev_pnl = 0
-        self._orders = None
-        self._positions = None
         self.partialcandle = None
 
         f.set_self(vars(), exclude=('refresh',))
@@ -49,117 +46,11 @@ class Bitmex(Exchange):
         if refresh:
             self.refresh()
 
-    @classmethod
-    def default(cls, test: bool = True, refresh: bool = True, **kw) -> 'Bitmex':
-        """Create Bitmex obj with default name"""
-        user = 'jayme' if not test else 'testnet'
-        return cls(user=user, test=test, refresh=refresh, **kw)
+    def client_cls(self):
+        return bitmex
 
-    def load_creds(self, user: str):
-        """Load creds from csv"""
-        df = SecretsManager('bitmex.csv').load \
-            .set_index('user')
-
-        if not user in df.index:
-            raise RuntimeError(f'User "{user}" not in saved credentials.')
-
-        return df.loc[user].to_dict()
-
-    def init_client(self, test: bool = False):
-        warnings.simplefilter('ignore', SwaggerValidationWarning)
-        return bitmex(test=test, api_key=self.key, api_secret=self.secret)
-
-    def refresh(self):
-        """Set margin balance, current position info, all orders"""
-        self.set_total_balance()
-        self.set_positions()
-        self.set_orders()
-
-    @property
-    def orders(self):
-        return self._orders
-
-    @property
-    def balance(self) -> float:
-        """Get current exchange balance in Xbt, minus user-defined "reserved" balance
-        - "Wallet Balance" on bitmex, NOT "Available Balance"
-
-        Returns
-        -------
-        float
-        """
-        return self.total_balance_wallet - self.reserved_balance
-
-    def check_request(self, request, retries: int = 0):
-        """
-        Perform http request and retry with backoff if failed
-
-        - type(request) = bravado.http_future.HttpFuture
-        - type(response) = bravado.response.BravadoResponse
-        - response = request.response(fallback_result=[400], exceptions_to_catch=bravado.exception.HTTPBadRequest)
-        """
-        # bravado.exception.HTTPBadRequest
-
-        try:
-            # 400 HttpBadRequest raised at response()
-            response = request.response(fallback_result='')
-            status = response.metadata.status_code
-            backoff = 0.5
-
-            if status < 300:
-                return response.result
-            elif status == 503 and retries < 7:
-                retries += 1
-                sleeptime = backoff * (2 ** retries - 1)
-                time.sleep(sleeptime)
-                return self.check_request(request=request, retries=retries)
-            else:
-                f.send_error('{}: {}\n{}'.format(status, response.result, request.future.request.data))
-
-        except Exception as e:
-            data = request.future.request.data
-            err_msg = e.swagger_result.get('error', {}).get('message', '')
-
-            if 'balance' in err_msg.lower():
-                # convert eg 6559678800 sats to 65.597 btc for easier reading
-                n = re.search(r'(\d+)', err_msg)
-                if n:
-                    n = n.group()
-                    err_msg = err_msg.replace(n, str(round(int(n) / self.div, 3)))
-
-                m_bal = dict(
-                    avail_margin=self.avail_margin,
-                    total_balance_margin=self.total_balance_margin,
-                    total_balance_wallet=self.total_balance_wallet,
-                    unpl=self.unrealized_pnl)
-
-                data['avail_balance'] = {k: round(v, 3) for k, v in m_bal.items()}
-
-            # request data is dict of {key: str(list(dict))}
-            # need to deserialize inner items first
-            if isinstance(data, dict):
-                m = {k: json.loads(v) if isinstance(v, str) else v for k, v in data.items()}
-                data = f.pretty_dict(m=m, prnt=False, bold_keys=True)
-
-            if AZURE_WEB:
-                f.send_error(f'{e.status_code} {e.__class__.__name__}: {err_msg}\n{data}')
-            else:
-                raise e
-
-    def get_position(self, symbol: str) -> dict:
-        """Get position for specific symbol"""
-        return self._positions.get(symbol.lower(), {})
-
-    def set_positions(self) -> None:
-        """Set position for all symbols"""
-        res = self.client.Position.Position_get().result()[0]
-
-        # store as dict with symbol as keys
-        self._positions = {}
-
-        for pos in res:
-            symbol = pos['symbol']
-            self._positions[symbol.lower()] = pos
+    def _get_positions(self) -> List[dict]:
+        return self.client.Position.Position_get().result()[0]
 
     def get_instrument(self, symbol: str = SYMBOL) -> dict:
         """Get symbol stats dict
@@ -181,6 +72,7 @@ class Bitmex(Exchange):
 
     def last_price(self, symbol: str = SYMBOL) -> float:
         """Get last price for symbol (used for testing)
+        - NOTE not currently used
 
         Parameters
         ----------
@@ -214,7 +106,23 @@ class Bitmex(Exchange):
             return {k: v['currentQty'] for k, v in self._positions.items()}
 
     def df_orders(self, symbol: str = SYMBOL, new_only: bool = True, refresh: bool = False) -> pd.DataFrame:
-        orders = self.get_orders(symbol=symbol, new_only=new_only, refresh=refresh, as_bitmex=True)
+        """Used to display orders in google sheet
+
+        Parameters
+        ----------
+        symbol : str, optional
+            default SYMBOL
+        new_only : bool, optional
+            default True
+        refresh : bool, optional
+            default False
+
+        Returns
+        -------
+        pd.DataFrame
+            df of orders
+        """
+        orders = self.get_orders(symbol=symbol, new_only=new_only, refresh=refresh, as_exch_order=True)
         cols = ['order_type', 'name', 'qty', 'price', 'exec_inst', 'symbol']
 
         if not orders:
@@ -229,20 +137,7 @@ class Bitmex(Exchange):
                 by=['symbol', 'order_type', 'name'],
                 ascending=[False, True, True])
 
-    def get_order_by_key(self, key):
-        if self._orders is None:
-            self.set_orders(new_only=True)
-
-        # Manual orders don't have a key, not unique
-        orders = list(filter(lambda x: 'key' in x.keys(), self._orders))
-        orders = list(filter(lambda x: x['key'] == key, orders))
-
-        if orders:
-            return orders[0]  # assuming only one order will match given key
-        else:
-            return dd(type(None))
-
-    def get_filled_orders(self, symbol: str = SYMBOL, starttime: dt = None) -> List[BitmexOrder]:
+    def get_filled_orders(self, symbol: str = SYMBOL, starttime: dt = None) -> List[ExchOrder]:
         """Get orders filled since last starttime
 
         - NOTE This refreshes and sets exch orders to recent Filled/PartiallyFilled only
@@ -256,7 +151,7 @@ class Bitmex(Exchange):
 
         Returns
         -------
-        List[BitmexOrder]
+        List[ExchOrder]
             list of recently filled orders
         """
         if starttime is None:
@@ -265,7 +160,7 @@ class Bitmex(Exchange):
         fltr = dict(ordStatus=['Filled', 'PartiallyFilled'])
 
         self.set_orders(fltr=fltr, starttime=starttime, reverse=False)
-        return self.bitmex_order_from_raw(order_specs=self._orders, process=False)
+        return self.exch_order_from_raw(order_specs=self._orders, process=False)
 
     def get_orders(
             self,
@@ -273,9 +168,9 @@ class Bitmex(Exchange):
             new_only: bool = False,
             bot_only: bool = False,
             manual_only: bool = False,
-            as_bitmex: bool = True,
+            as_exch_order: bool = True,
             as_dict: bool = False,
-            refresh: bool = False) -> Union[List[dict], List[BitmexOrder], Dict[str, BitmexOrder]]:
+            refresh: bool = False) -> Union[List[dict], List[ExchOrder], Dict[str, ExchOrder]]:
         """Get orders which match criterion
 
         Parameters
@@ -288,7 +183,7 @@ class Bitmex(Exchange):
             orders created by bot, default False
         manual_only : bool, optional
             orders not created by bot, by default False
-        as_bitmex : bool, optional
+        as_exch_order : bool, optional
             return BitmexOrders instead of raw list of dicts, default True
         as_dict : bool, optional
             return Dict[str, BitmexOrders] instead of list (for matching)
@@ -297,13 +192,13 @@ class Bitmex(Exchange):
 
         Returns
         -------
-        Union[List[dict], List[BitmexOrder] Dict[str, BitmexOrder]]
-            list of RAW order dicts, list of bitmex orders, or dict of str: BitmexOrder
+        Union[List[dict], List[ExchOrder] Dict[str, ExchOrder]]
+            list of RAW order dicts, list of bitmex orders, or dict of str: ExchOrder
         """
         if refresh or self._orders is None:
             self.set_orders()
 
-        var = {k: v for k, v in vars().items() if not v in ('as_bitmex', 'refresh', 'as_dict')}
+        var = {k: v for k, v in vars().items() if not v in ('as_exch_order', 'refresh', 'as_dict')}
 
         # define filters
         conds = dict(
@@ -317,17 +212,17 @@ class Bitmex(Exchange):
 
         orders = [o for o in self._orders if all(cond(o) for cond in conds.values())]
 
-        if as_bitmex:
-            orders = self.bitmex_order_from_raw(order_specs=orders, process=False)
+        if as_exch_order:
+            orders = self.exch_order_from_raw(order_specs=orders, process=False)
 
         if as_dict:
             orders = ords.list_to_dict(orders, key_base=False)
 
         return orders
 
-    def bitmex_order_from_raw(self, order_specs: list, process: bool = True) -> List[BitmexOrder]:
+    def exch_order_from_raw(self, order_specs: list, process: bool = True) -> List[ExchOrder]:
         """Create bitmex order objs from raw specs
-        - top level wrapper to both add raw specs and convert to BitmexOrder
+        - top level wrapper to both add raw specs and convert to ExchOrder
 
         Parameters
         ----------
@@ -336,7 +231,7 @@ class Bitmex(Exchange):
 
         Returns
         -------
-        List[BitmexOrder]
+        List[ExchOrder]
             list of bitmex orders
         """
         if process:
@@ -352,58 +247,6 @@ class Bitmex(Exchange):
                 raise AttributeError(f'Invalid order specs returned from bitmex. {type(item)}: {item}')
 
         return ords.make_bitmex_orders(order_specs)
-
-    def add_custom_specs(self, order_specs: List[dict]) -> List[dict]:
-        """Preprocess orders from exchange to add custom markers
-
-        Parameters
-        ----------
-        order_specs : List[dict]
-            list of order specs from bitmex
-
-        Returns
-        -------
-        List[dict]
-            list of order specs with custom keys added
-
-        Raises
-        ------
-        RuntimeError
-            if order has already been processed
-        """
-        if order_specs is None:
-            log.warning('No orders to add custom specs to.')
-            return
-
-        for o in f.as_list(order_specs):
-            if 'processed' in o.keys():
-                raise RuntimeError('Order spec has already been processed!')
-
-            o['processed'] = True
-            o['sideStr'] = o['side']
-            o['side'] = 1 if o['side'] == 'Buy' else -1
-
-            # some orders can have none qty if "close position" market order cancelled by bitmex
-            if not o['orderQty'] is None:
-                o['orderQty'] = int(o['side'] * o['orderQty'])
-
-            # add key to the order, excluding manual orders
-            if not o['clOrdID'] == '':
-                # o['name'] = '-'.join(o['clOrdID'].split('-')[1:-1])
-                o['name'] = o['clOrdID'].split('-')[1]
-
-                if not 'manual' in o['clOrdID']:
-                    # replace 10 digit timestamp from key if exists
-                    o['key'] = re.sub(r'-\d{10}', '', o['clOrdID'])
-                    # print(o['key'])
-                    o['manual'] = False
-                else:
-                    o['manual'] = True
-            else:
-                o['name'] = '(manual)'
-                o['manual'] = True
-
-        return order_specs
 
     def set_orders(
             self,
@@ -435,20 +278,10 @@ class Bitmex(Exchange):
 
         return rate, hrs
 
-    def set_total_balance(self) -> None:
-        """Set margin/wallet values"""
-        div = self.div
-        res = self.check_request(self.client.User.User_getMargin(currency='XBt'))
-        # total available/unused > only used in postOrder "Available Balance"
-        self.avail_margin = res['excessMargin'] / div
-        self.total_balance_margin = res['marginBalance'] / div  # unrealized + realized > wallet total qty avail
-        self.total_balance_wallet = res['walletBalance'] / div  # realized
-        self.unrealized_pnl = res['unrealisedPnl'] / div
-        self.prev_pnl = res['prevRealisedPnl'] / div
-        self.balance_set = True
-        self.res = res
+    def _get_total_balance(self) -> dict:
+        return self.check_request(self.client.User.User_getMargin(currency='XBt'))
 
-    def _order_request(self, action: str, order_specs: list) -> Union[List[BitmexOrder], None]:
+    def _order_request(self, action: str, order_specs: list) -> Union[List[ExchOrder], None]:
         """Send order submit/amend/cancel request
 
         Parameters
@@ -460,7 +293,7 @@ class Bitmex(Exchange):
 
         Returns
         -------
-        Union[List[BitmexOrder], None]
+        Union[List[ExchOrder], None]
             list of order results or None if request failed
         """
         if not order_specs and not action == 'cancel_all':
@@ -486,7 +319,7 @@ class Bitmex(Exchange):
         if result is None:
             return
 
-        resp_orders = self.bitmex_order_from_raw(order_specs=result)
+        resp_orders = self.exch_order_from_raw(order_specs=result)
 
         # check if submit/amend orders incorrectly cancelled
         if not 'cancel' in action:
@@ -508,17 +341,17 @@ class Bitmex(Exchange):
 
         return resp_orders
 
-    def amend_orders(self, orders: Union[List[BitmexOrder], BitmexOrder]) -> List[BitmexOrder]:
+    def amend_orders(self, orders: Union[List[ExchOrder], ExchOrder]) -> List[ExchOrder]:
         """Amend order price and/or qty
 
         Parameters
         ----------
-        orders : Union[List[BitmexOrder], BitmexOrder]
+        orders : Union[List[ExchOrder], ExchOrder]
             Orders to amend price/qty
 
         Returns
         -------
-        List[BitmexOrder]
+        List[ExchOrder]
         """
         order_specs = [o.order_spec_amend for o in f.as_list(orders)]
         return self._order_request(action='amend', order_specs=order_specs)
@@ -534,7 +367,7 @@ class Bitmex(Exchange):
         if price is None:
             ordtype = 'Market'
 
-        order = BitmexOrder(
+        order = ExchOrder(
             price=price,
             qty=qty,
             order_type=ordtype,
@@ -546,13 +379,13 @@ class Bitmex(Exchange):
         o = self.place_bulk(placeorders=order)[0]
         display(f.useful_keys(o))
 
-    def submit_orders(self, orders: Union[List[BitmexOrder], BitmexOrder, List[dict]]) -> List[BitmexOrder]:
+    def submit_orders(self, orders: Union[List[ExchOrder], ExchOrder, List[dict]]) -> List[ExchOrder]:
         """Submit single or multiple orders
 
         Parameters
         ----------
-        orders : List[BitmexOrder] | BitmexOrder | List[dict]
-            single or list of BitmexOrder objects, or list/single dict of order specs
+        orders : List[ExchOrder] | ExchOrder | List[dict]
+            single or list of ExchOrder objects, or list/single dict of order specs
 
         Returns
         -------
@@ -561,16 +394,16 @@ class Bitmex(Exchange):
         """
         _orders = []
         for o in f.as_list(orders):
-            # convert dict specs to BitmexOrder
-            # NOTE BitmexOrder IS a subclass of dict!!
-            if not isinstance(o, BitmexOrder):
+            # convert dict specs to ExchOrder
+            # NOTE ExchOrder IS a subclass of dict!!
+            if not isinstance(o, ExchOrder):
 
                 # isinstance(o, Order) doesn't want to work
-                if hasattr(o, 'as_bitmex'):
-                    o = o.as_bitmex()
+                if hasattr(o, 'as_exch_order'):
+                    o = o.as_exch_order()
                 else:
                     # dict
-                    o = ords.make_orders(order_specs=o, as_bitmex=True)[0]
+                    o = ords.make_orders(order_specs=o, as_exch_order=True)[0]
 
             _orders.append(o)
 
@@ -612,22 +445,22 @@ class Bitmex(Exchange):
         except:
             f.send_error(msg='ERROR: Could not close position!')
 
-    def cancel_manual(self) -> List[BitmexOrder]:
+    def cancel_manual(self) -> List[ExchOrder]:
         raise NotImplementedError('this doesn\'t work yet.')
         orders = self.get_orders(refresh=True, manual_only=True)
         self.cancel_orders(orders=orders)
 
-    def cancel_orders(self, orders: Union[List[BitmexOrder], BitmexOrder]) -> List[BitmexOrder]:
+    def cancel_orders(self, orders: Union[List[ExchOrder], ExchOrder]) -> List[ExchOrder]:
         """Cancel one or multiple orders by order_id
 
         Parameters
         ----------
-        orders : List[BitmexOrder] | BitmexOrder
+        orders : List[ExchOrder] | ExchOrder
             list of orders to cancel
 
         Returns
         -------
-        List[BitmexOrder]
+        List[ExchOrder]
             list of cancelled orders
         """
         order_specs = [o.order_id for o in f.as_list(orders)]
@@ -638,7 +471,7 @@ class Bitmex(Exchange):
 
         return self._order_request(action='cancel', order_specs=order_specs)
 
-    def cancel_all_orders(self, symbol: str = None) -> List[BitmexOrder]:
+    def cancel_all_orders(self, symbol: str = None) -> List[ExchOrder]:
         """Cancel all open orders
 
         Parameters
@@ -648,7 +481,7 @@ class Bitmex(Exchange):
 
         Returns
         -------
-        List[BitmexOrder]
+        List[ExchOrder]
             list of cancelled orders
         """
         return self._order_request(action='cancel_all', order_specs=dict(symbol=symbol))
@@ -761,7 +594,7 @@ class Bitmex(Exchange):
 
     def get_candles(
             self,
-            symbol: str = '',
+            symbol: str = SYMBOL,
             starttime: dt = None,
             fltr: str = '',
             retain_partial: bool = False,
@@ -860,7 +693,7 @@ class Bitmex(Exchange):
         actual_orders : List[Order]
             orders active on exchange
         """
-        actual_orders = self.get_orders(symbol=symbol, new_only=True, bot_only=True, as_bitmex=True, refresh=True)
+        actual_orders = self.get_orders(symbol=symbol, new_only=True, bot_only=True, as_exch_order=True, refresh=True)
         all_orders = self.validate_orders(expected_orders, actual_orders, show=True)
 
         # perform action reqd for orders except valid/manual
@@ -887,7 +720,7 @@ class Bitmex(Exchange):
     def validate_orders(
             self,
             expected_orders: List[Order],
-            actual_orders: List[BitmexOrder],
+            actual_orders: List[ExchOrder],
             show: bool = False) -> Dict[str, List[Order]]:
         """Compare expected and actual (current) orders, return reqd actions
 
@@ -895,7 +728,7 @@ class Bitmex(Exchange):
         ----------
         expected_orders : List[Order]
             orders from current timestamp in strat backtest
-        actual_orders : List[BitmexOrder]
+        actual_orders : List[ExchOrder]
             orders active on exchange
         show : bool
             display df of orders with reqd action (for testing)
