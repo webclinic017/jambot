@@ -1,5 +1,5 @@
 from jambot.tradesys import orders as ords
-from jambot.tradesys.orders import BitmexOrder
+from jambot.tradesys.orders import ExchOrder
 
 from .__init__ import *
 
@@ -31,8 +31,8 @@ def test_orders(orders):
 
 
 def test_bitmex_order(order):
-    """Test backtesting orders can be converted to BitmexOrder"""
-    bitmex_order = BitmexOrder.from_base_order(order)
+    """Test backtesting orders can be converted to ExchOrder"""
+    bitmex_order = ExchOrder.from_base_order(order)
     s = bitmex_order.to_json()
 
 

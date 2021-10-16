@@ -209,9 +209,9 @@ class BaseOrder(object, metaclass=ABCMeta):
             status=self.status,
             name=self.name)
 
-    def as_bitmex(self) -> 'BitmexOrder':
-        """Convert to BitmexOrder"""
-        return BitmexOrder.from_base_order(order=self)
+    def as_exch_order(self) -> 'ExchOrder':
+        """Convert to ExchOrder"""
+        return ExchOrder.from_base_order(order=self)
 
     def to_market(self, **kw) -> None:
         """Convert self to market order
@@ -231,7 +231,7 @@ class BaseOrder(object, metaclass=ABCMeta):
         return f'{self.symbol} | {self.name} | {qty:+,} | {price}'
 
 
-class BitmexOrder(BaseOrder, DictRepr, Serializable):
+class ExchOrder(BaseOrder, DictRepr, Serializable):
     """Class to represent bitmex live-trading orders"""
     order_type = ''
     ts_format = '%Y-%m-%d %H:%M:%S'
@@ -281,13 +281,13 @@ class BitmexOrder(BaseOrder, DictRepr, Serializable):
         f.set_self(vars(), exclude=('order_spec',))
 
     @classmethod
-    def from_dict(cls, order_spec: dict) -> 'BitmexOrder':
+    def from_dict(cls, order_spec: dict) -> 'ExchOrder':
         """Create order from bitmex order spec dict"""
         m = {k: order_spec.get(cls.m_conv[k]) for k in cls.m_conv}
         return cls(**m, order_spec_raw=order_spec)
 
     @classmethod
-    def from_base_order(cls, order: 'Order') -> 'BitmexOrder':
+    def from_base_order(cls, order: 'Order') -> 'ExchOrder':
         """Create bitmex order from base order
         - used to get final/expected orders from strategy and submit/amend
         """
@@ -398,12 +398,12 @@ class BitmexOrder(BaseOrder, DictRepr, Serializable):
 
         return m
 
-    def amend_from_order(self, order: BitmexOrder) -> None:
+    def amend_from_order(self, order: ExchOrder) -> None:
         """Update self.price and self.qty from different order
 
         Parameters
         ----------
-        order : BitmexOrder
+        order : ExchOrder
             order to copy data from
         """
         self.price = order.price
@@ -693,34 +693,34 @@ def make_order(order_type: 'OrderType', **kw) -> Order:
 
 def make_orders(
         order_specs: Union[List[dict], dict],
-        as_bitmex: bool = False, **kw) -> Union[List[Order], List[BitmexOrder]]:
+        as_exch_order: bool = False, **kw) -> Union[List[Order], List[ExchOrder]]:
     """Make multiple orders
 
     Parameters
     ----------
     order_specs : Union[List[dict], dict]
         list of order_specs dicts
-    as_bitmex : bool
+    as_exch_order : bool
         convert to bitmex orders or not
 
     Returns
     -------
-    List[Order] | List[BitmexOrder]
-        list of initialized Order | BitmexOrder objects
+    List[Order] | List[ExchOrder]
+        list of initialized Order | ExchOrder objects
     """
     order_specs = f.as_list(order_specs)
 
-    if not as_bitmex:
+    if not as_exch_order:
         orders = [make_order(**order_spec, **kw) for order_spec in order_specs]
 
     else:
         # dont want to mix up strat Orders with BitmexOrders (strat creates its own order_id)
-        orders = [BitmexOrder(**order_spec, **kw) for order_spec in order_specs]
+        orders = [ExchOrder(**order_spec, **kw) for order_spec in order_specs]
 
     return orders
 
 
-def make_bitmex_orders(order_specs: Union[List[dict], dict]) -> List[BitmexOrder]:
+def make_bitmex_orders(order_specs: Union[List[dict], dict]) -> List[ExchOrder]:
     """Create multiple bitmex orders from raw bitmex order spec dicts
 
     Parameters
@@ -730,26 +730,26 @@ def make_bitmex_orders(order_specs: Union[List[dict], dict]) -> List[BitmexOrder
 
     Returns
     -------
-    List[BitmexOrder]
+    List[ExchOrder]
     """
-    return [BitmexOrder.from_dict(order_spec) for order_spec in f.as_list(order_specs)]
+    return [ExchOrder.from_dict(order_spec) for order_spec in f.as_list(order_specs)]
 
 
 def list_to_dict(
-        orders: List[Union[Order, BitmexOrder]],
-        key_base: bool = True) -> Dict[str, Union[Order, BitmexOrder]]:
+        orders: List[Union[Order, ExchOrder]],
+        key_base: bool = True) -> Dict[str, Union[Order, ExchOrder]]:
     """Convenience func to convert list of orders to dict for convenient matching
 
     Parameters
     ----------
-    orders : List[Order | BitmexOrder]
+    orders : List[Order | ExchOrder]
         list of Orders or BitmexOrders
     key_base : bool, optional default True
         use key_base or full key with timestamp as key
 
     Returns
     -------
-    Dict[str, Order | BitmexOrder]
+    Dict[str, Order | ExchOrder]
         dict of {order.key_base: order}
     """
     key = 'key_base' if key_base else 'key'

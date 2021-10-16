@@ -3,7 +3,7 @@ from typing import List
 from jambot.exchanges.bitmex import Bitmex
 from jambot.tradesys import orders as ords
 from jambot.tradesys.enums import OrderStatus
-from jambot.tradesys.orders import BitmexOrder
+from jambot.tradesys.orders import ExchOrder
 
 from .__init__ import *
 
@@ -36,7 +36,7 @@ def bitmex_orders(last_close) -> List[Bitmex]:
         dict(order_type='limit', qty=-100, price=last_close + 100, name='test_ord_2'),
     ]
 
-    return ords.make_orders(order_specs, as_bitmex=True)
+    return ords.make_orders(order_specs, as_exch_order=True)
 
 
 def test_order_flow(exch: Bitmex, bitmex_orders):
@@ -67,13 +67,13 @@ def test_order_flow(exch: Bitmex, bitmex_orders):
 
 
 @mark.skip
-def _compare_order_specs(order_1: BitmexOrder, order_2: BitmexOrder) -> None:
+def _compare_order_specs(order_1: ExchOrder, order_2: ExchOrder) -> None:
     """Test order specs match
 
     Parameters
     ----------
-    order_1 : BitmexOrder
-    order_2 : BitmexOrder
+    order_1 : ExchOrder
+    order_2 : ExchOrder
 
     Raises
     ------
@@ -122,7 +122,7 @@ def test_reconcile_orders(exch: Bitmex, last_close: float) -> None:
         dict(order_type='market', qty=-2400, name='market_3'),  # submit
     ]
 
-    expected_orders = ords.make_orders(order_specs_expected, as_bitmex=True)
+    expected_orders = ords.make_orders(order_specs_expected, as_exch_order=True)
 
     # reconcile - cancel, amend, submit
     exch.reconcile_orders(symbol=SYMBOL, expected_orders=expected_orders)
@@ -131,7 +131,7 @@ def test_reconcile_orders(exch: Bitmex, last_close: float) -> None:
     final_orders = exch.get_orders(
         bot_only=True,
         new_only=False,
-        as_bitmex=True,
+        as_exch_order=True,
         as_dict=True,
         refresh=True)
 
@@ -161,7 +161,7 @@ def test_reconcile_orders(exch: Bitmex, last_close: float) -> None:
 @mark.skip
 def test_cancel_warning(exch, last_close):
     """Test cancel warning sent if bad order sent"""
-    # order_in = LimitOrder(price=last_price - 10000, qty=-100, name='bad_order').as_bitmex()
+    # order_in = LimitOrder(price=last_price - 10000, qty=-100, name='bad_order').as_exch_order()
 
     # order_out = exch.submit_orders(order_in)
     return
