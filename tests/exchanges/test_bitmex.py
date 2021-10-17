@@ -7,8 +7,6 @@ from jambot.tradesys.orders import ExchOrder
 
 from .__init__ import *
 
-# from jambot.tradesys.orders import LimitOrder
-
 
 @fixture(scope='session')
 def exch() -> Bitmex:
@@ -23,31 +21,31 @@ def test_exch_is_test(exch) -> bool:
 
 @fixture(scope='session')
 def last_close(exch) -> float:
-    """Get last close price offset by 20% higher to use as base for creating new orders"""
-    price = f.get_price(pnl=-0.2, entry_price=exch.last_price(SYMBOL), side=-1)
+    """Get last close price offset by 15% higher to use as base for creating new orders"""
+    price = f.get_price(pnl=-0.15, entry_price=exch.last_price(SYMBOL), side=-1)
     return round(price, 0)
 
 
 @fixture
-def bitmex_orders(last_close) -> List[Bitmex]:
+def exch_orders(last_close) -> List[Bitmex]:
     """Create two bitmex orders for testing"""
     order_specs = [
         dict(order_type='limit', qty=-100, price=last_close, name='test_ord_1'),
         dict(order_type='limit', qty=-100, price=last_close + 100, name='test_ord_2'),
     ]
 
-    return ords.make_orders(order_specs, as_exch_order=True)
+    return ords.make_exch_orders(order_specs)
 
 
-def test_order_flow(exch: Bitmex, bitmex_orders):
+def test_order_flow(exch: Bitmex, exch_orders):
     """Test submitting, amending, cancelling and comparing in/out order specs for multiple orders"""
 
     # submit orders
-    out_orders = exch.submit_orders(bitmex_orders)
+    out_orders = exch.submit_orders(exch_orders)
 
     try:
         # compare specs
-        for order_in, order_out in zip(bitmex_orders, out_orders):
+        for order_in, order_out in zip(exch_orders, out_orders):
             _compare_order_specs(order_in, order_out)
 
             # amend order
@@ -80,7 +78,7 @@ def _compare_order_specs(order_1: ExchOrder, order_2: ExchOrder) -> None:
     AssertionError
         if order specs don't match
     """
-    compare = ['symbol', 'ordType', 'clOrdID', 'orderQty']
+    compare = ['symbol', 'order_type', 'key', 'qty']
 
     # market orders don't have price to compare if not filled
     if not order_1.is_market:
@@ -122,7 +120,7 @@ def test_reconcile_orders(exch: Bitmex, last_close: float) -> None:
         dict(order_type='market', qty=-2400, name='market_3'),  # submit
     ]
 
-    expected_orders = ords.make_orders(order_specs_expected, as_exch_order=True)
+    expected_orders = ords.make_exch_orders(order_specs_expected)
 
     # reconcile - cancel, amend, submit
     exch.reconcile_orders(symbol=SYMBOL, expected_orders=expected_orders)
