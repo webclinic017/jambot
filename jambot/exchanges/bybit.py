@@ -9,6 +9,7 @@ from BybitAuthenticator import APIKeyAuthenticator
 from jambot import functions as f
 from jambot import getlog
 from jambot.exchanges.exchange import SwaggerExchange
+from jambot.tradesys.orders import ExchOrder
 
 SYMBOl = 'BTCUSD'
 
@@ -17,6 +18,8 @@ log = getlog(__name__)
 
 class Bybit(SwaggerExchange):
     div = 1
+    default_symbol = 'BTCUSD'
+    conv_symbol = dict(XBTUSD=default_symbol)
     # TODO confirm these
     wallet_keys = dict(
         avail_margin='available_balance',
@@ -25,14 +28,22 @@ class Bybit(SwaggerExchange):
         unrealized_pnl='unrealised_pnl',
         prev_pnl='realised_pnl')
 
-    order_keys = dict(
-        qty='qty',
-        order_link_id='order_link_id'
+    other_keys = dict(
+        last_price='last_price',
+        cur_qty='currentQty',
     )
 
+    order_keys = ExchOrder._m_conv.get('bybit')
     api_host = 'https://api.bybit.com'
     api_host_test = 'https://api-testnet.bybit.com'
     api_spec = '/doc/swagger/v_0_2_12.txt'
+
+    order_params = dict(
+        submit=dict(func='Order_new'),
+        amend=dict(func='Order_replace'),
+        cancel=dict(func='Order_cancel'),
+        cancel_all=dict(func='Order_cancelAll')
+    )
 
     def __init__(self, user: str, test: bool = False, refresh: bool = False, **kw):
         super().__init__(user=user, test=test, **kw)
@@ -69,6 +80,59 @@ class Bybit(SwaggerExchange):
     def _get_positions(self) -> List[dict]:
         m_raw = self.client.Positions.Positions_myPosition().result()[0]['result']
         return [m['data'] for m in m_raw]
+
+    def _get_instrument(self, **kw) -> dict:
+        """"""
+        return self.client.Market.Market_symbolInfo(**kw).result()[0]['result'][0]
+
+    def _route_order_request(
+            self,
+            # func: Callable,
+            action: str,
+            order_specs: Union[List[ExchOrder], List[dict]],
+            *args, **kw):
+        # TODO probably need to check all bybit order statuses eg "Created"
+
+        # inspect function to get allowed parameters
+        # eg client.Order.Order_new.operation.params
+        params = self.order_params.get(action)
+        func = getattr(self.client.Order, params['func'])
+        func_params = func.operation.params
+
+        return_specs = []
+        for order_spec in order_specs:
+
+            spec = {k: v for k, v in order_spec.items() if k in func_params.keys()}
+
+            print(spec)
+
+            # print('spec_submit: ', spec)
+            res = self.check_request(func(**spec))
+            # print(res)
+
+            # check for ret_code errors
+            if not res['ret_code'] == 0:
+                log.error(f'Order request failed: \n\t{res}\n\t{spec}')
+
+            # print(res['result'])
+            return_spec = res['result']
+            if not return_spec is None:
+                return_specs.append(return_spec)
+
+        return return_specs
+
+        # ['Order_cancel',
+        # 'Order_cancelAll',
+        # 'Order_getOrders',
+        # 'Order_new',
+        # 'Order_query',
+        # 'Order_replace']
+
+    def _submit_orders(self, order_specs: list):
+
+        for order_spec in order_specs:
+            result = self.client.Order.Order_new
+        return
 
     def get_candles(
             self,
