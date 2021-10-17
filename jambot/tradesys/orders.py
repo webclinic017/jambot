@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 import re
 import time
 import uuid
@@ -15,6 +16,9 @@ from jambot.common import DictRepr, Serializable
 from jambot.config import SYMBOL
 from jambot.tradesys.base import Observer, SignalEvent
 from jambot.tradesys.enums import OrderStatus, OrderType, TradeSide
+
+if TYPE_CHECKING:
+    from jambot.exchanges.exchange import SwaggerExchange
 
 log = getlog(__name__)
 
@@ -236,19 +240,38 @@ class ExchOrder(BaseOrder, DictRepr, Serializable):
     order_type = ''
     ts_format = '%Y-%m-%d %H:%M:%S'
 
-    # dict to convert bitmex keys
-    m_conv = dict(
-        order_type='ordType',
-        status='ordStatus',
-        order_id='orderID',
-        qty='orderQty',
-        price='price',
-        stop_px='stopPx',
-        symbol='symbol',
-        key='clOrdID',
-        exec_inst='execInst',
-        timestamp_start='transactTime',
-        name='name')
+    # dict to convert exchange order keys
+    _m_conv = dict(
+        bitmex=dict(
+            order_type='ordType',
+            status='ordStatus',
+            order_id='orderID',
+            qty='orderQty',
+            price='price',
+            stop_px='stopPx',
+            symbol='symbol',
+            key='clOrdID',
+            order_link_id='clOrdID',
+            exec_inst='execInst',
+            timestamp_start='transactTime',
+            avg_price='avgPx',
+            name='name',
+            side='side'),
+        bybit=dict(
+            order_type='order_type',
+            status='order_status',
+            order_id='order_id',
+            qty='qty',
+            price='price',
+            stop_px='stop_loss',
+            symbol='symbol',
+            key='order_link_id',
+            order_link_id='order_link_id',
+            exec_inst='',
+            timestamp_start='created_at',
+            avg_price='price',
+            name='name',
+            side='side'))
 
     def __init__(
             self,
@@ -276,14 +299,22 @@ class ExchOrder(BaseOrder, DictRepr, Serializable):
 
         order_type = OrderType(order_type)
         status = OrderStatus(status or 'new')
-        is_bitmex = True
 
         f.set_self(vars(), exclude=('order_spec',))
 
     @classmethod
-    def from_dict(cls, order_spec: dict) -> 'ExchOrder':
-        """Create order from bitmex order spec dict"""
-        m = {k: order_spec.get(cls.m_conv[k]) for k in cls.m_conv}
+    def from_dict(cls, order_spec: dict, exchange: str = None) -> 'ExchOrder':
+        """Create order from exchange order spec dict"""
+
+        # try getting exchange from order
+        exchange = exchange or order_spec.get('exchange', None)
+
+        if not exchange is None:
+            _m_conv = cls._m_conv.get(exchange)
+            m = {k: order_spec.get(_m_conv[k]) for k in _m_conv.keys()}
+        else:
+            m = copy.copy(order_spec)
+
         return cls(**m, order_spec_raw=order_spec)
 
     @classmethod
@@ -305,8 +336,13 @@ class ExchOrder(BaseOrder, DictRepr, Serializable):
         return cls(order_type='limit', qty=-1000, price=50000, name='example_order')
 
     @property
+    def side_str(self) -> str:
+        """Get side name for submitting ByBit orders"""
+        return {1: 'Buy', -1: 'Sell'}.get(self.side)
+
+    @property
     def qty(self):
-        """Ensure BitmexOrders always in multiples of 100"""
+        """Ensure ExchOrders always in multiples of 100"""
         return f.round_down(n=abs(self._qty), nearest=100) * self.side
 
     @qty.setter
@@ -360,7 +396,7 @@ class ExchOrder(BaseOrder, DictRepr, Serializable):
 
     @property
     def order_spec(self) -> dict:
-        """Create order spec dict to submit to bitmex
+        """Create order spec dict to submit to exchange
         """
         m = dict(
             order_id=self.order_id,
@@ -368,7 +404,11 @@ class ExchOrder(BaseOrder, DictRepr, Serializable):
             order_type=str(self.order_type).title(),
             qty=self.qty,
             key=self.key,
-            exec_inst=self.exec_inst_str)
+            exec_inst=self.exec_inst_str,
+            side=self.side_str,
+            time_in_force='GoodTillCancel',
+            p_r_price=str(self.price),
+            p_r_qty=str(self.qty))
 
         # market order doesn't have price
         # stop needs stopPx only
@@ -377,26 +417,15 @@ class ExchOrder(BaseOrder, DictRepr, Serializable):
         elif self.is_stop:
             m['stop_px'] = self.price
 
-        # convert back to bitmex keys
-        return {self.m_conv.get(k, k): v for k, v in m.items() if not v is None}
+        if self.is_reduce:
+            m['reduce_only'] = True
+
+        return m
 
     @property
     def is_manual(self) -> bool:
         """If order is from a manually placed order on Bitmex"""
         return self.raw_spec('manual')
-
-    @property
-    def order_spec_amend(self) -> dict:
-        """Subset of order_spec for amending only"""
-        keys = ('orderID', 'symbol', 'orderQty', 'price')
-        m = {k: v for k, v in self.order_spec.items() if k in keys}
-
-        # check order has an order_id set before it can be amended
-        order_id = m.get('orderID', None)
-        if order_id is None:
-            raise AttributeError(f'orderID not set, needed to amend. orderID: {order_id}')
-
-        return m
 
     def amend_from_order(self, order: ExchOrder) -> None:
         """Update self.price and self.qty from different order
@@ -439,7 +468,7 @@ class ExchOrder(BaseOrder, DictRepr, Serializable):
         else:
             raise AttributeError('order_spec_raw not set.')
 
-    def summary_msg(self, exch=None, nearest: float = 0.5) -> str:
+    def summary_msg(self, exch: 'SwaggerExchange' = None, nearest: float = 0.5) -> str:
         """Get buy/sell price qty summary for discord msg
         -eg "XBT | Sell -2,000 at $44,975.5 (44972.0) | limit_open"
 
@@ -448,7 +477,10 @@ class ExchOrder(BaseOrder, DictRepr, Serializable):
         str
         """
         m = self.order_spec_raw
-        avgpx = f.round_down(n=m['avgPx'], nearest=nearest)
+        if not exch is None:
+            avgpx = f.round_down(n=m.get(self._m_conv[exch.exchange_name]['avg_price']), nearest=nearest)
+        else:
+            avgpx = None
 
         ordprice = f' (${self.price:,})' if not self.price == avgpx else ''
 
@@ -465,7 +497,7 @@ class ExchOrder(BaseOrder, DictRepr, Serializable):
 
         return '{} | {:<4} {:>+8,} at ${:,}{:>12} | {:<12}{}'.format(
             self.sym_short,
-            m['sideStr'],
+            m['side_str'],
             qty,
             avgpx,
             ordprice,
@@ -522,7 +554,7 @@ class ExchOrder(BaseOrder, DictRepr, Serializable):
                 self.key_ts = match.group()
 
     def to_dict(self) -> dict:
-        """Add key for BitmexOrders"""
+        """Add exchange + key for ExchOrders"""
         return super().to_dict() | dict(key=self.key)
 
 
@@ -714,13 +746,13 @@ def make_orders(
         orders = [make_order(**order_spec, **kw) for order_spec in order_specs]
 
     else:
-        # dont want to mix up strat Orders with BitmexOrders (strat creates its own order_id)
+        # dont want to mix up strat Orders with ExchOrders (strat creates its own order_id)
         orders = [ExchOrder(**order_spec, **kw) for order_spec in order_specs]
 
     return orders
 
 
-def make_bitmex_orders(order_specs: Union[List[dict], dict]) -> List[ExchOrder]:
+def make_exch_orders(order_specs: Union[List[dict], dict], exchange: str = None) -> List[ExchOrder]:
     """Create multiple bitmex orders from raw bitmex order spec dicts
 
     Parameters
@@ -732,7 +764,7 @@ def make_bitmex_orders(order_specs: Union[List[dict], dict]) -> List[ExchOrder]:
     -------
     List[ExchOrder]
     """
-    return [ExchOrder.from_dict(order_spec) for order_spec in f.as_list(order_specs)]
+    return [ExchOrder.from_dict(order_spec, exchange=exchange) for order_spec in f.as_list(order_specs)]
 
 
 def list_to_dict(
@@ -743,7 +775,7 @@ def list_to_dict(
     Parameters
     ----------
     orders : List[Order | ExchOrder]
-        list of Orders or BitmexOrders
+        list of Orders or ExchOrders
     key_base : bool, optional default True
         use key_base or full key with timestamp as key
 
