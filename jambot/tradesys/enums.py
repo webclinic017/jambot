@@ -26,11 +26,12 @@ class OrderStatus(CaseInsensitiveEnum):
     """Enum for the status of an order"""
 
     PENDING: str = 'pending'
-    OPEN: str = 'open', 'new'
+    OPEN: str = 'open', 'new', 'created'
     CANCELLED: str = 'cancelled', 'canceled'
     FILLED: str = 'filled'
     PARTIALLYFILLED: str = 'partiallyfilled'
     REJECTED: str = 'rejected'
+    PENDINGCANCEL: str = 'pendingcancel'
 
 
 class TradeStatus(CaseInsensitiveEnum):
