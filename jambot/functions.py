@@ -1,6 +1,7 @@
 """General Functions module - don't rely on any other modules from jambot"""
 
 import json
+import logging
 import math
 import pickle
 import re
@@ -15,7 +16,10 @@ from typing import Any, Callable, List, Union
 import pandas as pd
 from dateutil.parser import parse
 
+from jambot import getlog
 from jambot.config import AZURE_WEB
+
+log = getlog(__name__)
 
 
 def flatten_list_list(lst: List[list]) -> list:
@@ -81,6 +85,22 @@ def as_list(items: Any) -> list:
         items = [items]
 
     return items
+
+
+def safe_append(lst: list, item: Union[list, Any]) -> None:
+    """safely append or extend to list
+
+    Parameters
+    ----------
+    lst : list
+        list to append/extend on
+    item : Union[list, Any]
+        item(s) to append/extend
+    """
+    if isinstance(item, list):
+        lst.extend(item)
+    else:
+        lst.append(item)
 
 
 def set_self(m: dict, exclude: Union[tuple, str] = ()):
@@ -550,7 +570,7 @@ def py_codeblock(msg: str) -> str:
     return f'```py\n{msg}```'
 
 
-def send_error(msg: str = None, prnt: bool = False, force: bool = False) -> None:
+def send_error(msg: str = None, prnt: bool = False, force: bool = False, _log: logging.Logger = None) -> None:
     """Send error message to discord with last err traceback
 
     Parameters
@@ -575,7 +595,11 @@ def send_error(msg: str = None, prnt: bool = False, force: bool = False) -> None
 
     # print if local dev, else send to discord
     if prnt or not to_discord:
-        print(msg)
+        try:
+            _logger = log if _log is None else _log
+            _logger.error(msg)
+        except Exception as e:
+            print(f'Couldn\'t log error: {msg}')
     else:
         discord(msg=msg, channel='err')
 
