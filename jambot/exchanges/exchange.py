@@ -5,12 +5,12 @@ import time
 import warnings
 from abc import ABCMeta, abstractmethod, abstractproperty, abstractstaticmethod
 from collections import defaultdict as dd
-from datetime import datetime as dt
 from typing import *
 
 import pandas as pd
 import requests
 from bravado.client import SwaggerClient
+from bravado.http_future import HttpFuture
 from bravado.requests_client import RequestsClient
 from swagger_spec_validator.common import SwaggerValidationWarning
 
@@ -20,6 +20,7 @@ from jambot import functions as f
 from jambot import getlog
 from jambot.config import AZURE_WEB
 from jambot.tradesys import orders as ords
+from jambot.tradesys.enums import OrderStatus
 from jambot.tradesys.orders import ExchOrder, Order
 from jambot.utils.secrets import SecretsManager
 
@@ -263,7 +264,7 @@ class SwaggerExchange(Exchange, metaclass=ABCMeta):
         """
         return self.total_balance_wallet - self.reserved_balance
 
-    def check_request(self, request, retries: int = 0):
+    def check_request(self, request: HttpFuture, retries: int = 0):
         """
         Perform http request and retry with backoff if failed
 
@@ -414,33 +415,25 @@ class SwaggerExchange(Exchange, metaclass=ABCMeta):
             return
 
         for o in f.as_list(order_specs):
+            if isinstance(o, list):
+                log.error(f'order is list: {o}')
+                return
+
             if 'processed' in o.keys():
                 raise RuntimeError('Order spec has already been processed!')
 
             o['processed'] = True
             o['exchange'] = self.exchange_name
 
-            # bybit specific
-            if self.exchange_name == 'bybit':
-                o['price'] = float(o['price'])
-                o['currency'] = o['symbol'][-3:]
-
-                for key in ('stop_loss', 'take_profit'):
-                    if float(o[key]) == 0:
-                        o[key] = None
-
-                for key in ('created_at', 'updated_at'):
-                    o[key] = dt.strptime(o[key], '%Y-%m-%dT%H:%M:%S.%f%z')
-
             o['side_str'] = o['side']
             o['side'] = 1 if o['side'] == 'Buy' else -1
 
             # some orders can have none qty if "close position" market order cancelled by bitmex
             if not o[_qty] is None:
-                o[_qty] = int(o['side'] * o[_qty])
+                o[_qty] = int(o['side'] * int(o[_qty]))
 
             # add key to the order, excluding manual orders
-            if not o[_link_id] == '':
+            if not o.get(_link_id, '') == '':
                 o['name'] = o[_link_id].split('-')[1]
 
                 if not 'manual' in o[_link_id]:
@@ -463,7 +456,8 @@ class SwaggerExchange(Exchange, metaclass=ABCMeta):
             manual_only: bool = False,
             as_exch_order: bool = True,
             as_dict: bool = False,
-            refresh: bool = False) -> Union[List[dict], List[ExchOrder], Dict[str, ExchOrder]]:
+            refresh: bool = False,
+            bybit_async: bool = False) -> Union[List[dict], List[ExchOrder], Dict[str, ExchOrder]]:
         """Get orders which match criterion
 
         Parameters
@@ -492,14 +486,14 @@ class SwaggerExchange(Exchange, metaclass=ABCMeta):
             symbol = self.default_symbol
 
         if refresh or self._orders is None:
-            self.set_orders()
+            self.set_orders(bybit_async=bybit_async)
 
         var = {k: v for k, v in vars().items() if not v in ('as_exch_order', 'refresh', 'as_dict')}
 
         # define filters
         conds = dict(
             symbol=lambda x: x['symbol'].lower() == symbol.lower(),
-            new_only=lambda x: x[self.order_keys['status']] in ('New', 'PartiallyFilled'),
+            new_only=lambda x: OrderStatus(x[self.order_keys['status']]) == OrderStatus.OPEN,
             bot_only=lambda x: not x['manual'],
             manual_only=lambda x: x['manual'])
 
@@ -613,7 +607,7 @@ class SwaggerExchange(Exchange, metaclass=ABCMeta):
             if failed_orders:
                 msg = 'ERROR: Order(s) CANCELLED!'
                 for o in failed_orders:
-                    err_text = o.raw_spec('text')
+                    err_text = o.raw_spec(self.other_keys['err_text'])
                     m = o.order_spec
 
                     # failed submitted at offside price, add last_price for comparison
@@ -704,8 +698,19 @@ class SwaggerExchange(Exchange, metaclass=ABCMeta):
         """
         symbol = symbol or self.default_symbol
         try:
-            self.check_request(
-                self.client.Order.Order_new(symbol=symbol, execInst='Close'))
+            if self.exchange_name == 'bitmex':
+                self.check_request(
+                    self.client.Order.Order_new(symbol=symbol, execInst='Close'))
+
+            elif self.exchange_name == 'bybit':
+                # NOTE ugh so messy hopefully a way to make this cleaner
+                self.set_positions()
+                pos = self.get_position(symbol)
+                if not pos['qty'] == 0:
+                    close_order = dict(order_type='market', symbol=symbol, qty=pos['qty'] * pos['side'] * -1)
+                    self._order_request(
+                        action='submit',
+                        order_specs=ords.make_exch_orders(close_order))
         except:
             f.send_error(msg='ERROR: Could not close position!')
 
@@ -760,7 +765,8 @@ class SwaggerExchange(Exchange, metaclass=ABCMeta):
         actual_orders : List[Order]
             orders active on exchange
         """
-        actual_orders = self.get_orders(symbol=symbol, new_only=True, bot_only=True, as_exch_order=True, refresh=True)
+        actual_orders = self.get_orders(symbol=symbol, new_only=True, bot_only=True,
+                                        as_exch_order=True, refresh=True, bybit_async=True)
         all_orders = self.validate_orders(expected_orders, actual_orders, show=True)
 
         # perform action reqd for orders except valid/manual
@@ -770,7 +776,7 @@ class SwaggerExchange(Exchange, metaclass=ABCMeta):
 
         # temp send order submit details to discord
         user = self.user if discord_user is None else discord_user
-        # m = dict(user=user)
+
         m = {}
         m_ords = {k: [o.short_stats for o in orders]
                   for k, orders in all_orders.items() if orders and not k == 'manual'}
@@ -811,8 +817,10 @@ class SwaggerExchange(Exchange, metaclass=ABCMeta):
         """
 
         # convert to dicts for easier matching
-        expected_orders = ords.list_to_dict(expected_orders)
-        actual_orders = ords.list_to_dict(actual_orders)
+        expected_orders = ords.list_to_dict(expected_orders, key_base=True)
+        actual_orders = ords.list_to_dict(actual_orders, key_base=True)
+        log.debug(f'\n\nexpected_orders:\n\t{expected_orders}')
+        log.debug(f'\n\nactual_orders:\n\t{actual_orders}')
         all_orders = dd(list, {k: [] for k in ('valid', 'cancel', 'amend', 'submit', 'manual')})
 
         for k, o in actual_orders.items():
