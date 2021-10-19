@@ -3,6 +3,8 @@ from datetime import timezone as tz
 from typing import *
 
 import pandas as pd
+from bravado.client import CallableOperation
+from bravado.http_future import HttpFuture
 from bybit import bybit
 from BybitAuthenticator import APIKeyAuthenticator
 
@@ -30,8 +32,8 @@ class Bybit(SwaggerExchange):
 
     other_keys = dict(
         last_price='last_price',
-        cur_qty='currentQty',
-    )
+        cur_qty='qty',
+        err_text='reject_reason')
 
     order_keys = ExchOrder._m_conv.get('bybit')
     api_host = 'https://api.bybit.com'
@@ -39,10 +41,10 @@ class Bybit(SwaggerExchange):
     api_spec = '/doc/swagger/v_0_2_12.txt'
 
     order_params = dict(
-        submit=dict(func='Order_new'),
-        amend=dict(func='Order_replace'),
-        cancel=dict(func='Order_cancel'),
-        cancel_all=dict(func='Order_cancelAll')
+        submit=dict(func='Order.new'),
+        amend=dict(func='Order.replace'),
+        cancel=dict(func='Order.cancel'),
+        cancel_all=dict(func='Order.cancelAll')
     )
 
     def __init__(self, user: str, test: bool = False, refresh: bool = False, **kw):
@@ -60,85 +62,303 @@ class Bybit(SwaggerExchange):
         return APIKeyAuthenticator
 
     def _get_total_balance(self) -> dict:
-        return self.check_request(self.client.Wallet.Wallet_getBalance(coin='BTC'))['result']['BTC']
+        return self.req('Wallet.getBalance', coin='BTC')['BTC']
 
-    def set_orders(self, symbol: str = SYMBOl):
+    def _get_endpoint(self, request: str) -> CallableOperation:
+        """Convert simple "Endpoint.request" to actual request
+        - eg self.client.Conditional.Conditional_getOrders(symbol=symbol)
+        - NOTE may be too simplified but works for now
+
+        Parameters
+        ----------
+        request : str
+            Endpoint.request which represents Endpoint.Endpoint_request()
+
+        Returns
+        -------
+        Any
+            CallableOperation
+
+        Raises
+        ------
+        RuntimeError
+            if request string not in correct format
+        """
+        if not '.' in request:
+            raise RuntimeError(f'Need to have Endpoint.Endpoint_request, not: {request}')
+
+        base, endpoint = request.split('.')
+        return getattr(getattr(self.client, base), f'{base}_{endpoint}')
+
+    def req(
+            self,
+            request: Union[HttpFuture, str],
+            code: bool = False,
+            fail_msg: str = None,
+            **kw) -> Union[Any, Tuple[Any, int]]:
+        """Wrapper to handle bybit request response/error code
+        - pass through super().check_request for request retries
+
+        Example return spec
+        -------------------
+        {'ret_code': 0,
+            'ret_msg': 'OK',
+            'ext_code': '',
+            'ext_info': '',
+            'result': {'data': [{'user_id': 288389,
+                'position_idx': 0,
+                ...
+
+        Parameters
+        ----------
+        request : HttpFuture
+            http request to submit to bybit
+        code : bool, optional
+            return error code or not, by default False
+
+        Returns
+        -------
+        Union[Any, Tuple[Any, int]]
+            order data List[dict] etc, with optional ret_code
+        """
+
+        # request submitted as str, split it and call on client
+        if isinstance(request, str):
+            request = self._get_endpoint(request)(**kw)
+
+        full_result = self.check_request(request)
+        ret_code = full_result['ret_code']
+        if not ret_code == 0:
+            fail_msg = f'{fail_msg}\n' if not fail_msg is None else ''
+            f.send_error(f'{fail_msg}Request failed:\n\t{full_result}', _log=log)
+
+        result = full_result['result']
+
+        if isinstance(result, dict) and 'data' in result:
+            result = result['data']
+
+        # default, just give the data
+        if not code:
+            return result
+        else:
+            return result, ret_code
+
+    def set_orders(self, symbol: str = SYMBOl, bybit_async: bool = False, bybit_stops: bool = True):
         """set raw order dicts from exch
-        limit - max = 50, default 20
+        limits: max = 50, default = 20
+        - https://bybit-exchange.github.io/docs/inverse/#t-getactive
 
         Parameters
         ----------
         symbol : str, optional
             default BTCUSD
+        bybit_async : bool, optional
+            order submission/creation is async so "all" orders are delayed, default False
+        bybit_stops : bool, optional
+            bybit keeps all stops under "conditional" endpoint
         """
-        # order_status='New'
 
-        orders = self.client.Order.Order_getOrders(symbol=SYMBOl).result()[0]['result']['data']
+        orders = self.req('Order.getOrders', symbol=symbol)
 
-        self._orders = self.add_custom_specs(orders)
+        if bybit_async:
+            orders += self.req('Order.query', symbol=symbol)
+
+        # very sketch, bybit returns stop orders as "Market", with no price
+        orders = [o for o in orders if not 'stop' in o['order_link_id']]
+
+        stop_orders = []
+        if bybit_stops:
+            stop_orders = self.req('Conditional.getOrders', symbol=symbol)
+
+            if bybit_async:
+                stop_orders += self.req('Conditional.query', symbol=symbol)
+
+        self._orders = self.add_custom_specs(self.proc_raw_spec(orders + stop_orders))
 
     def _get_positions(self) -> List[dict]:
-        m_raw = self.client.Positions.Positions_myPosition().result()[0]['result']
-        return [m['data'] for m in m_raw]
+        """Get position info, eg current qty
+
+        Returns
+        -------
+        List[dict]
+            dicts of all positions
+        """
+        m_raw = self.req('Positions.myPosition')
+        positions = [m['data'] for m in m_raw]
+        for pos in positions:
+            pos['side_str'] = pos['side']
+            pos['side'] = {'Buy': 1, 'Sell': -1}.get(pos['side'])
+            pos['qty'] = pos['size']
+
+        return positions
 
     def _get_instrument(self, **kw) -> dict:
-        """"""
-        return self.client.Market.Market_symbolInfo(**kw).result()[0]['result'][0]
+        """Get symbol info eg last_price"""
+        return self.req('Market.symbolInfo', **kw)[0]
+
+    def proc_raw_spec(self, order_spec: Union[dict, List[dict]]) -> Union[dict, List[dict]]:
+        """Handle all bybits inconsistent return values
+
+        Issues
+        ------
+        - conditional_cancel_all still uses bitmex clOrdID (LOL IDIOTS)
+        - conditional_submit doesn't return order_status
+        - conditional_submit returns order type, but not stop_order_type
+        - inconsistent price/qty return types (sometimes string, sometimes int)
+        - amend/cancel only return order_id (need to query again) - but cancel_all returns all fields
+        - stops have completely different and inconsistent endpoint than market/limit
+        - update/created_at times return inconsistent length microsec decimals (or none)
+        - stop orders have "stop_order_id" instead of just "order_id"
+        - Conditional_query doesnt have any fields to be able to determine its conditional
+
+        Parameters
+        ----------
+        order_spec : Union[dict, List[dict]]
+            single or list of order spec dicts
+
+        Returns
+        -------
+        Union[dict, List[dict]]
+            processed order spec dict/list
+        """
+        def _proc(o: dict):
+            try:
+                # holy FK bybit didn't even completely change bitmex's spec
+                o['order_id'] = o.pop('clOrdID', o.get('order_id', None))
+                o['currency'] = o['symbol'][-3:]
+
+                if 'stop' in o.get('order_link_id', ''):
+                    o['stop_order_type'] = 'Stop'
+
+                # stop order keys
+                for k in ('status', 'type', 'id'):
+                    k = f'order_{k}'
+                    o[k] = o.pop(f'stop_{k}', o.get(k, None))
+
+                # conditional_submit doesn't return order_status
+                if o.get('order_status', None) is None:
+                    o['order_status'] = 'New'
+
+                # prices can be '0.0' or other price string
+                for k in ('stop_loss', 'take_profit', 'stop_px'):
+                    if k in o:
+                        if o[k] == '' or float(o[k]) == 0:
+                            o[k] = None
+                        else:
+                            o[k] = float(o[k])
+
+                # price strings to float
+                for k in ('price', 'base_price'):
+                    o[k] = float(o.get(k, 0))
+
+                # qty strings to int
+                for k in ('qty', ):
+                    o[k] = int(o[k])
+
+                # decimals returned are inconsistent length
+                for k in ('created_at', 'updated_at'):
+                    t = o[k].split('.')[0].replace('Z', '') + 'Z'
+                    o[k] = dt.strptime(t, '%Y-%m-%dT%H:%M:%S%z')
+
+                return o
+            except Exception as e:
+                log.warning(o)
+                raise e
+
+        if isinstance(order_spec, list):
+            return [_proc(o) for o in order_spec]
+        else:
+            return _proc(order_spec)
 
     def _route_order_request(
             self,
-            # func: Callable,
             action: str,
             order_specs: Union[List[ExchOrder], List[dict]],
-            *args, **kw):
-        # TODO probably need to check all bybit order statuses eg "Created"
+            *args, **kw) -> list[dict]:
+        """Route order request to bybit
+        - handle converting all keys before send + return values
+
+        Parameters
+        ----------
+        action : str
+            submit | amend | cancel | cancel_all
+        order_specs : Union[List[ExchOrder], List[dict]]
+            single or multiple order spec dicts
+
+        Returns
+        -------
+        list[dict]
+            list of returned order specs
+        """
 
         # inspect function to get allowed parameters
         # eg client.Order.Order_new.operation.params
         params = self.order_params.get(action)
-        func = getattr(self.client.Order, params['func'])
-        func_params = func.operation.params
+        cancel_all = action == 'cancel_all'
+        endpoint = params['func'].split('.')[1]
+
+        # for canceling all, need to make two calls to close stops too...
+        if cancel_all:
+            order_specs.append(order_specs[0] | dict(order_type='stop'))
 
         return_specs = []
-        for order_spec in order_specs:
+        for spec in order_specs:
+            # stupid stop orders have completely different endpoint
+            is_stop = spec.get('order_type', '').lower() == 'stop'
 
-            spec = {k: v for k, v in order_spec.items() if k in func_params.keys()}
+            if is_stop:
+                # stop order type needs to be market
+                if not cancel_all:
+                    spec |= dict(
+                        order_type='Market',
+                        base_price=str(spec['stop_px'] + (1 * (-1 if spec['side'] == 'Buy' else 1))),
+                        stop_px=str(spec['stop_px']),
+                        trigger_by='IndexPrice')
 
-            print(spec)
+                if action in ('amend', 'cancel'):
+                    spec['stop_order_id'] = spec['order_id']
 
-            # print('spec_submit: ', spec)
-            res = self.check_request(func(**spec))
-            # print(res)
+                base = 'Conditional'
+            else:
+                base = 'Order'
+
+            # get correct endpoint
+            endpoint_full = f'{base}.{endpoint}'
+            endpoint_query = f'{base}.query'
+            func = self._get_endpoint(endpoint_full)
+            func_params = func.operation.params
+
+            # filter correct keys to submit
+            spec = {k: v for k, v in spec.items() if k in func_params.keys()}
+
+            if cancel_all and spec['symbol'] is None:
+                spec['symbol'] = self.default_symbol
+
+            # bybit forces use of abs contracts + side = 'Sell'
+            for key in ('qty', 'p_r_qty'):
+                if key in spec.keys():
+                    spec[key] = str(abs(int(spec[key])))
+
+            fail_msg = f'[{action}]:\n\t{spec}'
+            ret_spec = self.req(endpoint_full, fail_msg=fail_msg, **spec)
 
             # check for ret_code errors
-            if not res['ret_code'] == 0:
-                log.error(f'Order request failed: \n\t{res}\n\t{spec}')
+            if not ret_spec is None:
+                if action in ('amend', 'cancel'):
+                    # kinda annoying but have to call for order again
+                    # NOTE might only need to do this during testing
+                    id_key = 'order_id' if not is_stop else 'stop_order_id'
+                    ret_spec = self.req(endpoint_query, symbol=spec['symbol'], **{id_key: ret_spec[id_key]})
 
-            # print(res['result'])
-            return_spec = res['result']
-            if not return_spec is None:
-                return_specs.append(return_spec)
+                f.safe_append(return_specs, self.proc_raw_spec(ret_spec))
 
         return return_specs
 
-        # ['Order_cancel',
-        # 'Order_cancelAll',
-        # 'Order_getOrders',
-        # 'Order_new',
-        # 'Order_query',
-        # 'Order_replace']
-
-    def _submit_orders(self, order_specs: list):
-
-        for order_spec in order_specs:
-            result = self.client.Order.Order_new
-        return
-
     def get_candles(
             self,
+            starttime: dt,
             symbol: str = SYMBOl,
             interval: int = 15,
-            starttime: dt = None,
             include_partial: bool = False) -> pd.DataFrame:
         """Get OHLC candles from Bybit
         - NOTE bybit returns last candle partial
@@ -156,12 +376,12 @@ class Bybit(SwaggerExchange):
         -------
         pd.DataFrame
         """
-        res = self.client.Kline.Kline_get(
+        data = self.req(
+            'Kline.get',
             symbol=symbol,
             interval=str(interval),
-            **{'from': starttime.replace(tzinfo=tz.utc).timestamp()}).result()[0]
+            **{'from': starttime.replace(tzinfo=tz.utc).timestamp()})
 
-        data = res['result']
         cols = ['interval', 'symbol', 'timestamp', 'open', 'high', 'low', 'close', 'volume']
 
         dtypes = {c: float for c in cols} \
