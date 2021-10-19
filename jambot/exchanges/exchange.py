@@ -706,6 +706,7 @@ class SwaggerExchange(Exchange, metaclass=ABCMeta):
                 # NOTE ugh so messy hopefully a way to make this cleaner
                 self.set_positions()
                 pos = self.get_position(symbol)
+
                 if not pos['qty'] == 0:
                     close_order = dict(order_type='market', symbol=symbol, qty=pos['qty'] * pos['side'] * -1)
                     self._order_request(

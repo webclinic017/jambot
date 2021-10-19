@@ -128,6 +128,7 @@ class Bybit(SwaggerExchange):
 
         full_result = self.check_request(request)
         ret_code = full_result['ret_code']
+
         if not ret_code == 0:
             fail_msg = f'{fail_msg}\n' if not fail_msg is None else ''
             f.send_error(f'{fail_msg}Request failed:\n\t{full_result}', _log=log)
@@ -138,10 +139,7 @@ class Bybit(SwaggerExchange):
             result = result['data']
 
         # default, just give the data
-        if not code:
-            return result
-        else:
-            return result, ret_code
+        return result if not code else result, ret_code
 
     def set_orders(self, symbol: str = SYMBOl, bybit_async: bool = False, bybit_stops: bool = True):
         """set raw order dicts from exch
@@ -185,6 +183,7 @@ class Bybit(SwaggerExchange):
         """
         m_raw = self.req('Positions.myPosition')
         positions = [m['data'] for m in m_raw]
+
         for pos in positions:
             pos['side_str'] = pos['side']
             pos['side'] = {'Buy': 1, 'Sell': -1}.get(pos['side'])
@@ -236,7 +235,7 @@ class Bybit(SwaggerExchange):
                     o[k] = o.pop(f'stop_{k}', o.get(k, None))
 
                 # conditional_submit doesn't return order_status
-                if o.get('order_status', None) is None:
+                if not 'order_status' in o:
                     o['order_status'] = 'New'
 
                 # prices can be '0.0' or other price string
@@ -393,7 +392,4 @@ class Bybit(SwaggerExchange):
             .astype(dtypes) \
             .assign(timestamp=lambda x: pd.to_datetime(x.timestamp, unit='s'))[cols]
 
-        if not include_partial:
-            df = df.iloc[:-1]
-
-        return df
+        return df.iloc[:-1] if not include_partial else df
