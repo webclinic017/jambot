@@ -263,7 +263,7 @@ class ExchOrder(BaseOrder, DictRepr, Serializable):
             order_id='order_id',
             qty='qty',
             price='price',
-            stop_px='stop_loss',
+            stop_px='stop_px',
             symbol='symbol',
             key='order_link_id',
             order_link_id='order_link_id',
@@ -419,6 +419,7 @@ class ExchOrder(BaseOrder, DictRepr, Serializable):
 
         if self.is_reduce:
             m['reduce_only'] = True
+            m['close_on_trigger'] = True
 
         return m
 
