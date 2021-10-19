@@ -35,7 +35,7 @@ class Bitmex(SwaggerExchange):
     other_keys = dict(
         last_price='lastPrice',
         cur_qty='currentQty',
-    )
+        err_text='text')
 
     order_keys = ExchOrder._m_conv.get('bitmex')
     api_host = 'https://www.bitmex.com'
@@ -143,7 +143,8 @@ class Bitmex(SwaggerExchange):
             fltr: dict = None,
             count: int = 100,
             starttime: dt = None,
-            reverse: bool = True) -> None:
+            reverse: bool = True,
+            **kw) -> None:
         """Save last count orders from bitmex"""
 
         if not fltr is None:
