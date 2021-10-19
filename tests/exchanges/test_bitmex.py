@@ -1,17 +1,28 @@
 from typing import List
 
+from jambot import getlog
 from jambot.exchanges.bitmex import Bitmex
+from jambot.exchanges.bybit import Bybit
+from jambot.exchanges.exchange import SwaggerExchange
 from jambot.tradesys import orders as ords
 from jambot.tradesys.enums import OrderStatus
 from jambot.tradesys.orders import ExchOrder
 
 from .__init__ import *
 
+log = getlog(__name__)
+
 
 @fixture(scope='session')
-def exch() -> Bitmex:
-    """Bitmex exchange object"""
-    return Bitmex.default(test=True, refresh=True)
+def exch(exch_name: str) -> SwaggerExchange:
+    """Exchange object"""
+    Exch = dict(bitmex=Bitmex, bybit=Bybit).get(exch_name)
+    return Exch.default(test=True, refresh=True)
+
+
+@fixture(scope='session')
+def symbol(exch) -> str:
+    return exch.default_symbol
 
 
 def test_exch_is_test(exch) -> bool:
@@ -22,16 +33,16 @@ def test_exch_is_test(exch) -> bool:
 @fixture(scope='session')
 def last_close(exch) -> float:
     """Get last close price offset by 15% higher to use as base for creating new orders"""
-    price = f.get_price(pnl=-0.15, entry_price=exch.last_price(SYMBOL), side=-1)
+    price = f.get_price(pnl=-0.15, entry_price=exch.last_price(symbol=exch.default_symbol), side=-1)
     return round(price, 0)
 
 
 @fixture
-def exch_orders(last_close) -> List[Bitmex]:
+def exch_orders(last_close, symbol: str) -> List[Bitmex]:
     """Create two bitmex orders for testing"""
     order_specs = [
-        dict(order_type='limit', qty=-100, price=last_close, name='test_ord_1'),
-        dict(order_type='limit', qty=-100, price=last_close + 100, name='test_ord_2'),
+        dict(symbol=symbol, order_type='limit', qty=-100, price=last_close, name='test_ord_1'),
+        dict(symbol=symbol, order_type='limit', qty=-100, price=last_close + 100, name='test_ord_2'),
     ]
 
     return ords.make_exch_orders(order_specs)
@@ -94,66 +105,68 @@ def _compare_order_specs(order_1: ExchOrder, order_2: ExchOrder) -> None:
             order[{k}]={item_in}, order_out[{k}]={item_out}\n\n{order_1}\n{order_2}'
 
 
-def test_reconcile_orders(exch: Bitmex, last_close: float) -> None:
+def test_reconcile_orders(exch: Bitmex, last_close: float, symbol: str) -> None:
     """Test amending/cancelling/submitting orders from strategy
 
     - create matched, missing, and not_matched orders for limit/stop/market
     """
-
-    if not exch.get_position(symbol=SYMBOL).get('currentQty') == 0:
+    if not exch.current_qty(symbol=symbol) == 0:
         exch.close_position()
 
     exch.cancel_all_orders()
 
-    # submit test orders
-    order_specs_test = [
-        dict(order_type='limit', qty=-1234, price=last_close, name='limit_1'),  # amend
-        dict(order_type='limit', qty=-2200, price=last_close + 400, name='limit_2'),  # cancel
-    ]
+    try:
+        # submit test orders
+        order_specs_test = [
+            dict(symbol=symbol, order_type='limit', qty=-1234, price=last_close, name='limit_1'),  # amend
+            dict(symbol=symbol, order_type='limit', qty=-2200, price=last_close + 400, name='limit_2'),  # cancel
+        ]
 
-    test_orders = exch.submit_orders(order_specs_test)
+        test_orders = exch.submit_orders(order_specs_test)
 
-    # set 'expected' orders (from strat)
-    order_specs_expected = [
-        dict(order_type='limit', qty=-1500, price=last_close + 200, name='limit_1'),  # amend
-        dict(order_type='stop', qty=1234, price=last_close + 500, name='stop_1'),  # submit
-        dict(order_type='market', qty=-2400, name='market_3'),  # submit
-    ]
+        # set 'expected' orders (from strat)
+        order_specs_expected = [
+            dict(symbol=symbol, order_type='limit', qty=-1500, price=last_close + 200, name='limit_1'),  # amend
+            dict(symbol=symbol, order_type='stop', qty=1234, price=last_close + 500, name='stop_1'),  # submit
+            dict(symbol=symbol, order_type='market', qty=-2400, name='market_3'),  # submit
+        ]
 
-    expected_orders = ords.make_exch_orders(order_specs_expected)
+        expected_orders = ords.make_exch_orders(order_specs_expected)
 
-    # reconcile - cancel, amend, submit
-    exch.reconcile_orders(symbol=SYMBOL, expected_orders=expected_orders)
+        # reconcile - cancel, amend, submit
+        exch.reconcile_orders(symbol=symbol, expected_orders=expected_orders)
 
-    # assert correct orders submitted, cancelled, and amended
-    final_orders = exch.get_orders(
-        bot_only=True,
-        new_only=False,
-        as_exch_order=True,
-        as_dict=True,
-        refresh=True)
+        # assert correct orders submitted, cancelled, and amended
+        final_orders = exch.get_orders(
+            bot_only=True,
+            new_only=False,
+            as_exch_order=True,
+            as_dict=True,
+            refresh=True,
+            bybit_async=True)
 
-    # need to reference existing order's key to check amended
-    expected_orders[0].key = test_orders[0].key
-    expected_orders = ords.list_to_dict(expected_orders, key_base=False)
+        # need to reference existing order's key to check amended
+        expected_orders[0].key = test_orders[0].key
+        expected_orders = ords.list_to_dict(expected_orders, key_base=False)
 
-    for order_key, o in expected_orders.items():
-        assert order_key in final_orders, f'Failed to find order: {order_key}'
+        for order_key, o in expected_orders.items():
+            assert order_key in final_orders, f'Failed to find order: {order_key}'
 
-        o_actual = final_orders[order_key]
-        _compare_order_specs(order_1=o, order_2=o_actual)
+            o_actual = final_orders[order_key]
+            _compare_order_specs(order_1=o, order_2=o_actual)
 
-        if o_actual.is_market:
-            assert o_actual.status == OrderStatus.FILLED, f'Order: {o_actual.key} not filled!'
-        else:
-            assert o_actual.status == OrderStatus.OPEN, f'Order: {o_actual.key} not open!'
+            if o_actual.is_market:
+                assert o_actual.status == OrderStatus.FILLED, f'Order: {o_actual.key} not filled!'
+            else:
+                assert o_actual.status == OrderStatus.OPEN, f'Order: {o_actual.key} not open!'
 
-    order_cancel = final_orders.get(test_orders[1].key)
-    assert order_cancel.status == OrderStatus.CANCELLED
+        order_cancel = final_orders.get(test_orders[1].key)
+        assert order_cancel.status == OrderStatus.CANCELLED
 
-    # cancel everything
-    exch.close_position()
-    exch.cancel_all_orders()
+    finally:
+        # cancel everything
+        exch.close_position()
+        exch.cancel_all_orders()
 
 
 @mark.skip

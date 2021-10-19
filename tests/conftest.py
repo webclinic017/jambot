@@ -5,7 +5,8 @@ import os
 from pathlib import Path
 
 import pytest
-from pytest import mark, raises  # noqa
+from discord import Webhook
+from pytest import fixture, mark, raises  # noqa
 
 
 def set_fixture_modules():
@@ -18,6 +19,13 @@ def set_fixture_modules():
 
     exclude = ('__', 'conftest')
     return [as_module(p) for p in p_test.rglob('*.py') if not any(item in str(p) for item in exclude)]
+
+
+@fixture(autouse=True)
+def tests_setup_and_teardown(monkeypatch):
+    """Set env var so everything can check for test environment"""
+    monkeypatch.setenv('pytest', '1')
+    monkeypatch.setattr(Webhook, 'send', lambda *args: print(*args))
 
 
 pytest_plugins = set_fixture_modules()
@@ -34,6 +42,17 @@ def pytest_addoption(parser):
         action='store_true',
         default=False,
         help='run slow tests')
+
+    parser.addoption(
+        '--exch_name',
+        action='store',
+        default='bybit',
+        choices=('bybit', 'bitmex'))
+
+
+@fixture(scope='session')
+def exch_name(request):
+    return request.config.getoption('--exch_name')
 
 
 def pytest_collection_modifyitems(config, items):
