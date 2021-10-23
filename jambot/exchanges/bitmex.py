@@ -97,6 +97,10 @@ class Bitmex(SwaggerExchange):
 
         return positions
 
+    def set_leverage(self, symbol: str = None, lev: float = 7.0) -> None:
+        symbol = symbol or self.default_symbol
+        self.check_request(self.client.Position.Position_updateLeverage(symbol=symbol, leverage=lev))
+
     def _get_instrument(self, **kw) -> dict:
         return self.client.Instrument.Instrument_get(**kw).response().result[0]
 
