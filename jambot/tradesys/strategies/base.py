@@ -10,12 +10,20 @@ from jambot.tradesys.trade import Trade
 
 
 class StrategyBase(Observer):
-    def __init__(self, symbol: str, weight=1, lev=5, slippage=0.02, live: bool = False, **kw):
+    def __init__(
+            self,
+            symbol: str,
+            weight: int = 1,
+            lev: int = 3,
+            slippage: float = 0.02,
+            live: bool = False,
+            exch_name: str = 'bitmex',
+            **kw):
         super().__init__(**kw)
 
         _trades = []
-        broker = Broker(self)
-        wallet = broker.get_wallet(symbol)
+        _broker = Broker(parent_listener=self, symbol=symbol, exch_name=exch_name)
+        wallet = _broker.get_wallet(symbol)
         wallet.lev = lev
 
         f.set_self(vars())
@@ -32,6 +40,26 @@ class StrategyBase(Observer):
 
     def step(self):
         pass
+
+    def to_dict(self) -> dict:
+        m = dict(exch=self.exch_name)
+
+        if not self.parent is None:
+            m_fmt = self.parent.summary_format
+            _m = self.parent.df_result.iloc[0].to_dict()
+            m |= {k: m_fmt[k].format(v) if k in m_fmt else v for k, v in _m.items()}
+
+        return m
+
+    @property
+    def df(self) -> pd.DataFrame:
+        """Convenience to get parent df"""
+        return self.parent.df if not self.parent is None else None
+
+    @property
+    def broker(self) -> Broker:
+        """Broker"""
+        return self._broker
 
     @property
     def side(self):
