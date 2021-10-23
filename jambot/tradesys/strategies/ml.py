@@ -30,7 +30,7 @@ class Strategy(StrategyBase):
             min_agree_pct: float = 0.8,
             regression: bool = False,
             market_on_timeout: bool = False,
-            order_offset: float = -0.0005,
+            order_offset: float = -0.0006,
             **kw):
         super().__init__(symbol=symbol, **kw)
 
