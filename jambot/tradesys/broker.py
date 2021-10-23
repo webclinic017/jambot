@@ -8,7 +8,7 @@ import pandas as pd
 from jambot import SYMBOL, display
 from jambot import functions as f
 from jambot import getlog
-from jambot.exchanges.bitmex import Bitmex
+from jambot.exchanges.exchange import SwaggerExchange
 from jambot.tradesys.base import Observer
 from jambot.tradesys.enums import OrderStatus
 from jambot.tradesys.orders import ExchOrder, MarketOrder, Order
@@ -21,15 +21,15 @@ class Broker(Observer):
     """Class to manage submitting and checking orders
     """
 
-    def __init__(self, *args, **kw):
+    def __init__(self, symbol: str = SYMBOL, exch_name: str = 'bitmex', *args, **kw):
         super().__init__(*args, **kw)
         all_orders = {}
         open_orders = {}
         wallets = {}
 
         # temp set default wallet to only XBTUSD
-        symbol = SYMBOL.lower()
-        wallets[symbol] = Wallet(symbol=symbol)
+        symbol = symbol.lower()
+        wallets[symbol] = Wallet(symbol=symbol, exch_name=exch_name)
         self.attach_listeners(wallets.values())
 
         f.set_self(vars())
@@ -170,9 +170,9 @@ class Broker(Observer):
         """
         return list(self.open_orders.values())
 
-    def expected_orders(self, symbol: str, exch: Bitmex = None) -> List[ExchOrder]:
+    def expected_orders(self, symbol: str, exch: SwaggerExchange = None) -> List[ExchOrder]:
         """Get all market/limit orders to check for current timestamp
-
+        - Must be called with user-specific Exchange
         - NOTE this will currently just scale orders based on max avail qtys
         - May need to support multiple orders in the future (eg close half of position)
 
