@@ -238,7 +238,7 @@ def iter_exchanges(
     if df_users is None:
         df_users = gg.UserSettings().get_df()
 
-    # df_users = df_users.query('bot_enabled == True')
+    df_users = df_users.query('bot_enabled == True')
 
     if not exch_name is None:
         df_users = df_users.loc[f.as_list(exch_name)]
@@ -310,7 +310,6 @@ def run_strat_live(
     for exch in iter_exchanges(df_users=df_users, exch_name=exch_name):
         strat = m_strats[exch.exch_name]
         symbol = exch.default_symbol
-        log.info(exch)
 
         # TODO will need to test this with multiple symbols eventually
         exch.reconcile_orders(
