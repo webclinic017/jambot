@@ -110,8 +110,8 @@ class Logger(logging.Logger):
         if not self.handlers:
             self.addHandler(sh)
 
-            if AZURE_WEB:
-                add_google_logging_handler(self)
+            # if AZURE_WEB:
+            #     add_google_logging_handler(self)
 
 
 def get_creds(scopes: list = None) -> Credentials:
