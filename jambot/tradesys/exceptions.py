@@ -5,7 +5,8 @@ class BaseError(Exception):
 
 
 class InsufficientBalance(BaseError):
-    """Raised when order attempted to fill with insufficient balance available
+    """
+    Raised when order attempted to fill with insufficient balance available
     """
 
     def __init__(
@@ -24,4 +25,14 @@ class InsufficientBalance(BaseError):
         if not order is None:
             msg = f'{msg}\n{order}'
 
+        super().__init__(msg, *args)
+
+
+class PositionNotClosedError(BaseError):
+    """
+    Raised when exchange position for specific symbol should have zero qty but does not
+    """
+
+    def __init__(self, qty: int, *args) -> None:
+        msg = f'Position not closed. Expected: 0, Actual: {qty}'
         super().__init__(msg, *args)
