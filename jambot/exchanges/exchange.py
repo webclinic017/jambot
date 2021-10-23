@@ -18,16 +18,18 @@ from jambot import config as cf
 from jambot import display
 from jambot import functions as f
 from jambot import getlog
+from jambot.common import DictRepr
 from jambot.config import AZURE_WEB
 from jambot.tradesys import orders as ords
 from jambot.tradesys.enums import OrderStatus
+from jambot.tradesys.exceptions import PositionNotClosedError
 from jambot.tradesys.orders import ExchOrder, Order
 from jambot.utils.secrets import SecretsManager
 
 log = getlog(__name__)
 
 
-class Exchange(object, metaclass=ABCMeta):
+class Exchange(DictRepr, metaclass=ABCMeta):
     """Base object to represent an exchange connection"""
 
     def __init__(
@@ -39,7 +41,7 @@ class Exchange(object, metaclass=ABCMeta):
             swagger_spec: dict = None,
             **kw):
 
-        self.exchange_name = self.__class__.__name__.lower()
+        self.exch_name = self.__class__.__name__.lower()
         self._creds = self.load_creds(user=user)
         self._client = self.init_client(test=test, from_local=from_local, swagger_spec=swagger_spec)
 
@@ -50,6 +52,9 @@ class Exchange(object, metaclass=ABCMeta):
         """Create Exchange obj with default name"""
         user = 'jayme' if not test else 'testnet'
         return cls(user=user, test=test, refresh=refresh, **kw)
+
+    def to_dict(self) -> dict:
+        return dict(user=self.user, test=self.test, pct_balance=self.pct_balance)
 
     @property
     def key(self):
@@ -238,20 +243,30 @@ class SwaggerExchange(Exchange, metaclass=ABCMeta):
         self.res = res
 
     @abstractmethod
-    def _get_positions(self) -> List[dict]:
-        """position dicts"""
+    def _set_positions(self) -> List[dict]:
+        """Get position dicts from exchange"""
         pass
+
+    @property
+    def positions(self) -> List[dict]:
+        """List of all positions"""
+        if self._positions is None:
+            self.set_positions()
+
+        return self._positions
 
     def set_positions(self) -> None:
         """Set position for all symbols"""
-        res = self._get_positions()
+        positions = self._set_positions()
 
         # store as dict with symbol as keys
         self._positions = {}
 
-        for pos in res:
-            symbol = pos['symbol']
-            self._positions[symbol.lower()] = pos
+        # save positions to dict with symbol as key
+        for p in positions:
+            symbol = p['symbol']
+            p |= {k: p.pop(v) for k, v in self.pos_keys.items()}
+            self._positions[symbol.lower()] = p
 
     @property
     def balance(self) -> float:
@@ -324,9 +339,25 @@ class SwaggerExchange(Exchange, metaclass=ABCMeta):
     def orders(self):
         return self._orders
 
-    def get_position(self, symbol: str) -> dict:
-        """Get position for specific symbol"""
-        return self._positions.get(symbol.lower(), {})
+    def get_position(self, symbol: str, refresh: bool = False) -> dict:
+        """Get position for specific symbol
+
+        Parameters
+        ----------
+        symbol : str
+            position data for symbol
+        refresh : bool, optional
+            force refresh of position data, by default False
+
+        Returns
+        -------
+        dict
+            position data
+        """
+        if refresh:
+            self.set_positions()
+
+        return self.positions.get(symbol.lower(), {})
 
     @abstractmethod
     def _get_instrument(self, **kw) -> dict:
@@ -407,8 +438,6 @@ class SwaggerExchange(Exchange, metaclass=ABCMeta):
         RuntimeError
             if order has already been processed
         """
-        _qty = self.order_keys['qty']
-        _link_id = self.order_keys['order_link_id']
 
         if order_specs is None:
             log.warning('No orders to add custom specs to.')
@@ -423,16 +452,20 @@ class SwaggerExchange(Exchange, metaclass=ABCMeta):
                 raise RuntimeError('Order spec has already been processed!')
 
             o['processed'] = True
-            o['exchange'] = self.exchange_name
+            o['exchange'] = self.exch_name
 
             o['side_str'] = o['side']
             o['side'] = 1 if o['side'] == 'Buy' else -1
 
             # some orders can have none qty if "close position" market order cancelled by bitmex
-            if not o[_qty] is None:
-                o[_qty] = int(o['side'] * int(o[_qty]))
+            # NOTE kinda messy, should just convert all raw specs to nice keys by default
+            for k in ('qty', 'cum_qty'):
+                _qty = self.order_keys[k]
+                if not o[_qty] is None:
+                    o[_qty] = int(o['side'] * int(o[_qty]))
 
             # add key to the order, excluding manual orders
+            _link_id = self.order_keys['order_link_id']
             if not o.get(_link_id, '') == '':
                 o['name'] = o[_link_id].split('-')[1]
 
@@ -452,6 +485,7 @@ class SwaggerExchange(Exchange, metaclass=ABCMeta):
             self,
             symbol: str = None,
             new_only: bool = False,
+            # filled_only: bool = False,
             bot_only: bool = False,
             manual_only: bool = False,
             as_exch_order: bool = True,
@@ -494,6 +528,7 @@ class SwaggerExchange(Exchange, metaclass=ABCMeta):
         conds = dict(
             symbol=lambda x: x['symbol'].lower() == symbol.lower(),
             new_only=lambda x: OrderStatus(x[self.order_keys['status']]) == OrderStatus.OPEN,
+            # filled_only=lambda x: OrderStatus(x[self.order_keys['status']]) == OrderStatus.FILLED,
             bot_only=lambda x: not x['manual'],
             manual_only=lambda x: x['manual'])
 
@@ -509,6 +544,40 @@ class SwaggerExchange(Exchange, metaclass=ABCMeta):
             orders = ords.list_to_dict(orders, key_base=False)
 
         return orders
+
+    def df_orders(self, symbol: str = None, new_only: bool = True, refresh: bool = False) -> pd.DataFrame:
+        """Used to display orders in google sheet
+        - TODO this is slightly inefficient, ~0.7s.. try speeding up raw spec
+
+        Parameters
+        ----------
+        symbol : str, optional
+            default self.default_symbol
+        new_only : bool, optional
+            default True
+        refresh : bool, optional
+            default False
+
+        Returns
+        -------
+        pd.DataFrame
+            df of orders
+        """
+        symbol = symbol or self.default_symbol
+        orders = self.get_orders(symbol=symbol, new_only=new_only, refresh=refresh, as_exch_order=True)
+        cols = ['order_type', 'name', 'qty', 'price', 'exec_inst', 'symbol']
+
+        if not orders:
+            df = pd.DataFrame(columns=cols, index=range(1))
+        else:
+            data = [{k: o.raw_spec(k) for k in cols} for o in orders]
+            df = pd.DataFrame.from_dict(data) \
+
+        return df \
+            .reindex(columns=cols) \
+            .sort_values(
+                by=['symbol', 'order_type', 'name'],
+                ascending=[False, True, True])
 
     def exch_order_from_raw(self, order_specs: List[dict], process: bool = True) -> List[ExchOrder]:
         """Create exchange order objs from raw specs
@@ -535,7 +604,7 @@ class SwaggerExchange(Exchange, metaclass=ABCMeta):
         for item in order_specs:
             if not isinstance(item, dict):
                 raise AttributeError(
-                    f'Invalid order specs returned from {self.exchange_name}. {type(item)}: {item}')
+                    f'Invalid order specs returned from {self.exch_name}. {type(item)}: {item}')
 
         return ords.make_exch_orders(order_specs)
 
@@ -698,22 +767,30 @@ class SwaggerExchange(Exchange, metaclass=ABCMeta):
         """
         symbol = symbol or self.default_symbol
         try:
-            if self.exchange_name == 'bitmex':
+            if self.exch_name == 'bitmex':
                 self.check_request(
                     self.client.Order.Order_new(symbol=symbol, execInst='Close'))
 
-            elif self.exchange_name == 'bybit':
+            elif self.exch_name == 'bybit':
                 # NOTE ugh so messy hopefully a way to make this cleaner
                 self.set_positions()
-                pos = self.get_position(symbol)
+                pos = self.get_position(symbol, refresh=True)
 
                 if not pos['qty'] == 0:
-                    close_order = dict(order_type='market', symbol=symbol, qty=pos['qty'] * pos['side'] * -1)
+                    close_order = dict(
+                        order_type='market',
+                        symbol=symbol,
+                        qty=pos['qty'] * -1)
+
                     self._order_request(
                         action='submit',
                         order_specs=ords.make_exch_orders(close_order))
         except:
-            f.send_error(msg='ERROR: Could not close position!')
+            f.send_error(msg='ERROR: Could not close position!', _log=log)
+        finally:
+            pos = self.get_position(symbol, refresh=True)
+            if not pos['qty'] == 0:
+                raise PositionNotClosedError(qty=pos['qty'])
 
     def cancel_manual(self) -> List[ExchOrder]:
         raise NotImplementedError('this doesn\'t work yet.')
@@ -756,7 +833,12 @@ class SwaggerExchange(Exchange, metaclass=ABCMeta):
         """
         return self._order_request(action='cancel_all', order_specs=dict(symbol=symbol))
 
-    def reconcile_orders(self, symbol: str, expected_orders: List[Order], discord_user: str = None) -> None:
+    def reconcile_orders(
+            self,
+            symbol: str,
+            expected_orders: List[Order],
+            discord_user: str = None,
+            test: bool = False) -> None:
         """Compare expected and actual (current) orders, adjust as required
 
         Parameters
@@ -771,9 +853,10 @@ class SwaggerExchange(Exchange, metaclass=ABCMeta):
         all_orders = self.validate_orders(expected_orders, actual_orders, show=True)
 
         # perform action reqd for orders except valid/manual
-        for action, orders in all_orders.items():
-            if orders and not action in ('valid', 'manual'):
-                getattr(self, f'{action}_orders')(orders)
+        if not test:
+            for action, orders in all_orders.items():
+                if orders and not action in ('valid', 'manual'):
+                    getattr(self, f'{action}_orders')(orders)
 
         # temp send order submit details to discord
         user = self.user if discord_user is None else discord_user
@@ -786,7 +869,7 @@ class SwaggerExchange(Exchange, metaclass=ABCMeta):
             m['current_qty'] = f'{self.current_qty(symbol=symbol):+,}'
             m |= m_ords
             msg = f.pretty_dict(m, prnt=False, bold_keys=True)
-            f.discord(msg=f'{user}\n{msg}', channel='orders')
+            f.discord(msg=f'{user}\n{msg}', channel='orders' if not test else 'test')
 
         s = ', '.join([f'{action}={len(orders)}' for action, orders in all_orders.items()])
         log.info(f'{self.user} - Reconciled orders: {s}')
