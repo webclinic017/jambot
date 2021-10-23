@@ -106,7 +106,7 @@ class DB(object):
 
         self._engine, self._cursor = None, None
 
-    def get_max_dates(self, interval: int = 1, symbols: Union[str, List[str]] = None) -> pd.DataFrame:
+    def get_max_dates(self, interval: int = 15, symbols: Union[str, List[str]] = None) -> pd.DataFrame:
         """Get max dates per exchange/symbol/interval in db
 
         Parameters
