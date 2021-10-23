@@ -305,7 +305,24 @@ def reduce_dtypes(df: pd.DataFrame, dtypes: dict) -> pd.DataFrame:
 
     return df.astype(dtype_cols)
 
-# DATETIME
+
+def append_list(df: pd.DataFrame, lst: list) -> pd.DataFrame:
+    """Append dataframe to list
+    - for use with later pd.concat()
+
+    Parameters
+    ----------
+    df : pd.DataFrame
+    lst : list
+        lst to add to in-place
+
+    Returns
+    -------
+    pd.DataFrame
+        original unmodified df
+    """
+    lst.append(df)
+    return df
 
 
 def check_date(d):
@@ -359,6 +376,31 @@ def read_csv(startdate, daterange, symbol=None):
     return df
 
 
+def str_to_num(val: Any) -> Union[Any, float, int]:
+    """Convert string float/int to correct type
+
+    Parameters
+    ----------
+    val : Any
+        any value to try
+
+    Returns
+    -------
+    Union[Any, float, int]
+        int | float | Any (original value)
+    """
+    if isinstance(val, (float, int)):
+        return val
+
+    try:
+        return int(val)
+    except ValueError:
+        try:
+            return float(val)
+        except ValueError:
+            return val
+
+
 def percent(x: float) -> str:
     """Format float as string percent"""
     return f'{x:.2%}' if pd.notna(x) else pd.NA
@@ -387,7 +429,7 @@ def price_format(altstatus=False):
     return ans
 
 
-def get_price(pnl: float, entry_price: float, side: int) -> float:
+def get_price(pnl: float, entry_price: float, side: int, prec: float = 0.5) -> float:
     """Get price at percentage offset
 
     Parameters
@@ -409,8 +451,7 @@ def get_price(pnl: float, entry_price: float, side: int) -> float:
     elif side == -1:
         price = entry_price / (1 + pnl)
 
-    # NOTE this will need to change for different symbols
-    return round_down(n=price, nearest=0.5)
+    return round_down(n=price, nearest=prec)
 
 
 def get_pnl_xbt(qty: int, entry_price: float, exit_price: float, isaltcoin: bool = False) -> float:
@@ -604,7 +645,7 @@ def send_error(msg: str = None, prnt: bool = False, force: bool = False, _log: l
         discord(msg=msg, channel='err')
 
 
-def get_offset(interval: int = 1) -> delta:
+def inter_offset(interval: int = 1) -> delta:
     """Get single period offset for 1hr or 15m
 
     Parameters
@@ -624,7 +665,7 @@ def date_to_dt(d: date) -> dt:
     return dt.combine(d, dt.min.time())
 
 
-def timenow(interval: int = 1) -> dt:
+def inter_now(interval: int = 1) -> dt:
     """Get current utc time rounded down to nearest 1hr/15min interval
 
     Parameters
