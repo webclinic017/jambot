@@ -1,3 +1,5 @@
+from typing import *
+
 import numpy as np
 import pandas as pd
 import pygsheets
@@ -7,6 +9,7 @@ from pygsheets import Spreadsheet
 from pygsheets.client import Client
 
 from jambot import functions as f
+from jambot.exchanges.exchange import SwaggerExchange
 
 
 def get_creds(scopes: list = None) -> Credentials:
@@ -85,6 +88,7 @@ class GoogleSheet():
             wb: Spreadsheet = None,
             name: str = None,
             batcher: 'SheetBatcher' = None,
+            test: bool = False,
             **kw):
         self.name = name or self.__class__.__name__
 
@@ -95,6 +99,7 @@ class GoogleSheet():
 
         self.df = None
         self.batcher = batcher
+        self.test = test
 
     def process_df(self, df: pd.DataFrame) -> pd.DataFrame:
         """Process df after loading from gs"""
@@ -118,8 +123,12 @@ class GoogleSheet():
         df : pd.DataFrame
         """
         if not self.batcher:
-            ws = self.wb.worksheet_by_title(self.name)
-            ws.set_dataframe(df=df, start=self.rng_start, nan='')
+            if not self.test:
+                ws = self.wb.worksheet_by_title(self.name)
+                ws.set_dataframe(df=df, start=self.rng_start, nan='')
+            else:
+                from IPython.display import display
+                display(df)
         else:
             self.batcher.add_df(df=df, gs=self)
 
@@ -136,8 +145,7 @@ class GoogleSheet():
         pd.DataFrame
         """
         return df \
-            .assign(**{c: lambda x, c=c: x[c].apply(lambda x: f.percent(x)) for c in cols}) \
-
+            .assign(**{c: lambda x, c=c: x[c].apply(lambda x: f.percent(x)) for c in cols})
 
 
 class SheetBatcher(GoogleSheet):
@@ -183,7 +191,7 @@ class SheetBatcher(GoogleSheet):
                 df_out.rename(columns=m_rename, inplace=True)
             else:
                 # add col header in df as cells
-                df_out.iloc[row_start - 1: row_end - 1, col_start: col_end] = df.columns.values
+                df_out.iloc[row_start - 1: row_start, col_start: col_end] = df.columns.values
 
         # return df_out
         self.rng_start = (rows_min + 1, cols_min + 1)
@@ -203,12 +211,15 @@ class UserSettings(GoogleSheet):
         m_types = {c: float for c in df.columns} \
             | {
                 'bot_enabled': bool,
-                'discord': str}
+                'discord': str,
+                'exchange': str}
 
         df = df \
             .replace(dict(TRUE=1, FALSE=0)) \
             .astype(m_types) \
-            .assign(discord=lambda x: '<@' + x.discord + '>')
+            .assign(discord=lambda x: np.where(x.discord.apply(lambda y: len(y) == 18), '<@' + x.discord + '>', None)) \
+            .replace(dict(exchange={'1': 'bitmex', '2': 'bybit'})) \
+            .reset_index(drop=False).set_index(['exchange', 'user'])
 
         # NOTE kinda sketch but works for now
         sym_cols = [c for c in df.columns if len(c) == 3]
@@ -221,9 +232,13 @@ class Bitmex(GoogleSheet):
     def __init__(self, **kw):
         super().__init__(name='Bitmex', **kw)
 
+    def add_blank_rows(self, df: pd.DataFrame, last: int) -> pd.DataFrame:
+        """Add blank rows to end of df to overwrite on google sheet"""
+        return df.append(pd.DataFrame(index=range(last - len(df))), ignore_index=True)
+
 
 class TradeHistory(Bitmex):
-    rng_start = (1, 15)
+    rng_start = (1, 17)
 
     def set_df(self, strat, last: int = 20, **kw) -> None:
         """Set df of trade history to gs"""
@@ -231,20 +246,27 @@ class TradeHistory(Bitmex):
         df = strat.df_trades(last=last)[cols].copy() \
             .pipe(self.as_percent, cols=('pnl', 'pnl_acct')) \
             .pipe(f.remove_underscore) \
-            .pipe(lambda df: df.append(pd.DataFrame(index=range(last - len(df))), ignore_index=True)) \
+            .pipe(self.add_blank_rows, last=last) \
             .assign(ts=lambda x: x.ts.dt.strftime('%Y-%m-%d %H:%M'))
 
         super().set_df(df=df, **kw)
 
 
 class OpenOrders(Bitmex):
-    rng_start = (1, 9)
+    rng_start = (1, 11)
 
-    def set_df(self, exch, **kw) -> None:
+    def set_df(self, exchs: Union[SwaggerExchange, List[SwaggerExchange]], **kw) -> None:
         """Set df of trade history to gs"""
-        df = exch.df_orders(refresh=True, new_only=True) \
-            .rename(columns=dict(order_type='ord_type')) \
-            .pipe(f.remove_underscore)
+        dfs = []
+
+        for exch in f.as_list(exchs):
+            df = exch.df_orders(refresh=True, new_only=True) \
+                .rename(columns=dict(order_type='ord_type')) \
+                .pipe(f.remove_underscore) \
+                .pipe(f.append_list, dfs)
+
+        df = pd.concat(dfs) \
+            .pipe(self.add_blank_rows, last=10)
 
         super().set_df(df=df, **kw)
 
@@ -252,30 +274,48 @@ class OpenOrders(Bitmex):
 class OpenPositions(Bitmex):
     rng_start = (1, 1)
 
-    def set_df(self, exch, **kw) -> None:
-        m_conv = dict(
-            sym='underlying',
-            qty='currentQty',
-            entry='avgEntryPrice',
-            last='lastPrice',
-            pnl='unrealisedPnl',
-            pnl_pct='unrealisedPnlPcnt',
-            roe_pct='unrealisedRoePcnt',
-            value='maintMargin')
+    def set_df(self, exchs: Union[SwaggerExchange, List[SwaggerExchange]], **kw) -> None:
 
-        data = [{k: pos[v] for k, v in m_conv.items()} for pos in exch._positions.values()]
-        df = pd.DataFrame(data=data, columns=list(m_conv.keys())) \
-            .assign(**{c: lambda x, c=c: x[c] / exch.div for c in ('pnl', 'value')}) \
-            .pipe(self.as_percent, cols=('pnl_pct', 'roe_pct')) \
-            .pipe(f.remove_underscore)
+        dfs = []
+        items = ['sym_short', 'qty', 'entry_price', 'last_price', 'u_pnl', 'pnl_pct', 'roe_pct', 'value']
+        m_rename = dict(
+            sym_short='sym',
+            u_pnl='pnl',
+            entry_price='entry')
+
+        for exch in f.as_list(exchs):
+            data = [dict(user=exch.user, exch=exch.exch_name)
+                    | {k: p.get(k, None) for k in items} for p in exch.positions.values() if p['qty']]
+
+            df = pd.DataFrame(data=data, columns=['user', 'exch'] + items) \
+                .pipe(self.as_percent, cols=('pnl_pct', 'roe_pct')) \
+                .rename(columns=m_rename) \
+                .pipe(f.remove_underscore) \
+                .pipe(f.append_list, dfs)
+
+        df = pd.concat(dfs) \
+            .pipe(self.add_blank_rows, last=10)
 
         super().set_df(df=df, **kw)
 
 
 class UserBalance(Bitmex):
-    rng_start = (11, 2)
+    rng_start = (11, 1)
 
-    def set_df(self, exch, **kw) -> None:
-        data = dict(upnl=[exch.unrealized_pnl], bal=[exch.total_balance_margin])
-        df = pd.DataFrame(data)
+    def set_df(self, exchs: Union[SwaggerExchange, List[SwaggerExchange]], **kw) -> None:
+        dfs = []
+
+        for exch in f.as_list(exchs):
+            data = dict(
+                user=exch.user,
+                exch=exch.exch_name,
+                upnl=exch.unrealized_pnl,
+                balance=exch.total_balance_margin)
+
+            df = pd.DataFrame(data, index=[0]) \
+                .pipe(f.append_list, dfs)
+
+        df = pd.concat(dfs) \
+            .pipe(self.add_blank_rows, last=10)
+
         super().set_df(df=df, **kw)

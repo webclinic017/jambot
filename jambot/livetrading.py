@@ -1,61 +1,36 @@
 from datetime import datetime as dt
 from datetime import timedelta as delta
+from typing import *
 
 import pandas as pd
 
-from jambot import SYMBOL
 from jambot import config as cf
 from jambot import functions as f
+from jambot import getlog
 from jambot.exchanges.bitmex import Bitmex
+from jambot.exchanges.bybit import Bybit
+from jambot.exchanges.exchange import SwaggerExchange
 from jambot.ml import models as md
 from jambot.ml.storage import ModelStorageManager
 from jambot.tradesys import backtest as bt
-from jambot.tradesys.strategies import base, ml, sfp, trendrev
+from jambot.tradesys.strategies import base, ml, sfp
 from jambot.utils import google as gg
 
-
-def compare_state(strat, pos):
-    # return TRUE if side is GOOD
-    # Could also check current qty?
-    # only works for trend, don't use for now
-    qty = pos['currentQty']
-    side = f.side(qty)
-
-    ans = True if side == 0 or strat.get_side() == side else False
-
-    if not ans:
-        err = '{}: {}, expected: {}'.format(strat.bm.symbolshort, side, strat.get_side())
-        f.discord(err)
-
-    return ans
-
-
-def refresh_gsheet_balance(u=None):
-    sht = f.get_google_sheet()
-    ws = sht.worksheet_by_title('Bitmex')
-    df = ws.get_as_df(start='A1', end='J15')
-    lst = list(df['Sym'].dropna())
-    syms = []
-
-    p = cf.p_res / 'symbols.csv'
-    df2 = pd.read_csv(p)
-    for row in df2.itertuples():
-        if row.symbolshort in lst:
-            syms.append(bt.BacktestManager(symbol=row.symbol, row=row))
-
-    # if u is None:
-    #     u = User()
-    # write_balance_google(syms, u, sht=sht, ws=ws, df=df)
+log = getlog(__name__)
 
 
 def check_sfp(df):
-    # run every hour
-    # get last 196 candles, price info only
-    # create sfp object
-    # check if current candle returns any sfp objects
-    # send discord alert with the swing fails, and supporting info
-    # 'Swing High to xxxx', 'swung highs at xxxx', 'tail = xx%'
-    # if one candle swings highs and lows, go with... direction of candle? bigger tail?
+    """
+    NOTE not used
+
+    run every hour
+    get last 196 candles, price info only
+    create sfp object
+    check if current candle returns any sfp objects
+    send discord alert with the swing fails, and supporting info
+    'Swing High to xxxx', 'swung highs at xxxx', 'tail = xx%'
+    if one candle swings highs and lows, go with... direction of candle? bigger tail?
+    """
 
     strat = sfp.Strategy()
     strat.init(df=df)
@@ -81,198 +56,66 @@ def check_sfp(df):
         f.discord(msg=msg, channel='sfp')
 
 
-def check_filled_orders(minutes: int = 5, exch: Bitmex = None, test: bool = True) -> None:
+def check_filled_orders(minutes: int = 5, test: bool = True) -> None:
     """Get orders filled in last n minutes and send discord msg
 
     Parameters
     ----------
     minutes : int, optional
         default 5
-    exch : Bitmex, optional
     test : bool, optional
         use testnet, default True
     """
+    symbol = 'XBTUSD'
     starttime = dt.utcnow() + delta(minutes=minutes * -1)
 
-    # get discord username for tagging
+    # Get discord username for tagging
     df_users = gg.UserSettings().get_df()
 
-    for exch in iter_exchanges(refresh=False):
+    # TODO not done for bybit yet... cant get all orders at once...
+    for exch in iter_exchanges(refresh=False, df_users=df_users, exch_name='bitmex'):
 
         orders = exch.get_filled_orders(starttime=starttime)
-        prec = exch.get_instrument(symbol=SYMBOL)['tickSize']
+        prec = exch.get_instrument(symbol=symbol)['precision']
 
         # NOTE could filter by symbols eventually
-
         if orders:
             msg = '\n'.join([o.summary_msg(exch=exch, nearest=prec) for o in orders])
 
             exch.set_positions()
             current_qty = f.pretty_dict(
-                m=dict(current_qty=f'{exch.current_qty(symbol=SYMBOL):+,}'),
+                m=dict(current_qty=f'{exch.current_qty(symbol=symbol):+,}'),
                 prnt=False,
                 bold_keys=True)
 
             msg = '{}\n{}{}'.format(
-                df_users.loc[exch.user]['discord'],
+                df_users.loc[(exch.exch_name, exch.user)]['discord'],
                 f.py_codeblock(msg),
                 current_qty)
             f.discord(msg=msg, channel='orders')
 
 
-def old_write_balance_google(syms, u, sht=None, ws=None, preservedf=False, df=None):
-
-    if sht is None:
-        sht = f.get_google_sheet()
-    if ws is None:
-        ws = sht.worksheet_by_title('Bitmex')
-
-    if df is None:
-        if not preservedf:
-            df = pd.DataFrame(columns=['Sym', 'Size', 'Entry', 'Last', 'Pnl', '%',
-                              'ROE', 'Value', 'Dur', 'Conf'], index=range(14))
-        else:
-            df = ws.get_as_df(start='A1', end='J15')
-
-    u.set_positions()
-
-    for i, bm in enumerate(syms):
-        symbol = bm.symbolbitmex
-        figs = bm.decimal_figs
-        pos = u.get_position(symbol)
-
-        df.at[i, 'Sym'] = bm.symbolshort
-        if bm.tradingenabled:
-            df.at[i, 'Size'] = pos['currentQty']
-            df.at[i, 'Entry'] = round(pos['avgEntryPrice'], figs)
-            df.at[i, 'Last'] = round(pos['lastPrice'], figs)
-            df.at[i, 'Pnl'] = round(pos['unrealisedPnl'] / u.div, 3)
-            df.at[i, '%'] = f.percent(pos['unrealisedPnlPcnt'])
-            df.at[i, 'ROE'] = f.percent(pos['unrealisedRoePcnt'])
-            df.at[i, 'Value'] = pos['maintMargin'] / u.div
-
-        if bm.strats:
-            strat = bm.strats[0]
-            t = strat.trades[-1]
-            df.at[i, 'Dur'] = t.duration()
-            df.Conf[i] = t.conf
-
-    # set profit/balance
-    u.set_total_balance()
-    df.at[9, 'Size'] = u.unrealized_pnl
-    df.at[9, 'Entry'] = u.total_balance_margin
-
-    # set funding rate
-    rate, hrs = u.funding_rate()
-    df.at[12, 'Sym'] = 'Funding:'
-    df.at[12, 'Size'] = f.percent(rate)
-    df.at[12, 'Entry'] = hrs
-
-    # set current time
-    df.at[13, 'Sym'] = 'Last:'
-    df.at[13, 'Size'] = dt.strftime(dt.utcnow(), f.time_format(mins=True))
-
-    # concat last 10 trades for google sheet
-    bm = list(filter(lambda x: x.symbol == 'XBTUSD', syms))[0]
-    if bm.strats:
-        dfTrades = bm.strat.df_trades(last=10).drop(columns=['N', 'Contracts', 'Bal'])
-        dfTrades.timestamp = dfTrades.timestamp.dt.strftime('%Y-%m-%d %H')
-        dfTrades.Pnl = dfTrades.Pnl.apply(lambda x: f.percent(x))
-        dfTrades.PnlAcct = dfTrades.PnlAcct.apply(lambda x: f.percent(x))
-    else:
-        dfTrades = ws.get_as_df(start='Q1', end='Y14')  # df.loc[:, 'timestamp':'PnlAcct']
-
-    df = pd.concat([df, u.df_orders(refresh=True), dfTrades], axis=1)
-    ws.set_dataframe(df, (1, 1), nan='')
-    # return df
-
-
-def old_run_toploop(u=None, partial=False, dfall=None):
-    # run every 1 hour, or when called by check_filled_orders()
-    from jambot.database import db
-
-    # Google - get user/position info
-    sht = f.get_google_sheet()
-    g_usersettings = sht.worksheet_by_title('UserSettings').get_all_records()
-    p = cf.p_res / 'symbols.csv'
-    dfsym = pd.read_csv(p)
-    g_user = g_usersettings[0]
-    syms = []
-
-    # Bitmex - get user/position info
-    if u is None:
-        # u = User()
-        u = None
-
-    u.set_positions()
-    u.set_orders()
-    u.reserved_balance = g_user['Reserved Balance']  # could just pass g_user to User()
-
-    # TODO: filter dfall to only symbols needed, don't pull everything from db
-    # use 'WHERE symbol in []', try pypika
-    # Only using XBTUSD currently
-    startdate = f.timenow() + delta(days=-15)
-    if dfall is None:
-        dfall = db.get_df(symbol=SYMBOL, startdate=startdate, interval=1)
-
-    for row in dfsym.itertuples():
-        if not row.symbol == 'XBTUSD':
-            continue
-        try:
-            # match google user with bitmex position, add %balance
-            weight = float(g_user[row.symbolshort].strip('%')) / 100
-            pos = u.get_position(row.symbolbitmex)
-            pos['percent_balance'] = weight
-
-            symbol = row.symbol
-            # NOTE may need to set timestamp/symbol index when using more than just XBTUSD
-            df = dfall[dfall.symbol == symbol]  # .reset_index(drop=True)
-
-            # TREND_REV
-            speed = (16, 6)
-            norm = (0.004, 0.024)
-            strat = trendrev.Strategy(speed=speed, norm=norm)
-            strat.stop_pct = -0.03
-            strats = [strat]
-
-            bm = bt.BacktestManager(symbol=symbol, startdate=startdate, strats=strats,
-                                    row=row, df=df, partial=partial, u=u)
-            if weight <= 0:
-                bm.tradingenabled = False  # this should come from strat somehow
-            bm.decide_full()
-            syms.append(bm)
-
-            if bm.tradingenabled:
-                actual = u.get_orders(bm.symbolbitmex, bot_only=True)
-                theo = strat.final_orders(u, weight)
-
-                # matched, missing, not_matched = compare_orders(theo, actual, show=True)
-
-                # u.cancel_bulk(not_matched)
-                # u.amend_bulk(validate_matched(matched, show=True))
-                # u.place_bulk(missing)
-
-        except:
-            f.send_error(symbol)
-
-    write_balance_google(syms, u, sht)
-
-
-def write_balance_google(strat: base.StrategyBase, exch: Bitmex) -> None:
+def write_balance_google(
+        strat: base.StrategyBase,
+        exchs: Union[SwaggerExchange, List[SwaggerExchange]],
+        test: bool = False) -> None:
     """Update google sheet "Bitmex" with current strat performance
+
 
     Parameters
     ----------
     strat : base.StrategyBase
-    exch : Bitmex
+    exchs : Union[SwaggerExchange, List[SwaggerExchange]]
+    test : bool, optional
+        only display dfs, don't write to sheet, default False
     """
     gc = gg.get_google_client()
-    batcher = gg.SheetBatcher(gc=gc, name='Bitmex')
+    batcher = gg.SheetBatcher(gc=gc, name='Bitmex', test=test)
     kw = dict(batcher=batcher)
 
-    gg.OpenPositions(**kw).set_df(exch=exch)
-    gg.OpenOrders(**kw).set_df(exch=exch)
-    gg.UserBalance(**kw).set_df(exch=exch)
+    gg.OpenPositions(**kw).set_df(exchs=exchs)
+    gg.OpenOrders(**kw).set_df(exchs=[e for e in f.as_list(exchs) if e.user in ('jayme', 'testnet')])
+    gg.UserBalance(**kw).set_df(exchs=exchs)
     gg.TradeHistory(**kw).set_df(strat=strat)
 
     batcher.run_batch()
@@ -304,12 +147,26 @@ def show_current_status(n: int = 30, **kw) -> None:
         .apply(highlight_val, subset=['signal'], m=m_color)
 
 
-def get_df_pred(
-        symbol: str = SYMBOL,
-        interval: int = 15,
-        name: str = 'lgbm',
-        test: bool = False) -> pd.DataFrame:
-    """Convenicce to get df_pred used by live trading
+def replace_ohlc(df: pd.DataFrame, df_new: pd.DataFrame) -> pd.DataFrame:
+    """Replace existing ohlc candles with new
+
+    Parameters
+    ----------
+    df : pd.DataFrame
+        df to replace
+    df_new : pd.DataFrame
+        df to get new ohlc from
+
+    Returns
+    -------
+    pd.DataFrame
+    """
+    cols = ['open', 'high', 'low', 'close']
+    return df.drop(columns=cols).pipe(f.left_merge, df_new[cols])
+
+
+def get_df_raw(exch_name: str, symbol: str, interval: int = 15) -> pd.DataFrame:
+    """get OHLCV df for running strat live
 
     Parameters
     ----------
@@ -317,6 +174,27 @@ def get_df_pred(
         by default SYMBOL
     interval : int, optional
         by default 15
+
+    Returns
+    -------
+    pd.DataFrame
+    """
+    from jambot.database import db
+
+    offset = {1: 16, 15: 4}.get(interval)
+    startdate = f.inter_now(interval) + delta(days=-offset)
+
+    return db.get_df(exch_name=exch_name, symbol=symbol, startdate=startdate, interval=interval)
+
+
+def get_df_pred(
+        name: str = 'lgbm',
+        test: bool = False,
+        **kw) -> pd.DataFrame:
+    """Convenicce to get df_pred used by live trading
+
+    Parameters
+    ----------
     name : str, optional
         model name, by default 'lgbm'
     test : bool
@@ -327,12 +205,9 @@ def get_df_pred(
     pd.DataFrame
         df with preds added
     """
-    from jambot.database import db
 
-    # load raw data from db and add signals
-    offset = {1: 16, 15: 4}.get(interval)
-    startdate = f.timenow(interval) + delta(days=-offset)
-    df = db.get_df(symbol=symbol, startdate=startdate, interval=interval) \
+    # add signals
+    df = get_df_raw(**kw) \
         .pipe(md.add_signals, name=name)
 
     # load saved/trained models from blob storage and add pred signals
@@ -340,38 +215,59 @@ def get_df_pred(
         .df_pred_from_models(df=df, name=name)
 
 
-def iter_exchanges(refresh: bool = True) -> Bitmex:
-    """Iterate exchange objs for all users
+def iter_exchanges(
+        refresh: bool = True,
+        df_users: pd.DataFrame = None,
+        exch_name: Union[str, List[str]] = None) -> SwaggerExchange:
+    """Iterate exchange objs for all users where bot is enabled
 
     Parameters
     ----------
     refresh : bool
         refresh exch data on init or not
+    df_users : pd.DataFrame, optional
+        df with user data from google, default None
+    exch_name : Union[str, List[str]], optional
+        single or multiple exchanges to filter, default None
 
     Returns
     -------
     Bitmex
         initialized Bitmex exch obj
     """
-    df_users = gg.UserSettings().get_df() \
-        .query('bot_enabled == True')
+    if df_users is None:
+        df_users = gg.UserSettings().get_df()
 
-    for user, m in df_users.to_dict(orient='index').items():
+    # df_users = df_users.query('bot_enabled == True')
+
+    if not exch_name is None:
+        df_users = df_users.loc[f.as_list(exch_name)]
+
+    m_exch = dict(bitmex=Bitmex, bybit=Bybit)
+
+    for (exch_name, user), m in df_users.to_dict(orient='index').items():
         test = True if 'test' in user.lower() else False
+        Exchange = m_exch[exch_name]
 
         # NOTE only set up for XBT currently
-        yield Bitmex(user=user, test=test, refresh=refresh, pct_balance=m['xbt'])
+        yield Exchange(user=user, test=test, refresh=refresh, pct_balance=m['xbt'])
 
 
-def run_strat(interval: int = 15, symbol: str = SYMBOL, name: str = 'lgbm', **kw) -> ml.Strategy:
-    df_pred = get_df_pred(symbol, interval, name, **kw)
+def run_strat(
+        name: str = 'lgbm',
+        df_pred: pd.DataFrame = None,
+        order_offset: float = -0.0006,
+        **kw) -> ml.Strategy:
+
+    # allow passing in to replace OHLC cols and run again
+    if df_pred is None:
+        df_pred = get_df_pred(name=name, **kw)
 
     # run strat in "live" mode to get expected state
-    strat = ml.make_strat(live=True)
+    strat = ml.make_strat(live=True, order_offset=order_offset, **kw)
 
     cols = ['open', 'high', 'low', 'close', 'signal']
     bm = bt.BacktestManager(
-        symbol=symbol,
         startdate=df_pred.index[0],
         strat=strat,
         df=df_pred[cols]).run()
@@ -379,27 +275,51 @@ def run_strat(interval: int = 15, symbol: str = SYMBOL, name: str = 'lgbm', **kw
     return strat
 
 
-def run_strat_live(interval: int = 15) -> None:
+def run_strat_live(
+        interval: int = 15,
+        exch_name: Union[str, List[str]] = None,
+        test: bool = False) -> None:
     """Run strategy on given interval and adjust orders
     - run at 15 seconds passed the interval (bitmex OHLC REST delay)
 
     Parameters
     ----------
     interval : int, default 15
+    exch_name: Union[str, List[str]], optional
+        limit live exchanges, default None
     """
-    symbol = SYMBOL
     name = 'lgbm'
-    strat = run_strat(interval=interval, symbol=symbol, name=name)
+
+    # run strat for bmex first
+    strat_bmex = run_strat(interval=interval, symbol='XBTUSD', name=name, exch_name='bitmex')
+
+    # replace ohlc and run strat for bbit data
+    df_bbit = replace_ohlc(
+        df=strat_bmex.df,
+        df_new=get_df_raw(exch_name='bybit', symbol='BTCUSD', interval=interval))
+
+    strat_bbyt = run_strat(name=name, df_pred=df_bbit, symbol='BTCUSD', exch_name='bybit')
+
+    m_strats = dict(
+        bitmex=strat_bmex,
+        bybit=strat_bbyt)
+
     df_users = gg.UserSettings().get_df()
 
-    m_exch = {}
-    for exch in iter_exchanges():
-        m_exch[exch.user] = exch
+    exchs = []
+    for exch in iter_exchanges(df_users=df_users, exch_name=exch_name):
+        strat = m_strats[exch.exch_name]
+        symbol = exch.default_symbol
+        log.info(exch)
 
+        # TODO will need to test this with multiple symbols eventually
         exch.reconcile_orders(
             symbol=symbol,
             expected_orders=strat.broker.expected_orders(symbol=symbol, exch=exch),
-            discord_user=df_users.loc[exch.user]['discord'])
+            discord_user=df_users.loc[(exch.exch_name, exch.user)]['discord'],
+            test=test)
+
+        exchs.append(exch)
 
     # write current strat trades/open positions to google
-    write_balance_google(strat=strat, exch=m_exch['jayme'])
+    write_balance_google(strat=strat, exchs=exchs, test=test)
