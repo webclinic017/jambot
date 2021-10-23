@@ -11,6 +11,7 @@ authors = ["Jayme Gordon <jaymegordo@gmail.com>"]
 [tool.poetry.dependencies]
 python = "^3.9"
 bitmex = "^0.2.2"
+Bybit = "^0.2.12"
 discord = "^1.0.1"
 PyPika = "^0.48.1"
 pyodbc = "^4.0.30"
@@ -26,6 +27,7 @@ cryptography = "^3.4.7"
 azure-storage-blob = "^12.8.1"
 google-cloud-logging = "^2.6.0"
 pygsheets = "^2.0.5"
+jsonschema = "<4.0"
 
 [tool.poetry.group.dev.dependencies]
 jupyter = "^1.0.0"
@@ -48,7 +50,6 @@ memory-profiler = "^0.58.0"
 filprofiler = "==2021.8.0"
 colored-traceback = "^0.3.0"
 colorlog = "^6.4.1"
-Bybit = "^0.2.12"
 graphviz = "^0.17"
 
 [tool.pytest.ini_options]
