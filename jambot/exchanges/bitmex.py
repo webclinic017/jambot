@@ -22,7 +22,7 @@ warnings.filterwarnings('ignore', category=Warning, message='.*format is not reg
 
 
 class Bitmex(SwaggerExchange):
-    div = 100000000
+    div = 1e8
     default_symbol = SYMBOL
     conv_symbol = dict(BTCUSD=default_symbol)
     wallet_keys = dict(
@@ -30,12 +30,25 @@ class Bitmex(SwaggerExchange):
         total_balance_margin='marginBalance',
         total_balance_wallet='walletBalance',
         unrealized_pnl='unrealisedPnl',
-        prev_pnl='prevRealisedPnl')
+        prev_pnl='prevRealisedPnl',
+        value='maintMargin')
 
     other_keys = dict(
         last_price='lastPrice',
         cur_qty='currentQty',
         err_text='text')
+
+    # value = "current value of position"
+    pos_keys = dict(
+        sym_short='underlying',
+        qty='currentQty',
+        entry_price='avgEntryPrice',
+        last_price='lastPrice',
+        u_pnl='unrealisedPnl',
+        pnl_pct='unrealisedPnlPcnt',
+        roe_pct='unrealisedRoePcnt',
+        value='maintMargin'
+    )
 
     order_keys = ExchOrder._m_conv.get('bitmex')
     api_host = 'https://www.bitmex.com'
@@ -75,43 +88,17 @@ class Bitmex(SwaggerExchange):
     def client_api_auth():
         return APIKeyAuthenticator
 
-    def _get_positions(self) -> List[dict]:
-        return self.client.Position.Position_get().result()[0]
+    def _set_positions(self) -> List[dict]:
+        positions = self.client.Position.Position_get().result()[0]
+
+        # update position keys for easier access
+        for p in positions:
+            p |= {k: p[k] / self.div for k in self.wallet_keys.values() if k in p}
+
+        return positions
 
     def _get_instrument(self, **kw) -> dict:
         return self.client.Instrument.Instrument_get(**kw).response().result[0]
-
-    def df_orders(self, symbol: str = SYMBOL, new_only: bool = True, refresh: bool = False) -> pd.DataFrame:
-        """Used to display orders in google sheet
-
-        Parameters
-        ----------
-        symbol : str, optional
-            default SYMBOL
-        new_only : bool, optional
-            default True
-        refresh : bool, optional
-            default False
-
-        Returns
-        -------
-        pd.DataFrame
-            df of orders
-        """
-        orders = self.get_orders(symbol=symbol, new_only=new_only, refresh=refresh, as_exch_order=True)
-        cols = ['order_type', 'name', 'qty', 'price', 'exec_inst', 'symbol']
-
-        if not orders:
-            df = pd.DataFrame(columns=cols, index=range(1))
-        else:
-            data = [{k: o.raw_spec(k) for k in cols} for o in orders]
-            df = pd.DataFrame.from_dict(data) \
-
-        return df \
-            .reindex(columns=cols) \
-            .sort_values(
-                by=['symbol', 'order_type', 'name'],
-                ascending=[False, True, True])
 
     def get_filled_orders(self, symbol: str = SYMBOL, starttime: dt = None) -> List[ExchOrder]:
         """Get orders filled since last starttime
@@ -165,7 +152,7 @@ class Bitmex(SwaggerExchange):
         result = self.client.Instrument.Instrument_get(symbol=symbol).response().result[0]
 
         rate = result['fundingRate']
-        hrs = int((result['fundingTimestamp'] - f.timenow().replace(tzinfo=tz.utc)).total_seconds() / 3600)
+        hrs = int((result['fundingTimestamp'] - f.inter_now().replace(tzinfo=tz.utc)).total_seconds() / 3600)
 
         return rate, hrs
 
@@ -207,7 +194,7 @@ class Bitmex(SwaggerExchange):
         timediff = 0
 
         if not self.partialcandle is None:
-            timediff = (self.partialcandle.timestamp[0] - f.timenow()).seconds
+            timediff = (self.partialcandle.timestamp[0] - f.inter_now()).seconds
 
         if (timediff > 7200
             or self.partialcandle is None
@@ -279,7 +266,7 @@ class Bitmex(SwaggerExchange):
         """
 
         # set current lower time bin to check for
-        dnow = f.timenow(interval) - f.get_offset(interval)
+        dnow = f.inter_now(interval) - f.inter_offset(interval)
 
         _time_last = lambda: self.last_candle(interval, symbol=symbol).timestamp.iloc[0]
         time_last = _time_last()
@@ -360,10 +347,15 @@ class Bitmex(SwaggerExchange):
 
         resultcount = float('inf')
         start = 0
+        page_max = 1000
         lst = []
         cols = ['symbol', 'timestamp', 'open', 'high', 'low', 'close', 'volume']
 
-        while resultcount >= 1000 and start // 1000 <= pages:
+        if isinstance(symbol, list) and fltr == '':
+            fltr = json.dumps(dict(symbol=symbol))  # filter symbols needed
+            symbol = None
+
+        while resultcount >= page_max and start // page_max <= pages:
             request = self.client.Trade.Trade_getBucketed(
                 binSize=binsize,
                 symbol=symbol,
@@ -381,7 +373,7 @@ class Bitmex(SwaggerExchange):
 
             resultcount = len(result)
             lst.extend(result)
-            start += 1000
+            start += page_max
 
             if ratelim_remaining <= 1:
                 log.info('Ratelimit reached. Sleeping 10 seconds.')
