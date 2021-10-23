@@ -1,8 +1,7 @@
-import json
 from collections import defaultdict
 from datetime import datetime as dt
 from datetime import timedelta as delta
-from typing import Tuple
+from typing import *
 from urllib import parse
 
 import numpy as np
@@ -16,6 +15,7 @@ from jambot import SYMBOL
 from jambot import functions as f
 from jambot import getlog
 from jambot.exchanges.bitmex import Bitmex
+from jambot.exchanges.exchange import SwaggerExchange
 from jambot.utils.secrets import SecretsManager
 
 global db
@@ -46,6 +46,11 @@ def _create_engine():
 
 
 class DB(object):
+    # store exchange name as tinyint
+    exch_keys = dict(
+        bitmex=1,
+        bybit=2)
+
     def __init__(self):
         self.__name__ = 'Jambot Database'
         log.debug(f'Initializing database: {self.__name__}')
@@ -101,18 +106,31 @@ class DB(object):
 
         self._engine, self._cursor = None, None
 
-    def get_max_dates(self, interval: int = 1, symbol: str = None) -> pd.DataFrame:
+    def get_max_dates(self, interval: int = 1, symbols: Union[str, List[str]] = None) -> pd.DataFrame:
+        """Get max dates per exchange/symbol/interval in db
+
+        Parameters
+        ----------
+        interval : int, optional
+            default 1
+        symbols : Union[str, List[str]], optional
+            single or multiple symbols, by default None
+
+        Returns
+        -------
+        pd.DataFrame
+            df[exchange, interval, symbol, max(timestamp)]
+        """
         a = pk.Table('Bitmex')
         q = pk.Query.from_(a) \
-            .select('interval', 'symbol', fn.Max(a.timestamp)
-                    .as_('timestamp')) \
+            .select('exchange', 'interval', 'symbol', fn.Max(a.timestamp).as_('timestamp')) \
             .where(a.interval == interval) \
-            .groupby(a.symbol, a.interval) \
+            .groupby(a.exchange, a.symbol, a.interval) \
             .orderby('timestamp')
 
-        # much faster to only check one symbol if thats all needed
-        if not symbol is None:
-            q = q.where(a.symbol == symbol)
+        # slightly faster to only check one symbol if thats all needed
+        if not symbols is None:
+            q = q.where(a.symbol.isin(f.as_list(symbols)))
 
         return pd \
             .read_sql_query(
@@ -123,56 +141,79 @@ class DB(object):
 
     def update_all_symbols(
             self,
-            exch: 'Bitmex' = None,
+            exchs: Union[SwaggerExchange, List[SwaggerExchange]],
             interval: int = 15,
-            symbol: str = None) -> None:
+            symbols: Union[str, List[str]] = None) -> None:
+        """Update symbols in database
+        - symbols must have OHLCV data in db already
 
-        lst = []
-        if exch is None:
-            exch = Bitmex.default(test=False, refresh=False)
+        Parameters
+        ----------
+        exchs : Union[SwaggerExchange, List[SwaggerExchange]]
+            single or multiple exchanges
+        interval : int, optional
+            interval to update, by default 15
+        symbols : Union[str, List[str]], optional
+            single or multiple symbols, if None use exchage default symbol, by default None
+        """
+
+        # use exch default symbols if not given
+        exchs = f.as_list(exchs)
+        symbols = symbols or [exch.default_symbol for exch in exchs]
+
+        # convert exchanges to dict for matching by num
+        exchs = {self.exch_keys[exch.exch_name]: exch for exch in exchs}
+        dfs = []
 
         # loop query result, add all to dict with maxtime as KEY, symbols as LIST
-        m = defaultdict(list)
-        df_max = self.get_max_dates(interval=interval, symbol=symbol)
+        df_max_all = self.get_max_dates(interval=interval, symbols=symbols)
 
-        # get grouped list of symbols by their max timestamp in db
-        for _, row in df_max.iterrows():
-            m[row.timestamp].append(row.symbol)
+        # loop bitmex/bybit
+        for exch_num, df_max in df_max_all.groupby('exchange'):
+            # get exchange obj from exch_num
+            exch = exchs[exch_num]
+            m = defaultdict(list)
 
-        # loop dict and call bitmex for each list of syms in maxdate
-        for maxdate, symbols in m.items():
-            starttime = maxdate + f.get_offset(interval)
-            if starttime < f.timenow(interval):
-                fltr = json.dumps(dict(symbol=symbols))  # filter symbols needed
+            # get grouped list of symbols by their max timestamp in db
+            for _, row in df_max.iterrows():
+                m[row.timestamp].append(row.symbol)
 
-                df_cdls = exch \
-                    .get_candles(
-                        starttime=starttime,
-                        fltr=fltr,
-                        include_partial=False,
-                        interval=interval)
+            # loop dict and call bitmex for each list of syms in maxdate
+            for maxdate, symbols in m.items():
+                starttime = maxdate + f.inter_offset(interval)
 
-                lst.append(df_cdls)
+                if starttime < f.inter_now(interval):
+                    df_cdls = exch \
+                        .get_candles(
+                            starttime=starttime,
+                            symbol=symbols,
+                            include_partial=False,
+                            interval=interval) \
+                        .assign(exchange=self.exch_keys[exch.exch_name]) \
+                        .pipe(f.append_list, dfs)
 
         nrows = 0
-        if lst:
-            df = pd.concat(lst)
+        nsymbols = 0
+        if dfs:
+            df = pd.concat(dfs)
             nrows = df.shape[0]
+            nsymbols = df.symbol.nunique()
             df.to_sql(name='Bitmex', con=self.engine, if_exists='append', index=False)
 
-        log.info(f'Imported [{nrows}] row(s) to db.')
+        log.info(f'Imported [{nrows}] row(s) for [{nsymbols}] symbol(s)')
 
     def get_df(
             self,
+            exch_name: str = 'bitmex',
             symbol: str = SYMBOL,
             period: int = 300,
             startdate: dt = None,
             enddate: dt = None,
             daterange: Tuple[dt] = None,
-            interval: int = 15):
+            interval: int = 15) -> pd.DataFrame:
 
         if startdate is None:
-            startdate = f.timenow(interval=interval) + delta(hours=abs(period) * -1)
+            startdate = f.inter_now(interval=interval) + delta(hours=abs(period) * -1)
         else:
             if enddate is None and not daterange is None:
                 enddate = startdate + delta(days=daterange)
@@ -190,6 +231,7 @@ class DB(object):
             .select(*cols) \
             .where(a.interval == interval) \
             .where(a.timestamp >= startdate) \
+            .where(a.exchange == self.exch_keys[exch_name]) \
             .orderby('symbol', 'timestamp')
 
         if not symbol is None:
@@ -217,7 +259,7 @@ def load_from_start(symbol: str, interval: int = 15):
     """
     maxdate = dt(2015, 12, 1)
     i = 1
-    exch = Bitmex.default()
+    exch = Bitmex.default(refresh=False)
 
     while maxdate < dt.utcnow() + delta(hours=-2):
         df_max = db.get_max_dates(interval=interval, symbol=symbol)
