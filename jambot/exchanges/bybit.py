@@ -17,6 +17,26 @@ SYMBOl = 'BTCUSD'
 
 log = getlog(__name__)
 
+"""
+ByBit API issues
+----------------
+- Position
+    - Positions_myPosition doesn't return last_price (can't calculate position PNL)
+    - inconsistent value types returned (string/float) eg '0.99768569' or 5.259e-05
+
+- Orders
+    - conditional_cancel_all still uses bitmex clOrdID (LOL IDIOTS)
+    - conditional_submit doesn't return order_status
+    - conditional_submit returns order type, but not stop_order_type
+    - inconsistent price/qty return types (sometimes string, sometimes int)
+    - amend/cancel only return order_id (need to query again) - but cancel_all returns all fields
+    - stops have completely different and inconsistent endpoint than market/limit
+    - update/created_at times return inconsistent length microsec decimals (or none)
+    - stop orders have "stop_order_id" instead of just "order_id"
+    - Conditional_query doesnt have any fields to be able to determine its conditional
+    - no way to filter orders by filled_time
+"""
+
 
 class Bybit(SwaggerExchange):
     div = 1
@@ -34,6 +54,12 @@ class Bybit(SwaggerExchange):
         last_price='last_price',
         cur_qty='qty',
         err_text='reject_reason')
+
+    pos_keys = dict(
+        qty='size',
+        u_pnl='unrealised_pnl',
+        r_pnl='realised_pnl',
+        value='position_value')
 
     order_keys = ExchOrder._m_conv.get('bybit')
     api_host = 'https://api.bybit.com'
@@ -124,7 +150,11 @@ class Bybit(SwaggerExchange):
 
         # request submitted as str, split it and call on client
         if isinstance(request, str):
-            request = self._get_endpoint(request)(**kw)
+            func = self._get_endpoint(request)
+
+            # filter correct keys to submit
+            kw = {k: v for k, v in kw.items() if k in func.operation.params.keys()}
+            request = func(**kw)
 
         full_result = self.check_request(request)
         ret_code = full_result['ret_code']
@@ -139,7 +169,7 @@ class Bybit(SwaggerExchange):
             result = result['data']
 
         # default, just give the data
-        return result if not code else result, ret_code
+        return result if not code else (result, ret_code)
 
     def set_orders(self, symbol: str = SYMBOl, bybit_async: bool = False, bybit_stops: bool = True):
         """set raw order dicts from exch
@@ -155,25 +185,25 @@ class Bybit(SwaggerExchange):
         bybit_stops : bool, optional
             bybit keeps all stops under "conditional" endpoint
         """
-
-        orders = self.req('Order.getOrders', symbol=symbol)
+        kw = dict(symbol=symbol, limit=30)
+        orders = self.req('Order.getOrders', **kw)
 
         if bybit_async:
-            orders += self.req('Order.query', symbol=symbol)
+            orders += self.req('Order.query', **kw)
 
         # very sketch, bybit returns stop orders as "Market", with no price
         orders = [o for o in orders if not 'stop' in o['order_link_id']]
 
         stop_orders = []
         if bybit_stops:
-            stop_orders = self.req('Conditional.getOrders', symbol=symbol)
+            stop_orders = self.req('Conditional.getOrders', **kw)
 
             if bybit_async:
-                stop_orders += self.req('Conditional.query', symbol=symbol)
+                stop_orders += self.req('Conditional.query', **kw)
 
         self._orders = self.add_custom_specs(self.proc_raw_spec(orders + stop_orders))
 
-    def _get_positions(self) -> List[dict]:
+    def _set_positions(self) -> List[dict]:
         """Get position info, eg current qty
 
         Returns
@@ -181,13 +211,19 @@ class Bybit(SwaggerExchange):
         List[dict]
             dicts of all positions
         """
-        m_raw = self.req('Positions.myPosition')
-        positions = [m['data'] for m in m_raw]
+        positions = []
 
-        for pos in positions:
-            pos['side_str'] = pos['side']
-            pos['side'] = {'Buy': 1, 'Sell': -1}.get(pos['side'])
-            pos['qty'] = pos['size']
+        for m in self.req('Positions.myPosition'):
+            p = {k: f.str_to_num(v) for k, v in m['data'].items()}
+            p['side_str'] = p['side']
+            p['side'] = {'Buy': 1, 'Sell': -1}.get(p['side'])
+            p['size'] = p['size'] * (p['side'] or 1)
+            p['sym_short'] = p['symbol'][:3]
+            p['roe_pct'] = (p['unrealised_pnl']) / (p['position_margin'] or 1)
+            p['pnl_pct'] = p['roe_pct'] / p['leverage']
+            p['last_price'] = f.get_price(p['pnl_pct'], p['entry_price'], p['side']) if p['side'] else None
+
+            positions.append(p)
 
         return positions
 
@@ -197,18 +233,6 @@ class Bybit(SwaggerExchange):
 
     def proc_raw_spec(self, order_spec: Union[dict, List[dict]]) -> Union[dict, List[dict]]:
         """Handle all bybits inconsistent return values
-
-        Issues
-        ------
-        - conditional_cancel_all still uses bitmex clOrdID (LOL IDIOTS)
-        - conditional_submit doesn't return order_status
-        - conditional_submit returns order type, but not stop_order_type
-        - inconsistent price/qty return types (sometimes string, sometimes int)
-        - amend/cancel only return order_id (need to query again) - but cancel_all returns all fields
-        - stops have completely different and inconsistent endpoint than market/limit
-        - update/created_at times return inconsistent length microsec decimals (or none)
-        - stop orders have "stop_order_id" instead of just "order_id"
-        - Conditional_query doesnt have any fields to be able to determine its conditional
 
         Parameters
         ----------
@@ -225,6 +249,7 @@ class Bybit(SwaggerExchange):
                 # holy FK bybit didn't even completely change bitmex's spec
                 o['order_id'] = o.pop('clOrdID', o.get('order_id', None))
                 o['currency'] = o['symbol'][-3:]
+                o['exec_inst'] = ''
 
                 if 'stop' in o.get('order_link_id', ''):
                     o['stop_order_type'] = 'Stop'
@@ -251,8 +276,8 @@ class Bybit(SwaggerExchange):
                     o[k] = float(o.get(k, 0))
 
                 # qty strings to int
-                for k in ('qty', ):
-                    o[k] = int(o[k])
+                for k in ('qty', 'cum_exec_qty'):
+                    o[k] = int(o.get(k, 0))
 
                 # decimals returned are inconsistent length
                 for k in ('created_at', 'updated_at'):
@@ -324,11 +349,6 @@ class Bybit(SwaggerExchange):
             # get correct endpoint
             endpoint_full = f'{base}.{endpoint}'
             endpoint_query = f'{base}.query'
-            func = self._get_endpoint(endpoint_full)
-            func_params = func.operation.params
-
-            # filter correct keys to submit
-            spec = {k: v for k, v in spec.items() if k in func_params.keys()}
 
             if cancel_all and spec['symbol'] is None:
                 spec['symbol'] = self.default_symbol
@@ -347,7 +367,10 @@ class Bybit(SwaggerExchange):
                     # kinda annoying but have to call for order again
                     # NOTE might only need to do this during testing
                     id_key = 'order_id' if not is_stop else 'stop_order_id'
-                    ret_spec = self.req(endpoint_query, symbol=spec['symbol'], **{id_key: ret_spec[id_key]})
+                    ret_spec = self.req(
+                        endpoint_query,
+                        symbol=spec['symbol'],
+                        **{id_key: ret_spec[id_key]})
 
                 f.safe_append(return_specs, self.proc_raw_spec(ret_spec))
 
@@ -356,40 +379,102 @@ class Bybit(SwaggerExchange):
     def get_candles(
             self,
             starttime: dt,
-            symbol: str = SYMBOl,
+            symbol: Union[str, List[str]] = SYMBOl,
             interval: int = 15,
-            include_partial: bool = False) -> pd.DataFrame:
+            endtime: dt = None,
+            **kw) -> pd.DataFrame:
         """Get OHLC candles from Bybit
-        - NOTE bybit returns last candle partial
+        - bybit returns last candle partial (always filter if time == now)
+        - max 200 cdls per call
+        - bybit doesn't seem to have a ratelimit for ohlc data?
 
         Parameters
         ----------
-        symbol : str, optional
-            default SYMBOl
+        symbol : Union[str, List[str]], optional
+            single or list of symbols, default 'BTCUSD'
         interval : int, optional
             default 15
-        starttime : dt, optional
+        starttime : dt
+        endtime : dt, optional
             default None
 
         Returns
         -------
         pd.DataFrame
         """
-        data = self.req(
-            'Kline.get',
-            symbol=symbol,
-            interval=str(interval),
-            **{'from': starttime.replace(tzinfo=tz.utc).timestamp()})
+        # save orig startime for per-symbol calls
+        _starttime = starttime
+        endtime = min(endtime or dt.utcnow(), f.inter_now(interval)).replace(tzinfo=tz.utc)
+        data = []
+        _interval = {1: '60', 15: '15'}.get(interval)
+
+        for symbol in f.as_list(symbol):
+            limit = 200
+            starttime = _starttime.replace(tzinfo=tz.utc)
+
+            while starttime < endtime:
+
+                try:
+                    _data = self.req(
+                        'Kline.get',
+                        symbol=symbol,
+                        interval=_interval,
+                        limit=limit,
+                        **{'from': starttime.timestamp()})
+
+                    if not _data:
+                        break
+
+                    data.extend(_data)
+                    starttime = dt.fromtimestamp(_data[-1]['open_time'], tz.utc) + f.inter_offset(interval)
+                    # log.info(f'starttime: {starttime}, len_data: {len(_data)}')
+                except Exception as e:
+                    log.warning(e)
+                    log.info(f'starttime: {starttime}, len_data: {len(data)}')
+                    break
 
         cols = ['interval', 'symbol', 'timestamp', 'open', 'high', 'low', 'close', 'volume']
 
         dtypes = {c: float for c in cols} \
             | dict(interval=int, symbol=str, volume=int)
 
-        df = pd.DataFrame(data) \
+        if not data:
+            log.warning('No candle data returned from bybit.')
+            return
+
+        return pd.DataFrame(data) \
             .pipe(f.safe_drop, 'turnover') \
             .rename(columns=dict(open_time='timestamp')) \
             .astype(dtypes) \
-            .assign(timestamp=lambda x: pd.to_datetime(x.timestamp, unit='s'))[cols]
+            .assign(timestamp=lambda x: pd.to_datetime(x.timestamp, unit='s')) \
+            .pipe(lambda df: df[df.timestamp < f.inter_now(interval)])[cols]
 
-        return df.iloc[:-1] if not include_partial else df
+
+def test_candle_availability(interval: int = 5):
+    """Run this to test how many seconds till new candle becomes available
+    - for testing api latency
+    """
+    import time
+
+    # starttime must be multiple of interval
+    bb = Bybit.default(refresh=False)
+    d = dt.utcnow()
+    starttime = dt(d.year, d.month, d.day, d.hour, 0)
+    # interval = 5
+    # interval = 15
+    mins = ((dt.utcnow() - starttime).seconds / 60) // 1
+    n = int((mins / interval) // 1) + 1
+    log.info(f'target candles: {n}')
+
+    nrows = 0
+    i = 0
+    max_calls = 30
+
+    while nrows < n and i < max_calls:
+        time.sleep(1)
+        df = bb.get_candles(interval=interval, starttime=starttime)
+        nrows = df.shape[0]
+        log.info(f'{i:02}: second: {dt.now().second:02}, candles: {nrows}')
+        i += 1
+
+    return df
