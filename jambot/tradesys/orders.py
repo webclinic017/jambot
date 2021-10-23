@@ -241,12 +241,15 @@ class ExchOrder(BaseOrder, DictRepr, Serializable):
     ts_format = '%Y-%m-%d %H:%M:%S'
 
     # dict to convert exchange order keys
+    # TODO should move this to exchange and convert all keys on intake
+    # so ExchangeOrder doesn't have to know which exchange its for
     _m_conv = dict(
         bitmex=dict(
             order_type='ordType',
             status='ordStatus',
             order_id='orderID',
             qty='orderQty',
+            cum_qty='cumQty',
             price='price',
             stop_px='stopPx',
             symbol='symbol',
@@ -262,6 +265,7 @@ class ExchOrder(BaseOrder, DictRepr, Serializable):
             status='order_status',
             order_id='order_id',
             qty='qty',
+            cum_qty='cum_exec_qty',
             price='price',
             stop_px='stop_px',
             symbol='symbol',
@@ -311,6 +315,8 @@ class ExchOrder(BaseOrder, DictRepr, Serializable):
 
         if not exchange is None:
             _m_conv = cls._m_conv.get(exchange)
+            # NOTE this could be sketch, m_conv only set if getting data from exchange
+            cls.m_conv = _m_conv
             m = {k: order_spec.get(_m_conv[k]) for k in _m_conv.keys()}
         else:
             m = copy.copy(order_spec)
@@ -479,7 +485,7 @@ class ExchOrder(BaseOrder, DictRepr, Serializable):
         """
         m = self.order_spec_raw
         if not exch is None:
-            avgpx = f.round_down(n=m.get(self._m_conv[exch.exchange_name]['avg_price']), nearest=nearest)
+            avgpx = f.round_down(n=m.get(self._m_conv[exch.exch_name]['avg_price']), nearest=nearest)
         else:
             avgpx = None
 
@@ -494,7 +500,7 @@ class ExchOrder(BaseOrder, DictRepr, Serializable):
             stats = f' | Bal: {exch.total_balance_wallet:.4f} | ' \
                 + f'PnL: {exch.prev_pnl:.4f}' if self.is_stop or self.is_reduce else ''
 
-        qty = self.qty if not self.is_partially_filled else self.raw_spec('cumQty')
+        qty = self.qty if not self.is_partially_filled else self.raw_spec('cum_qty')
 
         return '{} | {:<4} {:>+8,} at ${:,}{:>12} | {:<12}{}'.format(
             self.sym_short,
