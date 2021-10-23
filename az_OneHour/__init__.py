@@ -1,10 +1,11 @@
-from datetime import datetime as dt  # noqa
-from datetime import timedelta as delta  # noqa
+# from datetime import datetime as dt  # noqa
+# from datetime import timedelta as delta  # noqa
 
 import azure.functions as func
-from __app__.jambot import functions as f  # type: ignore  # noqa
-from __app__.jambot import livetrading as live  # type: ignore  # noqa
-from __app__.jambot.database import db  # type: ignore  # noqa
+
+# from __app__.jambot import comm as cm  # type: ignore  # noqa
+# from __app__.jambot import livetrading as live  # type: ignore  # noqa
+# from __app__.jambot.database import db  # type: ignore  # noqa
 
 
 def main(mytimer: func.TimerRequest) -> None:
@@ -19,4 +20,4 @@ def main(mytimer: func.TimerRequest) -> None:
     #     live.run_toploop(u=u, dfall=dfall)
     #     live.check_sfp(df=dfall)
     # except:
-    #     f.send_error()
+    #     cm.send_error()

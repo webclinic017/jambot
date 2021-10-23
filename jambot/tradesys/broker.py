@@ -204,7 +204,7 @@ class Broker(Observer):
 
                 #         msg = f'Adjusting order price from [{o.price_original:,.1f} > {o.price:,.1f}]' \
                 #             + f' | {o.short_stats} | last_price: {last_price}'
-                #         f.discord(msg=msg, channel='orders', log=log.info)
+                #         cm.discord(msg=msg, channel='orders', log=log.info)
 
                 if o.is_reduce:
                     if not o.is_stop:

@@ -1,12 +1,17 @@
-from datetime import datetime as dt  # noqa
-from datetime import timedelta as delta  # noqa
+try:
+    from datetime import datetime as dt  # noqa
+    from datetime import timedelta as delta  # noqa
 
-import azure.functions as func
-from __app__.jambot import functions as f  # type: ignore
-from __app__.jambot import livetrading as live  # type: ignore # noqa
-from __app__.jambot.database import db  # type: ignore
-from __app__.jambot.exchanges.bitmex import Bitmex  # type: ignore
-from __app__.jambot.exchanges.bybit import Bybit  # type: ignore
+    import azure.functions as func
+    from __app__.jambot import comm as cm  # type: ignore
+    from __app__.jambot import livetrading as live  # type: ignore # noqa
+    from __app__.jambot.database import db  # type: ignore
+    from __app__.jambot.exchanges.bitmex import Bitmex  # type: ignore
+    from __app__.jambot.exchanges.bybit import Bybit  # type: ignore
+except:
+    from __app__.jambot import comm as cm  # type: ignore
+    cm.send_error()
+    # TODO make error wrapper or global error catcher
 
 
 def main(mytimer: func.TimerRequest) -> None:
@@ -26,4 +31,4 @@ def main(mytimer: func.TimerRequest) -> None:
             db.update_all_symbols(exchs=bmex, interval=1)
 
     except:
-        f.send_error()
+        cm.send_error()

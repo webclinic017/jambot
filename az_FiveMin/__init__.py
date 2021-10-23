@@ -1,13 +1,14 @@
-import azure.functions as func
-from __app__.jambot import functions as f  # type: ignore
-from __app__.jambot import livetrading as live  # type: ignore
-
-# from __app__.jambot.exchanges.bitmex import Bitmex  # type: ignore
+try:
+    import azure.functions as func
+    from __app__.jambot import comm as cm  # type: ignore
+    from __app__.jambot import livetrading as live  # type: ignore
+except:
+    from __app__.jambot import comm as cm  # type: ignore
+    cm.send_error()
 
 
 def main(mytimer: func.TimerRequest) -> None:
     try:
-        # exch = Bitmex.default(test=True, refresh=False)
         live.check_filled_orders()
     except:
-        f.send_error()
+        cm.send_error()

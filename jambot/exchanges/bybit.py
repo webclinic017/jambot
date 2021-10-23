@@ -8,6 +8,7 @@ from bravado.http_future import HttpFuture
 from bybit import bybit
 from BybitAuthenticator import APIKeyAuthenticator
 
+from jambot import comm as cm
 from jambot import functions as f
 from jambot import getlog
 from jambot.exchanges.exchange import SwaggerExchange
@@ -161,7 +162,7 @@ class Bybit(SwaggerExchange):
 
         if not ret_code == 0:
             fail_msg = f'{fail_msg}\n' if not fail_msg is None else ''
-            f.send_error(f'{fail_msg}Request failed:\n\t{full_result}', _log=log)
+            cm.send_error(f'{fail_msg}Request failed:\n\t{full_result}', _log=log)
 
         result = full_result['result']
 

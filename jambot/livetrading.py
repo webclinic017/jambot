@@ -4,6 +4,7 @@ from typing import *
 
 import pandas as pd
 
+from jambot import comm as cm
 from jambot import config as cf
 from jambot import functions as f
 from jambot import getlog
@@ -53,7 +54,7 @@ def check_sfp(df):
                 msg += '    {} at: {}\n'.format(s['name'], s['price'])
 
     if msg:
-        f.discord(msg=msg, channel='sfp')
+        cm.discord(msg=msg, channel='sfp')
 
 
 def check_filled_orders(minutes: int = 5, test: bool = True) -> None:
@@ -90,9 +91,9 @@ def check_filled_orders(minutes: int = 5, test: bool = True) -> None:
 
             msg = '{}\n{}{}'.format(
                 df_users.loc[(exch.exch_name, exch.user)]['discord'],
-                f.py_codeblock(msg),
+                cm.py_codeblock(msg),
                 current_qty)
-            f.discord(msg=msg, channel='orders')
+            cm.discord(msg=msg, channel='orders')
 
 
 def write_balance_google(

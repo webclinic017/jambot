@@ -1,8 +1,12 @@
-import logging
+try:
+    import logging
 
-import azure.functions as func
-from __app__.jambot import functions as f
-from __app__.jambot import livetrading as live
+    import azure.functions as func
+    from __app__.jambot import comm as cm  # type: ignore
+    from __app__.jambot import livetrading as live  # type: ignore
+except:
+    from __app__.jambot import comm as cm  # type: ignore
+    cm.send_error()
 
 
 def err():
@@ -40,6 +44,6 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
         return func.HttpResponse(f'{action} success!', status_code=200)
     except:
         try:
-            f.send_error()
+            cm.send_error()
         finally:
             return err()

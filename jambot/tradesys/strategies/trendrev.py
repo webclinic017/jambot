@@ -1,3 +1,4 @@
+from jambot import comm as cm
 from jambot import functions as f
 
 from ... import signals as sg
@@ -151,7 +152,7 @@ class Strategy(StrategyBase):
                 pos.add_order(limitclose)
 
             if stopclose.qty == 0 or not stopclose in pos.orders:
-                f.discord(msg='Error: no stop for current position', channel='err')
+                cm.discord(msg='Error: no stop for current position', channel='err')
 
         # NEXT - Init next trade to get next limitopen and stop
         c = self.cdl

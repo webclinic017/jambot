@@ -14,6 +14,7 @@ from bravado.http_future import HttpFuture
 from bravado.requests_client import RequestsClient
 from swagger_spec_validator.common import SwaggerValidationWarning
 
+from jambot import comm as cm
 from jambot import config as cf
 from jambot import display
 from jambot import functions as f
@@ -303,7 +304,7 @@ class SwaggerExchange(Exchange, metaclass=ABCMeta):
                 time.sleep(sleeptime)
                 return self.check_request(request=request, retries=retries)
             else:
-                f.send_error('{}: {}\n{}'.format(status, response.result, request.future.request.data))
+                cm.send_error('{}: {}\n{}'.format(status, response.result, request.future.request.data))
 
         except Exception as e:
             data = request.future.request.data
@@ -331,7 +332,7 @@ class SwaggerExchange(Exchange, metaclass=ABCMeta):
                 data = f.pretty_dict(m=m, prnt=False, bold_keys=True)
 
             if AZURE_WEB:
-                f.send_error(f'{e.status_code} {e.__class__.__name__}: {err_msg}\n{data}')
+                cm.send_error(f'{e.status_code} {e.__class__.__name__}: {err_msg}\n{data}')
             else:
                 raise e
 
@@ -685,7 +686,7 @@ class SwaggerExchange(Exchange, metaclass=ABCMeta):
 
                     msg += f'\n\n{err_text}\n{f.pretty_dict(m, prnt=False, bold_keys=True)}'
 
-                f.discord(msg, channel='err')
+                cm.discord(msg, channel='err')
 
         return resp_orders
 
@@ -786,7 +787,7 @@ class SwaggerExchange(Exchange, metaclass=ABCMeta):
                         action='submit',
                         order_specs=ords.make_exch_orders(close_order))
         except:
-            f.send_error(msg='ERROR: Could not close position!', _log=log)
+            cm.send_error(msg='ERROR: Could not close position!', _log=log)
         finally:
             pos = self.get_position(symbol, refresh=True)
             if not pos['qty'] == 0:
@@ -869,7 +870,7 @@ class SwaggerExchange(Exchange, metaclass=ABCMeta):
             m['current_qty'] = f'{self.current_qty(symbol=symbol):+,}'
             m |= m_ords
             msg = f.pretty_dict(m, prnt=False, bold_keys=True)
-            f.discord(msg=f'{user}\n{msg}', channel='orders' if not test else 'test')
+            cm.discord(msg=f'{user}\n{msg}', channel='orders' if not test else 'test')
 
         s = ', '.join([f'{action}={len(orders)}' for action, orders in all_orders.items()])
         log.info(f'{self.user} - Reconciled orders: {s}')
