@@ -42,8 +42,11 @@ class Wallet(Observer):
     """Class to manage transactions and balances for single asset
     - NOTE in future will expand this to have overall Portfolio manage multiple wallets
     """
+    exch_fees = dict(
+        bitmex=(0.0001, -0.0005),
+        bybit=(0.00025, -0.00075))
 
-    def __init__(self, symbol: str, **kw):
+    def __init__(self, symbol: str, exch_name: str = 'bitmex', **kw):
         super().__init__(**kw)
         _balance = 1  # base instrument, eg XBT
         _default_balance = _balance
@@ -56,8 +59,10 @@ class Wallet(Observer):
         _qty = 0  # number of open qty
         _lev = 3.0
         price = 0  # entry price of current position
-        maker_fee = 0.0001
-        taker_fee = -0.0005
+
+        maker_fee, taker_fee = self.exch_fees[exch_name]
+        # maker_fee = 0.0001
+        # taker_fee = -0.0005
         # maker_fee = 0.00025
         # taker_fee = -0.00075
         filled_orders = []
