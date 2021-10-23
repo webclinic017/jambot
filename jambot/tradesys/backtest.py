@@ -1,6 +1,6 @@
 import pandas as pd
 
-from jambot import SYMBOL, display
+from jambot import display
 from jambot import functions as f
 from jambot.tradesys.base import Clock, SignalEvent
 from jambot.tradesys.strategies.base import StrategyBase
@@ -14,7 +14,6 @@ class BacktestManager(Clock):
         strat: 'StrategyBase',
         df: pd.DataFrame,
         startdate: str,
-        symbol: str = SYMBOL,
         u=None,
             **kw):
 

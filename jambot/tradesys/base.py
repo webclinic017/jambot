@@ -64,7 +64,8 @@ class Observer(DictRepr, metaclass=ABCMeta):
     def __init__(
             self,
             parent_listener: 'Observer' = None,
-            insert_before: bool = False):
+            insert_before: bool = False,
+            **kw):
 
         self._listeners = []
         self._duration = 0

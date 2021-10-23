@@ -199,7 +199,7 @@ class ModelStorageManager(DictRepr):
             estimator = f.load_pickle(p)
 
             if not i == len(p_models) - 1:
-                max_date = d + delta(hours=self.batch_size) - f.get_offset(self.interval)
+                max_date = d + delta(hours=self.batch_size) - f.inter_offset(self.interval)
             else:
                 max_date = df.index[-1]
 
