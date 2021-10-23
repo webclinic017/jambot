@@ -269,12 +269,16 @@ if best_est:
 
 # TODO test iter_predict maxhigh/minlow
 
-if False:
+if True:
     # fit_params = sk.weighted_fit(name, n=mm.df_train.shape[0])
     fit_params = sk.weighted_fit(
         name=name,
         weights=sg.WeightedPercentMaxMin(8, weight_linear=True).get_weight(x_train))
     # fit_params = None
+
+    # if False:
+    #     df_bbit = db.get_df('bybit', 'BTCUSD', startdate=dt(2021,1,1))
+    #     df2 = df.pipe(live.replace_ohlc, df_bbit)
 
     df_pred = mm \
         .add_predict(
@@ -300,7 +304,7 @@ else:
 df_pred = df_pred \
     .pipe(md.add_proba_trade_signal)
 
-strat = ml.make_strat()
+strat = ml.make_strat(symbol='XBTUSD', exch_name='bitmex', order_offset=-0.0006)
 
 cols = ['open', 'high', 'low', 'close', 'y_pred', 'proba_long',
         'rolling_proba', 'signal', 'pred_max', 'pred_min', 'target_max',
