@@ -202,6 +202,9 @@ class DB(object):
 
         log.info(f'Imported [{nrows}] row(s) for [{nsymbols}] symbol(s)')
 
+    def read_sql(self, sql: str, **kw) -> pd.DataFrame:
+        return pd.read_sql_query(sql=sql, con=self.engine, **kw)
+
     def get_df(
             self,
             exch_name: str = 'bitmex',
@@ -240,9 +243,19 @@ class DB(object):
         if not enddate is None:
             q = q.where(a.timestamp <= enddate)
 
-        return pd.read_sql_query(sql=q.get_sql(), con=self.engine, parse_dates=['timestamp']) \
+        return self.read_sql(sql=q.get_sql(), parse_dates=['timestamp']) \
             .set_index('timestamp', drop=True) \
             .astype(dtypes)
+
+    def get_apikeys(self) -> pd.DataFrame:
+        # TODO query keys based on ip address eg if running on azure
+
+        a = pk.Table('apikeys')
+        q = pk.Query.from_(a) \
+            .select(a.star)
+
+        return self.read_sql(sql=q.get_sql()) \
+            .set_index(['exchange', 'user'])
 
 
 db = DB()
