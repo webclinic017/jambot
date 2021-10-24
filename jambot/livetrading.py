@@ -71,7 +71,7 @@ def check_filled_orders(minutes: int = 5, test: bool = True) -> None:
     starttime = dt.utcnow() + delta(minutes=minutes * -1)
 
     # Get discord username for tagging
-    df_users = gg.UserSettings().get_df()
+    df_users = gg.UserSettings().get_df(load_api=True)
 
     # TODO not done for bybit yet... cant get all orders at once...
     for exch in iter_exchanges(refresh=False, df_users=df_users, exch_name='bitmex'):
@@ -99,7 +99,8 @@ def check_filled_orders(minutes: int = 5, test: bool = True) -> None:
 def write_balance_google(
         strat: base.StrategyBase,
         exchs: Union[SwaggerExchange, List[SwaggerExchange]],
-        test: bool = False) -> None:
+        test: bool = False,
+        gc: gg.Client = None) -> None:
     """Update google sheet "Bitmex" with current strat performance
 
 
@@ -110,7 +111,7 @@ def write_balance_google(
     test : bool, optional
         only display dfs, don't write to sheet, default False
     """
-    gc = gg.get_google_client()
+    gc = gc or gg.get_google_client()
     batcher = gg.SheetBatcher(gc=gc, name='Bitmex', test=test)
     kw = dict(batcher=batcher)
 
@@ -237,7 +238,7 @@ def iter_exchanges(
         initialized Bitmex exch obj
     """
     if df_users is None:
-        df_users = gg.UserSettings().get_df()
+        df_users = gg.UserSettings().get_df(load_api=True)
 
     df_users = df_users.query('bot_enabled == True')
 
@@ -251,7 +252,13 @@ def iter_exchanges(
         Exchange = m_exch[exch_name]
 
         # NOTE only set up for XBT currently
-        yield Exchange(user=user, test=test, refresh=refresh, pct_balance=m['xbt'])
+        yield Exchange(
+            user=user,
+            test=test,
+            refresh=refresh,
+            pct_balance=m['xbt'],
+            api_key=m['key'],
+            api_secret=m['secret'])
 
 
 def run_strat(
@@ -305,7 +312,7 @@ def run_strat_live(
         bitmex=strat_bmex,
         bybit=strat_bbyt)
 
-    df_users = gg.UserSettings().get_df()
+    df_users = gg.UserSettings(auth=False).get_df(load_api=True)
 
     exchs = []
     for exch in iter_exchanges(df_users=df_users, exch_name=exch_name):
