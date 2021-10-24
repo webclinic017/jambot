@@ -59,7 +59,7 @@ def get_google_sheet(name: str = 'Jambot Settings', gc: Client = None) -> Spread
     return gc.open(name)
 
 
-def ws_df(name: str, wb: Spreadsheet = None) -> pd.DataFrame:
+def ws_df(name: str, wb: Spreadsheet = None, **kw) -> pd.DataFrame:
     """Get worksheet as dataframe
 
     Parameters
@@ -81,6 +81,7 @@ def ws_df(name: str, wb: Spreadsheet = None) -> pd.DataFrame:
 class GoogleSheet():
     index_col = None
     rng_start = (1, 1)
+    sheet_id = '1_dAMoMLNYPB0Z6YsMedg4RReOrJsYAzwzrAJgNlS0v0'
 
     def __init__(
             self,
@@ -89,31 +90,39 @@ class GoogleSheet():
             name: str = None,
             batcher: 'SheetBatcher' = None,
             test: bool = False,
+            auth: bool = True,
             **kw):
         self.name = name or self.__class__.__name__
 
         # don't need to init client/wb if using batcher
-        if not batcher:
+        if not batcher and auth:
             self.gc = gc or get_google_client()
             self.wb = wb or get_google_sheet(gc=self.gc)
 
         self.df = None
         self.batcher = batcher
         self.test = test
+        self.auth = auth
 
     def process_df(self, df: pd.DataFrame) -> pd.DataFrame:
         """Process df after loading from gs"""
         return df
 
     def get_df(self, **kw) -> pd.DataFrame:
-        df = ws_df(name=self.name, wb=self.wb, **kw)
+        if self.auth:
+            df = ws_df(name=self.name, wb=self.wb, **kw)
+        else:
+            # url for faster reading of sheet without authentication (~0.2s instead of 1.5)
+            url = 'https://docs.google.com/spreadsheets/d/' \
+                + f'{self.sheet_id}/gviz/tq?tqx=out:csv&sheet={self.name}'
+            df = pd.read_csv(url).pipe(f.lower_cols)
 
         if self.index_col:
             df = df.set_index(self.index_col)
 
         return df \
             .replace({'%': ''}, regex=True) \
-            .pipe(self.process_df)
+            .pipe(self.process_df, **kw)
 
     def set_df(self, df: pd.DataFrame) -> None:
         """Set local df to google sheets
@@ -200,30 +209,31 @@ class SheetBatcher(GoogleSheet):
 
 
 class UserSettings(GoogleSheet):
-    index_col = 'user'
+    index_col = ['exchange', 'user']
 
     def __init__(self, **kw):
         super().__init__(**kw)
         f.set_self(vars())
 
-    def process_df(self, df: pd.DataFrame) -> pd.DataFrame:
+    def process_df(self, df: pd.DataFrame, load_api: bool = False) -> pd.DataFrame:
 
-        m_types = {c: float for c in df.columns} \
-            | {
+        m_types = {c: float for c in df.columns} | \
+            {
                 'bot_enabled': bool,
-                'discord': str,
-                'exchange': str}
+                'discord': str}
 
         df = df \
             .replace(dict(TRUE=1, FALSE=0)) \
             .astype(m_types) \
-            .assign(discord=lambda x: np.where(x.discord.apply(lambda y: len(y) == 18), '<@' + x.discord + '>', None)) \
-            .replace(dict(exchange={'1': 'bitmex', '2': 'bybit'})) \
-            .reset_index(drop=False).set_index(['exchange', 'user'])
+            .assign(discord=lambda x: np.where(x.discord.apply(lambda y: len(y) == 18), '<@' + x.discord + '>', None))
 
         # NOTE kinda sketch but works for now
         sym_cols = [c for c in df.columns if len(c) == 3]
         df[sym_cols] = df[sym_cols] / 100
+
+        if load_api:
+            from jambot.database import db
+            df = df.pipe(f.left_merge, db.get_apikeys())
 
         return df
 
