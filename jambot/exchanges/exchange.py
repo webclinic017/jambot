@@ -40,10 +40,21 @@ class Exchange(DictRepr, metaclass=ABCMeta):
             pct_balance: float = 1,
             from_local: bool = True,
             swagger_spec: dict = None,
+            api_key: str = None,
+            api_secret: str = None,
+            discord: str = None,
             **kw):
 
         self.exch_name = self.__class__.__name__.lower()
-        self._creds = self.load_creds(user=user)
+
+        # allow passing in key/secret so can load from db not local csv
+        if api_key is None:
+            from jambot.database import db
+            sql = f"select [key], [secret] from apikeys where [user]='{user}' and exchange='{self.exch_name}'"
+            api_key, api_secret = db.cursor.execute(sql).fetchall()[0]
+
+        self._creds = dict(key=api_key, secret=api_secret)
+
         self._client = self.init_client(test=test, from_local=from_local, swagger_spec=swagger_spec)
 
         f.set_self(vars())
@@ -492,7 +503,8 @@ class SwaggerExchange(Exchange, metaclass=ABCMeta):
             as_exch_order: bool = True,
             as_dict: bool = False,
             refresh: bool = False,
-            bybit_async: bool = False) -> Union[List[dict], List[ExchOrder], Dict[str, ExchOrder]]:
+            bybit_async: bool = False,
+            **kw) -> Union[List[dict], List[ExchOrder], Dict[str, ExchOrder]]:
         """Get orders which match criterion
 
         Parameters
@@ -838,8 +850,8 @@ class SwaggerExchange(Exchange, metaclass=ABCMeta):
             self,
             symbol: str,
             expected_orders: List[Order],
-            discord_user: str = None,
-            test: bool = False) -> None:
+            test: bool = False,
+            **kw) -> None:
         """Compare expected and actual (current) orders, adjust as required
 
         Parameters
@@ -850,7 +862,7 @@ class SwaggerExchange(Exchange, metaclass=ABCMeta):
             orders active on exchange
         """
         actual_orders = self.get_orders(symbol=symbol, new_only=True, bot_only=True,
-                                        as_exch_order=True, refresh=True, bybit_async=True)
+                                        as_exch_order=True, refresh=True, **kw)
         all_orders = self.validate_orders(expected_orders, actual_orders, show=True)
 
         # perform action reqd for orders except valid/manual
@@ -860,7 +872,7 @@ class SwaggerExchange(Exchange, metaclass=ABCMeta):
                     getattr(self, f'{action}_orders')(orders)
 
         # temp send order submit details to discord
-        user = self.user if discord_user is None else discord_user
+        user = self.user if self.discord is None else self.discord
 
         m = {}
         m_ords = {k: [o.short_stats for o in orders]
