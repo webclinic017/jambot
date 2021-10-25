@@ -1,4 +1,5 @@
 from datetime import datetime as dt
+from datetime import timedelta as delta
 from datetime import timezone as tz
 from typing import *
 
@@ -172,7 +173,7 @@ class Bybit(SwaggerExchange):
         # default, just give the data
         return result if not code else (result, ret_code)
 
-    def set_orders(self, symbol: str = SYMBOl, bybit_async: bool = False, bybit_stops: bool = True):
+    def set_orders(self, symbol: str = SYMBOl, bybit_async: bool = False, bybit_stops: bool = False):
         """set raw order dicts from exch
         limits: max = 50, default = 20
         - https://bybit-exchange.github.io/docs/inverse/#t-getactive
@@ -364,9 +365,9 @@ class Bybit(SwaggerExchange):
 
             # check for ret_code errors
             if not ret_spec is None:
-                if action in ('amend', 'cancel'):
+                # NOTE not sure if this is ever needed other than manual testing
+                if False and action in ('amend', 'cancel'):
                     # kinda annoying but have to call for order again
-                    # NOTE might only need to do this during testing
                     id_key = 'order_id' if not is_stop else 'stop_order_id'
                     ret_spec = self.req(
                         endpoint_query,
@@ -449,6 +450,24 @@ class Bybit(SwaggerExchange):
             .astype(dtypes) \
             .assign(timestamp=lambda x: pd.to_datetime(x.timestamp, unit='s')) \
             .pipe(lambda df: df[df.timestamp < f.inter_now(interval)])[cols]
+
+    def get_api_info(self) -> dict:
+        keys = self.req('APIkey.info')
+        for m in keys:
+            for k in ('created_at', 'expired_at'):
+                m[k] = dt.strptime(m[k].split('.')[0], '%Y-%m-%dT%H:%M:%S')
+
+        return keys
+
+    def check_api_expiry(self, discord_user) -> None:
+        """Sort apikeys by expiry date"""
+        keys = self.get_api_info()
+        m_new = sorted(keys, key=lambda m: m['expired_at'], reverse=True)[0]
+
+        # check if api key expires soon and send message
+        if m_new['expired_at'] < dt.utcnow() + delta(days=-3):
+            msg = ''
+            cm.discord(msg=msg, channel='alerts')
 
 
 def test_candle_availability(interval: int = 5):
