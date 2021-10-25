@@ -258,7 +258,8 @@ def iter_exchanges(
             refresh=refresh,
             pct_balance=m['xbt'],
             api_key=m['key'],
-            api_secret=m['secret'])
+            api_secret=m['secret'],
+            discord=m['discord'])
 
 
 def run_strat(
@@ -323,7 +324,6 @@ def run_strat_live(
         exch.reconcile_orders(
             symbol=symbol,
             expected_orders=strat.broker.expected_orders(symbol=symbol, exch=exch),
-            discord_user=df_users.loc[(exch.exch_name, exch.user)]['discord'],
             test=test)
 
         exchs.append(exch)
