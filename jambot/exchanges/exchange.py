@@ -430,7 +430,7 @@ class SwaggerExchange(Exchange, metaclass=ABCMeta):
             return self.get_position(symbol).get(_qty, 0)
         else:
             # all position qty
-            return {k: v[_qty] for k, v in self._positions.items()}
+            return {k: v[_qty] for k, v in self.positions.items()}
 
     def add_custom_specs(self, order_specs: List[dict]) -> List[dict]:
         """Preprocess orders from exchange to add custom markers
@@ -503,7 +503,6 @@ class SwaggerExchange(Exchange, metaclass=ABCMeta):
             as_exch_order: bool = True,
             as_dict: bool = False,
             refresh: bool = False,
-            bybit_async: bool = False,
             **kw) -> Union[List[dict], List[ExchOrder], Dict[str, ExchOrder]]:
         """Get orders which match criterion
 
@@ -533,7 +532,8 @@ class SwaggerExchange(Exchange, metaclass=ABCMeta):
             symbol = self.default_symbol
 
         if refresh or self._orders is None:
-            self.set_orders(bybit_async=bybit_async)
+            # kw = bybit stops/async
+            self.set_orders(**kw)
 
         var = {k: v for k, v in vars().items() if not v in ('as_exch_order', 'refresh', 'as_dict')}
 
@@ -619,7 +619,7 @@ class SwaggerExchange(Exchange, metaclass=ABCMeta):
                 raise AttributeError(
                     f'Invalid order specs returned from {self.exch_name}. {type(item)}: {item}')
 
-        return ords.make_exch_orders(order_specs)
+        return ords.make_exch_orders(order_specs, exch_name=self.exch_name)
 
     def convert_exch_keys(self, order_specs: List[Union[ExchOrder, dict]]) -> List[dict]:
         """Convert ExchOrder or dict to exch-specific keys
@@ -732,15 +732,8 @@ class SwaggerExchange(Exchange, metaclass=ABCMeta):
         _orders = []
         for o in f.as_list(orders):
             # convert dict specs to ExchOrder
-            # NOTE ExchOrder IS a subclass of dict!!
             if not isinstance(o, ExchOrder):
-
-                # isinstance(o, Order) doesn't want to work
-                if hasattr(o, 'as_exch_order'):
-                    o = o.as_exch_order()
-                else:
-                    # dict
-                    o = ords.make_orders(order_specs=o, as_exch_order=True)[0]
+                o = ords.make_exch_orders(order_specs=o, exch_name=self.exch_name)[0]
 
             _orders.append(o)
 
@@ -786,18 +779,16 @@ class SwaggerExchange(Exchange, metaclass=ABCMeta):
 
             elif self.exch_name == 'bybit':
                 # NOTE ugh so messy hopefully a way to make this cleaner
-                self.set_positions()
                 pos = self.get_position(symbol, refresh=True)
 
                 if not pos['qty'] == 0:
                     close_order = dict(
                         order_type='market',
                         symbol=symbol,
-                        qty=pos['qty'] * -1)
+                        qty=pos['qty'] * -1,
+                        name='pos_close')
+                    self.submit_orders(close_order)
 
-                    self._order_request(
-                        action='submit',
-                        order_specs=ords.make_exch_orders(close_order))
         except:
             cm.send_error(msg='ERROR: Could not close position!', _log=log)
         finally:
@@ -879,6 +870,7 @@ class SwaggerExchange(Exchange, metaclass=ABCMeta):
                   for k, orders in all_orders.items() if orders and not k == 'manual'}
 
         if m_ords:
+            # TODO add avg entry price
             m['current_qty'] = f'{self.current_qty(symbol=symbol):+,}'
             m |= m_ords
             msg = f.pretty_dict(m, prnt=False, bold_keys=True)

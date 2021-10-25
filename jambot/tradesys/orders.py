@@ -213,9 +213,9 @@ class BaseOrder(object, metaclass=ABCMeta):
             status=self.status,
             name=self.name)
 
-    def as_exch_order(self) -> 'ExchOrder':
+    def as_exch_order(self, exch_name: str = None) -> 'ExchOrder':
         """Convert to ExchOrder"""
-        return ExchOrder.from_base_order(order=self)
+        return ExchOrder.from_base_order(order=self, exch_name=exch_name)
 
     def to_market(self, **kw) -> None:
         """Convert self to market order
@@ -289,6 +289,7 @@ class ExchOrder(BaseOrder, DictRepr, Serializable):
             stop_px: float = None,
             name: str = '',
             prevent_market_fill: bool = False,
+            exch_name: str = None,
             **kw):
 
         # convert stop_px to price for stop orders
@@ -307,25 +308,30 @@ class ExchOrder(BaseOrder, DictRepr, Serializable):
         f.set_self(vars(), exclude=('order_spec',))
 
     @classmethod
-    def from_dict(cls, order_spec: dict, exchange: str = None) -> 'ExchOrder':
-        """Create order from exchange order spec dict"""
+    def from_dict(cls, order_spec: Union[dict, Order], exch_name: str = None) -> 'ExchOrder':
+        """Create order from exchange order spec dict or BaseOrder"""
+
+        # convenience to convert BaseOrder from strategy
+        if isinstance(order_spec, Order):
+            return cls.from_base_order(order=order_spec, exch_name=exch_name)
 
         # try getting exchange from order
-        exchange = exchange or order_spec.get('exchange', None)
+        exch_name = exch_name or order_spec.get('exchange', None)
 
-        if not exchange is None:
-            _m_conv = cls._m_conv.get(exchange)
+        # convert exchange keys to nice keys, or just use nice keys
+        if not exch_name is None:
+            _m_conv = cls._m_conv.get(exch_name)
             # NOTE this could be sketch, m_conv only set if getting data from exchange
             cls.m_conv = _m_conv
-            m = {k: order_spec.get(_m_conv[k]) for k in _m_conv.keys()}
+            m = {k: order_spec.get(_m_conv[k], order_spec.get(k, None)) for k in _m_conv.keys()}
         else:
             m = copy.copy(order_spec)
 
-        return cls(**m, order_spec_raw=order_spec)
+        return cls(**m, exch_name=exch_name, order_spec_raw=order_spec)
 
     @classmethod
-    def from_base_order(cls, order: 'Order') -> 'ExchOrder':
-        """Create bitmex order from base order
+    def from_base_order(cls, order: 'Order', exch_name: str = None) -> 'ExchOrder':
+        """Create ExchOrder from base order
         - used to get final/expected orders from strategy and submit/amend
         """
 
@@ -335,7 +341,8 @@ class ExchOrder(BaseOrder, DictRepr, Serializable):
             symbol=order.symbol,
             qty=order.qty,
             name=order.name,
-            offset=order.offset)
+            offset=order.offset,
+            exch_name=exch_name)
 
     @classmethod
     def example(cls):
@@ -348,8 +355,14 @@ class ExchOrder(BaseOrder, DictRepr, Serializable):
 
     @property
     def qty(self):
-        """Ensure ExchOrders always in multiples of 100"""
-        return f.round_down(n=abs(self._qty), nearest=100) * self.side
+        """Ensure ExchOrders always in multiples of 100 (Bitmex only)
+
+        - Bybit reduce orders need to use exact qty (no 100 bin_size limit)
+        """
+        if self.exch_name == 'bybit' and self.is_reduce:
+            return self._qty
+        else:
+            return f.round_down(n=abs(self._qty), nearest=100) * self.side
 
     @qty.setter
     def qty(self, val):
@@ -759,19 +772,21 @@ def make_orders(
     return orders
 
 
-def make_exch_orders(order_specs: Union[List[dict], dict], exchange: str = None) -> List[ExchOrder]:
+def make_exch_orders(order_specs: Union[List[dict], dict], exch_name: str) -> List[ExchOrder]:
     """Create multiple bitmex orders from raw bitmex order spec dicts
 
     Parameters
     ----------
     order_specs : list
         list of dicts, MUST be response from bitmex
+    exch_name : str
+        force specific exchange (needed for bybit qty)
 
     Returns
     -------
     List[ExchOrder]
     """
-    return [ExchOrder.from_dict(order_spec, exchange=exchange) for order_spec in f.as_list(order_specs)]
+    return [ExchOrder.from_dict(order_spec, exch_name=exch_name) for order_spec in f.as_list(order_specs)]
 
 
 def list_to_dict(
