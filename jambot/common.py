@@ -1,5 +1,6 @@
 import json
 from abc import ABCMeta, abstractmethod
+from typing import *
 
 from joblib import Parallel
 
@@ -11,6 +12,10 @@ except ModuleNotFoundError:
 
 class DictRepr(object, metaclass=ABCMeta):
     """Class to add better string rep with to_dict"""
+
+    @abstractmethod
+    def to_dict(self) -> dict:
+        pass
 
     def to_dict_str(self):
         """TODO func to convert values of output dicts to string reprs based on dtype"""
@@ -34,19 +39,24 @@ class DictRepr(object, metaclass=ABCMeta):
     def __repr__(self) -> str:
         return str(self)
 
+    def keys(self) -> list:
+        return self.to_dict().keys()
 
-class Serializable(dict, metaclass=ABCMeta):
+    def __getitem__(self, key: str) -> Any:
+        """Used to call dict() on object
+        - NOTE this calls self.to_dict() for every key requested
+        - NOTE not actually used yet
+        """
+        return self.to_dict()[key]
+
+    def get(self, key: str, default: Any = None) -> Any:
+        return self.to_dict().get(key, default)
+
+
+class Serializable(metaclass=ABCMeta):
     """Mixin class to make object json serializeable
     https://stackoverflow.com/questions/18478287/making-object-json-serializable-with-regular-encoder
     """
-
-    def __new__(cls, *args, **kwargs):
-        """hack needed so 'items' can be called by json
-        - set in __new__ so dont have to explicitely initialize object with __init__ if mixin
-        """
-        obj = super().__new__(cls)
-        obj.__setitem__('dummy', 1)
-        return obj
 
     @abstractmethod
     def __json__(self) -> dict:
@@ -58,8 +68,10 @@ class Serializable(dict, metaclass=ABCMeta):
         return self.__json__().items()
 
     def to_json(self) -> str:
-        """Json dump self to string"""
-        return json.dumps(self)
+        """Json dump self to string
+        - NOTE this only works with dicts now, not sure if other objs ever needed
+        """
+        return json.dumps({k: v for k, v in self.__json__().items()})
 
 
 class ProgressParallel(Parallel):
