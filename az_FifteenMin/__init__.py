@@ -20,9 +20,7 @@ def main(mytimer: func.TimerRequest) -> None:
         interval = 15
         bmex = Bitmex.default(test=False, refresh=False)
         bbit = Bybit.default(test=False, refresh=False)
-        exchs = [bmex, bbit]
-
-        db.update_all_symbols(exchs=exchs, interval=interval)
+        db.update_all_symbols(exchs=[bmex, bbit], interval=interval)
 
         live.run_strat_live(interval=interval)
 

@@ -470,3 +470,8 @@ rfecv.n_features_
 # nbayes=GaussianNB(),
 # qda=QuadraticDiscriminantAnalysis(),
 # lgbm=LGBM,
+
+# %%prun -D stats.stats
+# import pstats
+# ps = pstats.Stats('stats.stats')
+# ps.sort_stats(pstats.SortKey.CUMULATIVE).print_stats(20)

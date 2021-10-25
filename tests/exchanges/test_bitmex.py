@@ -114,6 +114,7 @@ def test_reconcile_orders(exch: Bitmex, last_close: float, symbol: str) -> None:
         exch.close_position()
 
     exch.cancel_all_orders()
+    # TODO test current_qty somewhere big oops made it into prod!!
 
     try:
         # submit test orders
@@ -134,7 +135,7 @@ def test_reconcile_orders(exch: Bitmex, last_close: float, symbol: str) -> None:
         expected_orders = ords.make_exch_orders(order_specs_expected)
 
         # reconcile - cancel, amend, submit
-        exch.reconcile_orders(symbol=symbol, expected_orders=expected_orders)
+        exch.reconcile_orders(symbol=symbol, expected_orders=expected_orders, bybit_async=True, bybit_stops=True)
 
         # assert correct orders submitted, cancelled, and amended
         final_orders = exch.get_orders(
