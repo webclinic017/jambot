@@ -211,8 +211,8 @@ class SheetBatcher(GoogleSheet):
 class UserSettings(GoogleSheet):
     index_col = ['exchange', 'user']
 
-    def __init__(self, **kw):
-        super().__init__(**kw)
+    def __init__(self, auth: bool = False, **kw):
+        super().__init__(auth=auth, **kw)
         f.set_self(vars())
 
     def process_df(self, df: pd.DataFrame, load_api: bool = False) -> pd.DataFrame:
