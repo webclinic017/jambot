@@ -39,4 +39,4 @@ def test_bitmex_order(order):
 def test_make_bitmex_orders(exch):
     """Test order spec dicts can be converted to ExchOrders"""
     order_specs = exch.orders[0:3]
-    exch_orders = ords.make_exch_orders(order_specs)
+    exch_orders = ords.make_exch_orders(order_specs, exch_name=exch.exch_name)

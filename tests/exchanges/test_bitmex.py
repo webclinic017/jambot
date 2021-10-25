@@ -25,6 +25,11 @@ def symbol(exch) -> str:
     return exch.default_symbol
 
 
+@fixture(scope='session')
+def exch_name(exch) -> str:
+    return exch.exch_name
+
+
 def test_exch_is_test(exch) -> bool:
     """Make sure exch is in test mode"""
     assert exch.test is True
@@ -38,14 +43,14 @@ def last_close(exch) -> float:
 
 
 @fixture
-def exch_orders(last_close, symbol: str) -> List[Bitmex]:
+def exch_orders(last_close, symbol: str, exch_name: str) -> List[Bitmex]:
     """Create two bitmex orders for testing"""
     order_specs = [
         dict(symbol=symbol, order_type='limit', qty=-100, price=last_close, name='test_ord_1'),
         dict(symbol=symbol, order_type='limit', qty=-100, price=last_close + 100, name='test_ord_2'),
     ]
 
-    return ords.make_exch_orders(order_specs)
+    return ords.make_exch_orders(order_specs, exch_name=exch_name)
 
 
 def test_order_flow(exch: Bitmex, exch_orders):
@@ -132,7 +137,7 @@ def test_reconcile_orders(exch: Bitmex, last_close: float, symbol: str) -> None:
             dict(symbol=symbol, order_type='market', qty=-2400, name='market_3'),  # submit
         ]
 
-        expected_orders = ords.make_exch_orders(order_specs_expected)
+        expected_orders = ords.make_exch_orders(order_specs_expected, exch_name=exch.exch_name)
 
         # reconcile - cancel, amend, submit
         exch.reconcile_orders(symbol=symbol, expected_orders=expected_orders, bybit_async=True, bybit_stops=True)
@@ -144,14 +149,15 @@ def test_reconcile_orders(exch: Bitmex, last_close: float, symbol: str) -> None:
             as_exch_order=True,
             as_dict=True,
             refresh=True,
-            bybit_async=True)
+            bybit_async=True,
+            bybit_stops=True)
 
         # need to reference existing order's key to check amended
         expected_orders[0].key = test_orders[0].key
         expected_orders = ords.list_to_dict(expected_orders, key_base=False)
 
         for order_key, o in expected_orders.items():
-            assert order_key in final_orders, f'Failed to find order: {order_key}'
+            assert order_key in list(final_orders.keys()), f'Failed to find order: {order_key}'
 
             o_actual = final_orders[order_key]
             _compare_order_specs(order_1=o, order_2=o_actual)
