@@ -35,7 +35,7 @@ class Bitmex(SwaggerExchange):
 
     other_keys = dict(
         last_price='lastPrice',
-        cur_qty='currentQty',
+        cur_qty='qty',
         err_text='text')
 
     # value = "current value of position"
