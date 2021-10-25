@@ -187,11 +187,17 @@ class Bybit(SwaggerExchange):
         bybit_stops : bool, optional
             bybit keeps all stops under "conditional" endpoint
         """
+        def _filter_keys(existing: List[dict], new: List[dict]) -> List[dict]:
+            """don't add async orders to final if already exist in regular"""
+            k = 'order_link_id'
+            existing_keys = [o[k] for o in existing]
+            return [o for o in new if not o[k] in existing_keys]
+
         kw = dict(symbol=symbol, limit=30)
         orders = self.req('Order.getOrders', **kw)
 
         if bybit_async:
-            orders += self.req('Order.query', **kw)
+            orders += _filter_keys(orders, self.req('Order.query', **kw))
 
         # very sketch, bybit returns stop orders as "Market", with no price
         orders = [o for o in orders if not 'stop' in o['order_link_id']]
@@ -201,7 +207,7 @@ class Bybit(SwaggerExchange):
             stop_orders = self.req('Conditional.getOrders', **kw)
 
             if bybit_async:
-                stop_orders += self.req('Conditional.query', **kw)
+                stop_orders += _filter_keys(stop_orders, self.req('Conditional.query', **kw))
 
         self._orders = self.add_custom_specs(self.proc_raw_spec(orders + stop_orders))
 
@@ -366,7 +372,7 @@ class Bybit(SwaggerExchange):
             # check for ret_code errors
             if not ret_spec is None:
                 # NOTE not sure if this is ever needed other than manual testing
-                if False and action in ('amend', 'cancel'):
+                if action in ('amend', 'cancel'):
                     # kinda annoying but have to call for order again
                     id_key = 'order_id' if not is_stop else 'stop_order_id'
                     ret_spec = self.req(
