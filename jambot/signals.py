@@ -47,7 +47,7 @@ class SignalManager():
         scaler = MinMaxScaler()
 
         # cant add any new cols, but CAN exclude cols without pushing new code
-        bs = BlobStorage(container=cf.p_data / 'feats')
+        self.bs = BlobStorage(container=cf.p_data / 'feats')
 
         f.set_self(vars())
 
@@ -550,9 +550,9 @@ class Volume(SignalGroup):
         prefix = 'vol'
         kw['signals'] = dict(
             # relative=lambda x: x.volume / x.volume.shift(6).rolling(24).mean(),
-            relative=lambda x: relative_self(x.volume, n=24 * 7),
+            rel=lambda x: relative_self(x.volume, n=24 * 7),
             # mom=lambda x: x.vol_relative * x.pct,
-            chaik=dict(cls=ChaikinMoneyFlowIndicator, ta_func='chaikin_money_flow', window=4),
+            chaik=dict(cls=ChaikinMoneyFlowIndicator, ta_func='chaikin_money_flow', window=24),
             mfi=dict(cls=MFIIndicator, ta_func='money_flow_index', window=48),
             # adi=dict(cls=AccDistIndexIndicator, ta_func='acc_dist_index'),
             # eom=dict(cls=EaseOfMovementIndicator, ta_func='ease_of_movement', window=14),
@@ -784,24 +784,26 @@ class Candle(SignalGroup):
             cdl_tail_low=lambda x: np.abs(x.low - x[['close', 'open']].min(axis=1)) / x.open,
             ema200_v_high=lambda x: np.abs(x.high - x.ema200) / x.open,
             ema200_v_low=lambda x: np.abs(x.low - x.ema200) / x.open,
-            pxhigh=lambda x: x.high.rolling(n_periods).max().shift(1),
-            pxlow=lambda x: x.low.rolling(n_periods).min().shift(1),
-            high_above_prevhigh=lambda x: np.where(x.high > x.pxhigh, 1, 0).astype(bool),
-            close_above_prevhigh=lambda x: np.where(x.close > x.pxhigh, 1, 0).astype(bool),
-            low_below_prevlow=lambda x: np.where(x.low < x.pxlow, 1, 0).astype(bool),
-            close_below_prevlow=lambda x: np.where(x.close < x.pxlow, 1, 0).astype(bool),
+            # pxhigh=lambda x: x.high.rolling(n_periods).max().shift(1),
+            # pxlow=lambda x: x.low.rolling(n_periods).min().shift(1),
+            # high_above_prevhigh=lambda x: np.where(x.high > x.pxhigh, 1, 0).astype(bool),
+            # close_above_prevhigh=lambda x: np.where(x.close > x.pxhigh, 1, 0).astype(bool),
+            # low_below_prevlow=lambda x: np.where(x.low < x.pxlow, 1, 0).astype(bool),
+            # close_below_prevlow=lambda x: np.where(x.close < x.pxlow, 1, 0).astype(bool),
             # buy_pressure=lambda x: (x.close - x.low.rolling(2).min().shift(1)) / x.close,
             # sell_pressure=lambda x: (x.close - x.high.rolling(2).max().shift(1)) / x.close,
         )
 
         # close v range
         ns = (24, 48, 96, 192)
-        m_cvr = {f'cvr{n:03}': lambda x, n=n: self.close_v_range(x, n_periods=n) for n in ns}
+        # m_cvr = {f'cvr{n:03}': lambda x, n=n: self.close_v_range(x, n_periods=n) for n in ns}
+        m_cvr = {}
+        m_brk = {f'brk{n:03}': lambda x, n=n: self.breakout(x, n_periods=n) for n in ns}
 
         # ns = (6, 12, 24)
         # m_cdl_body = {f'cdl_body_rel_{n}': lambda x, n=n: relative_self(x.cdl_body, n=n) for n in ns}
 
-        kw['signals'] |= m_cvr  # | m_cdl_body
+        kw['signals'] |= m_cvr | m_brk  # | m_cdl_body
 
         super().__init__(**kw)
         drop_cols = ['min_n', 'range_n', 'pxhigh', 'pxlow']
@@ -816,7 +818,8 @@ class Candle(SignalGroup):
             'pxhigh',
             'pxlow',
             'cdl_tail_low',
-            'cdl_tail_high']
+            'cdl_tail_high']  # + list(m_brk.keys())
+        # no_sum_cols = list(m_brk.keys())
 
         require_cols = dict(
             cdl_full_rel='cdl_full',
@@ -831,14 +834,54 @@ class Candle(SignalGroup):
 
         f.set_self(vars())
 
-    def close_v_range(self, df, n_periods=24) -> pd.Series:
-        # col = f'close_v_range_{n_periods}'
-        # dont really need to use .shift(1) here
+    @staticmethod
+    def breakout(df: pd.DataFrame, n_periods: int, n_shift: int = 12) -> pd.Series:
+        """Combination of cvr + extra "bump" when price brakes out of trailing range high/low
+
+        Parameters
+        ----------
+        df : pd.DataFrame
+        n_periods : int
+            lookback period for range high/low
+        n_shift : int, optional
+            shift period for breakouts, by default 12
+
+        Returns
+        -------
+        pd.Series
+        """
+        max_n = df.high.rolling(n_periods).max()
+        max_n_shift = max_n.shift(n_shift)
+        min_n = df.low.rolling(n_periods).min()
+        min_n_shift = min_n.shift(n_shift)
+
+        s = np.where(
+            df.close > max_n_shift,
+            df.close - max_n_shift,
+            np.where(
+                df.close < min_n_shift,
+                df.close - min_n_shift, 0)) / df.close
+
+        # cvr (faster, resuing rolling windows)
+        cvr = (df.close - min_n) / (max_n - min_n)
+        cvr = cvr.fillna(cvr.mean()) - 0.5
+
+        # cols = ['high', 'low', 'close']
+        # df[cols].iloc[-300:] \
+        #     .assign(cvr=lambda x: sg.Candle.breakout(x, 96)) \
+        #     ['cvr'].plot();
+
+        # return (s * 10).astype(np.float32)
+        # * 10 to put breakout on same scale as cvr
+        return ((s * 10) + cvr).astype(np.float32)
+
+    @staticmethod
+    def close_v_range(df: pd.DataFrame, n_periods: int) -> pd.Series:
+
         min_n = df.low.rolling(n_periods).min()
         range_n = (df.high.rolling(n_periods).max() - min_n)
-        s = (df.close - min_n) / range_n
-        s = s.fillna(s.mean())
-        return s.astype(np.float32)
+        s = ((df.close - min_n) / range_n)  # - 0.5
+        return s.fillna(s.mean()).astype(np.float32)
 
     def _add_all_signals(self, df):
         # NOTE could be kinda wrong div by open, possibly try div by SMA?
@@ -888,8 +931,18 @@ class TargetClass(SignalGroup):
 
 
 class TargetMeanEMA(TargetClass):
-    def __init__(self, **kw):
-        super().__init__(**kw)
+    def __init__(self, p_ema: int = 10, **kw):
+        # NOTE not finished, don't like ema
+        predict_col = self.ema_col
+        ema_col = f'ema{p_ema}'
+
+        kw['signals'] = dict(
+            pct_future=lambda x: (x[predict_col].shift(-self.n_periods) - x[predict_col]) / x[predict_col],
+            target=lambda x: np.where(x.pct_future > 0, 1, -1))
+
+        super().__init__(p_ema=p_ema, **kw)
+
+        drop_cols = []
         f.set_self(vars())
 
     def add_all_signals(self, df):
@@ -903,7 +956,7 @@ class TargetMeanEMA(TargetClass):
             .pipe(add_ema, p=self.p_ema) \
             .assign(
                 pct_future=lambda x: (x[predict_col].shift(-self.n_periods) - x[predict_col]) / x[predict_col],
-                target=lambda x: np.where(x.pct_future > pct_min, 1, np.where(x.pct_future < pct_min * -1, -1, 0))) \
+                target=lambda x: np.where(x.pct_future > pct_min, 1, np.where(x.pct_future < -pct_min, -1, 0))) \
             .drop(columns=['pct_future'])
 
 
