@@ -30,11 +30,11 @@ class BaseOrder(object, metaclass=ABCMeta):
     def __init__(
             self,
             qty: int,
+            name: str = '',
             price: float = None,
             offset: float = None,
             symbol: str = SYMBOL,
             order_id: str = None,
-            name: str = '',
             **kw):
 
         price_original = price
@@ -50,7 +50,7 @@ class BaseOrder(object, metaclass=ABCMeta):
         return self._qty
 
     @qty.setter
-    def qty(self, val):
+    def qty(self, val) -> int:
         """Set qty and side based on qty"""
         self._qty = int(val)
         self._side = TradeSide(np.sign(val))
@@ -173,7 +173,6 @@ class BaseOrder(object, metaclass=ABCMeta):
         return '{}-{}-{}'.format(self.symbol, self.name.lower(), sidestr)
 
     def dict_stats(self) -> dict:
-
         return dict(
             ts=self.timestamp,
             ts_filled=self.timestamp_filled,
@@ -667,7 +666,11 @@ class Order(BaseOrder, Observer, metaclass=ABCMeta):
         """
 
         # can't change close order's qty
-        qty = None if self.is_reduce else self.max_qty(price)
+        if self.is_reduce:
+            qty = None
+        else:
+            price += -1 * self.side  # offset limit_close by $1 to keep on inside
+            qty = self.max_qty(price)
 
         self.parent.broker.amend_order(order=self, qty=qty, price=price)
 
@@ -773,7 +776,8 @@ def make_orders(
 
 
 def make_exch_orders(order_specs: Union[List[dict], dict], exch_name: str) -> List[ExchOrder]:
-    """Create multiple bitmex orders from raw bitmex order spec dicts
+    """Create multiple ExchOrders orders from raw bitmex order spec dicts
+    - if already dict just return
 
     Parameters
     ----------
@@ -786,12 +790,14 @@ def make_exch_orders(order_specs: Union[List[dict], dict], exch_name: str) -> Li
     -------
     List[ExchOrder]
     """
-    return [ExchOrder.from_dict(order_spec, exch_name=exch_name) for order_spec in f.as_list(order_specs)]
+    return [
+        ExchOrder.from_dict(spec, exch_name=exch_name) if not isinstance(spec, ExchOrder) else spec
+        for spec in f.as_list(order_specs)]
 
 
 def list_to_dict(
         orders: List[Union[Order, ExchOrder]],
-        key_base: bool = True) -> Dict[str, Union[Order, ExchOrder]]:
+        use_ts: bool = False) -> Dict[str, Union[Order, ExchOrder]]:
     """Convenience func to convert list of orders to dict for convenient matching
 
     Parameters
@@ -806,5 +812,5 @@ def list_to_dict(
     Dict[str, Order | ExchOrder]
         dict of {order.key_base: order}
     """
-    key = 'key_base' if key_base else 'key'
+    key = 'key' if use_ts else 'key_base'
     return {getattr(o, key): o for o in orders}

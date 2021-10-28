@@ -97,7 +97,8 @@ class Strategy(StrategyBase):
             side: int,
             offset: float,
             name: str) -> LimitOrder:
-        """Create limit order with offset to enter or exit"""
+        """Create limit order with offset to enter or exit
+        """
 
         # if hasattr(self.c, 'pred_max'):
         #     minmax_col = {-1: 'pred_max', 1: 'pred_min'}.get(side)
@@ -110,6 +111,8 @@ class Strategy(StrategyBase):
 
         # NOTE timeout params are kinda arbitrary
         if name == 'open':
+            # NOTE this will have to change for symbols other than BTCUSD
+            limit_price += -1 * side  # offset limit_close by $1
             qty = self.wallet.available_quantity(price=limit_price) * side
             timeout = 6
         else:
@@ -124,8 +127,7 @@ class Strategy(StrategyBase):
             offset=offset,
             timeout=timeout,
             name=f'limit_{name}',
-            trail_close=self.order_offset
-        )
+            trail_close=offset)
 
         if self.market_on_timeout or name == 'close':
             order.timedout.connect(lambda order, name=name: self.market_late(order, name=name))
