@@ -365,7 +365,6 @@ class ModelManager(object):
             max_train_size: int = None,
             regression: bool = False) -> pd.DataFrame:
         """Retrain model every x periods and add predictions for next batch_size"""
-        df_train = df.copy()
 
         nrows = df.shape[0]
         num_batches = ((nrows - min_size) // batch_size) + 1
@@ -381,28 +380,30 @@ class ModelManager(object):
         # TODO speed up by not using full pipeline? no drop cols/column transformer?
 
         def _fit(i: int) -> pd.DataFrame:
-            i_lower = min_size + i * batch_size
+            i_lower = min_size + i * batch_size  # "test" lower
             i_upper = min(i_lower + batch_size, nrows + 1)
-            idx = df.index[i_lower: i_upper]
+            idx_test = df.index[i_lower: i_upper]
 
-            # train model up to current position
+            # train model from 0 up to current position
+            # NOTE max_train_size eg 2 yrs seems to be much worse
+            i_train_lower = 0 if not max_train_size else max(0, i_lower - max_train_size)
+
             x_train, y_train = split(
-                df_train.iloc[0: i_lower],
+                df.iloc[i_train_lower: i_lower],
                 target=self.target)
 
             model.fit(
                 x_train,
                 y_train,
-                **weighted_fit(name=name, weights=weights.loc[x_train.index])
-            )
+                **weighted_fit(name=name, weights=weights.loc[x_train.index]))
 
-            x_test, _ = split(df_train.loc[idx], target=self.target)
+            x_test, _ = split(df.loc[idx_test], target=self.target)
 
-            if len(idx) == 0:
+            if len(idx_test) == 0:
                 return None
             else:
                 return pd.DataFrame(
-                    index=idx,
+                    index=idx_test,
                     data=dict(
                         y_pred=model.predict(x_test),
                         proba_long=df_proba(x=x_test, model=model)['proba_long']))
