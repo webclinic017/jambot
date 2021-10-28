@@ -266,14 +266,16 @@ def run_strat(
         name: str = 'lgbm',
         df_pred: pd.DataFrame = None,
         order_offset: float = -0.0006,
+        exch_name: str = 'bitmex',
+        symbol: str = 'XBTUSD',
         **kw) -> ml.Strategy:
 
     # allow passing in to replace OHLC cols and run again
     if df_pred is None:
-        df_pred = get_df_pred(name=name, **kw)
+        df_pred = get_df_pred(name=name, exch_name=exch_name, symbol=symbol, **kw)
 
     # run strat in "live" mode to get expected state
-    strat = ml.make_strat(live=True, order_offset=order_offset, **kw)
+    strat = ml.make_strat(live=True, order_offset=order_offset, exch_name=exch_name, symbol=symbol, **kw)
 
     cols = ['open', 'high', 'low', 'close', 'signal']
     bm = bt.BacktestManager(
