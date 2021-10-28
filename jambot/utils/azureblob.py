@@ -11,6 +11,7 @@ from typing import Union
 from azure.storage.blob import (BlobClient, BlobServiceClient,  # noqa
                                 ContainerClient)
 
+from jambot import comm as cm
 from jambot import functions as f
 from jambot import getlog
 from jambot.utils.secrets import SecretsManager
@@ -140,9 +141,13 @@ class BlobStorage():
 
         # blob here is BlobProperties
         i = 0
-        for blob in container.list_blobs():
-            self.download_file(p=p / blob.name, container=container, _log=False)
-            i += 1
+        try:
+            for blob in container.list_blobs():
+                self.download_file(p=p / blob.name, container=container, _log=False)
+                i += 1
+        except Exception as e:
+            msg = f'Failed to download files from container "{container.container_name}"'
+            cm.discord(msg, channel='err', log=log.warning)
 
         log.info(f'Downloaded [{i}] file(s) from container "{container.container_name}"')
 
