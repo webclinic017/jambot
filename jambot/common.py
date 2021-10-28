@@ -13,7 +13,6 @@ except ModuleNotFoundError:
 class DictRepr(object, metaclass=ABCMeta):
     """Class to add better string rep with to_dict"""
 
-    @abstractmethod
     def to_dict(self) -> dict:
         pass
 
