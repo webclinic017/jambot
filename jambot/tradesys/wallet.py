@@ -81,6 +81,7 @@ class Wallet(Observer):
 
     @property
     def qty_opp(self) -> int:
+        """Negative of current wallet qty (used to close)"""
         return self.qty * -1
 
     @property
