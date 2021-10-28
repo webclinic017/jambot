@@ -163,7 +163,7 @@ class Bybit(SwaggerExchange):
 
         if not ret_code == 0:
             fail_msg = f'{fail_msg}\n' if not fail_msg is None else ''
-            cm.send_error(f'{fail_msg}Request failed:\n\t{full_result}', _log=log)
+            cm.send_error(f'{fail_msg}Request failed:\n\t{full_result}\n\tkw: {kw}', _log=log)
 
         result = full_result['result']
 
@@ -210,6 +210,7 @@ class Bybit(SwaggerExchange):
                 stop_orders += _filter_keys(stop_orders, self.req('Conditional.query', **kw))
 
         self._orders = self.add_custom_specs(self.proc_raw_spec(orders + stop_orders))
+        # log.warning(f'Setting Orders:\n\t{self._orders}')
 
     def _set_positions(self) -> List[dict]:
         """Get position info, eg current qty
@@ -309,6 +310,7 @@ class Bybit(SwaggerExchange):
             *args, **kw) -> list[dict]:
         """Route order request to bybit
         - handle converting all keys before send + return values
+        - reduce_only orders must be submitted min $1 "inside" of open order, else amending will fail
 
         Parameters
         ----------
@@ -334,7 +336,8 @@ class Bybit(SwaggerExchange):
             order_specs.append(order_specs[0] | dict(order_type='stop'))
 
         return_specs = []
-        for spec in order_specs:
+        # order reduce_only orders first
+        for spec in sorted(order_specs, key=lambda x: not x.get('reduce_only', False)):
             # stupid stop orders have completely different endpoint
             is_stop = spec.get('order_type', '').lower() == 'stop'
 
@@ -367,6 +370,7 @@ class Bybit(SwaggerExchange):
                     spec[key] = str(abs(int(spec[key])))
 
             fail_msg = f'[{action}]:\n\t{spec}'
+            # log.info(fail_msg)
             ret_spec = self.req(endpoint_full, fail_msg=fail_msg, **spec)
 
             # check for ret_code errors
