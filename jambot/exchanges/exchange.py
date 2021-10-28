@@ -554,7 +554,7 @@ class SwaggerExchange(Exchange, metaclass=ABCMeta):
             orders = self.exch_order_from_raw(order_specs=orders, process=False)
 
         if as_dict:
-            orders = ords.list_to_dict(orders, key_base=False)
+            orders = ords.list_to_dict(orders, use_ts=True)
 
         return orders
 
@@ -646,14 +646,14 @@ class SwaggerExchange(Exchange, metaclass=ABCMeta):
             order_specs: List[Union[ExchOrder, dict]]) -> Union[List[ExchOrder], None]:
         """Send order submit/amend/cancel request
 
-        - ONLY intake ExchageOrders and pass to exchange specific _route_order_request
+        - intake ExchageOrders OR dict (eg cancel_all) and pass to exchange specific _route_order_request
         - Exchanges know which keys to use per operation
 
         Parameters
         ----------
         action : str
-            submit | amend | cancel
-        order_specs : list
+            submit | amend | cancel | cancel_all
+        order_specs : List[Union[ExchOrder, dict]]
             list of orders to process
 
         Returns
@@ -906,8 +906,8 @@ class SwaggerExchange(Exchange, metaclass=ABCMeta):
         """
 
         # convert to dicts for easier matching
-        expected_orders = ords.list_to_dict(expected_orders, key_base=True)
-        actual_orders = ords.list_to_dict(actual_orders, key_base=True)
+        expected_orders = ords.list_to_dict(expected_orders, use_ts=False)
+        actual_orders = ords.list_to_dict(actual_orders, use_ts=False)
         log.debug(f'\n\nexpected_orders:\n\t{expected_orders}')
         log.debug(f'\n\nactual_orders:\n\t{actual_orders}')
         all_orders = dd(list, {k: [] for k in ('valid', 'cancel', 'amend', 'submit', 'manual')})

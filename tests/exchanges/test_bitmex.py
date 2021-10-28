@@ -154,7 +154,7 @@ def test_reconcile_orders(exch: Bitmex, last_close: float, symbol: str) -> None:
 
         # need to reference existing order's key to check amended
         expected_orders[0].key = test_orders[0].key
-        expected_orders = ords.list_to_dict(expected_orders, key_base=False)
+        expected_orders = ords.list_to_dict(expected_orders, use_ts=True)
 
         for order_key, o in expected_orders.items():
             assert order_key in list(final_orders.keys()), f'Failed to find order: {order_key}'
