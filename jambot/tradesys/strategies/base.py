@@ -4,9 +4,12 @@ import pandas as pd
 
 from jambot import display
 from jambot import functions as f
+from jambot import getlog
 from jambot.tradesys.base import Observer
 from jambot.tradesys.broker import Broker
 from jambot.tradesys.trade import Trade
+
+log = getlog(__name__)
 
 
 class StrategyBase(Observer):
@@ -22,9 +25,9 @@ class StrategyBase(Observer):
         super().__init__(**kw)
 
         _trades = []
-        _broker = Broker(parent_listener=self, symbol=symbol, exch_name=exch_name)
-        wallet = _broker.get_wallet(symbol)
-        wallet.lev = lev
+        self._broker = Broker(parent_listener=self, symbol=symbol, exch_name=exch_name)
+        self.wallet = self._broker.get_wallet(symbol)
+        self.wallet.lev = lev
 
         f.set_self(vars())
 
@@ -153,7 +156,7 @@ class StrategyBase(Observer):
             self,
             maxmin: int = 0,
             first: int = float('inf'),
-            last: int = 0,
+            last: int = 20,
             df: pd.DataFrame = None) -> None:
 
         from jambot.utils.styles import _cmap
