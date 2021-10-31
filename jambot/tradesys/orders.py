@@ -19,6 +19,7 @@ from jambot.tradesys.enums import OrderStatus, OrderType, TradeSide
 
 if TYPE_CHECKING:
     from jambot.exchanges.exchange import SwaggerExchange
+    from jambot.tradesys.trade import Trade
 
 log = getlog(__name__)
 
@@ -614,20 +615,24 @@ class Order(BaseOrder, Observer, metaclass=ABCMeta):
         #     print('TIMED OUT')
         #     self.timedout.emit(self)
 
-    def add(self, trade) -> 'Order':
-        """Convenience func to add self to trade
+    def add(self, lst: Union['Trade', list]) -> 'Order':
+        """Convenience func to add self to trade or list of orders
 
         Parameters
         ----------
-        trade : Trade
+        lst : Union['Trade', list]
 
         Returns
         -------
         Order
             self
         """
-        if not trade is None:
-            trade.add_order(self)
+        if not lst is None:
+            if isinstance(lst, list):
+                lst.append(self)
+            else:
+                # actually a trade
+                lst.add_order(self)
 
         return self
 
@@ -694,7 +699,7 @@ class LimitOrder(Order):
 
         # adjust price/qty to offset from current close
         if not self.trail_close is None and not self.is_filled:
-            price = f.get_price(pnl=self.trail_close, entry_price=self.c.close, side=self.side)
+            price = f.get_price(pnl=self.trail_close, price=self.c.close, side=self.side)
             self.adjust_price(price=price)
 
 
@@ -714,7 +719,7 @@ class StopOrder(Order):
     def from_order(cls, order: Order, stop_pct: float) -> StopOrder:
         stop_price = f.get_price(
             pnl=abs(stop_pct) * -1,
-            entry_price=order.price,
+            price=order.price,
             side=order.side)
 
         stop_order = StopOrder(
