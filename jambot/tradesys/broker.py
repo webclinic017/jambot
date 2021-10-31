@@ -11,7 +11,7 @@ from jambot import getlog
 from jambot.exchanges.exchange import SwaggerExchange
 from jambot.tradesys.base import Observer
 from jambot.tradesys.enums import OrderStatus
-from jambot.tradesys.orders import ExchOrder, LimitOrder, MarketOrder, Order
+from jambot.tradesys.orders import ExchOrder, Order
 from jambot.tradesys.wallet import Wallet
 
 log = getlog(__name__)
@@ -225,7 +225,7 @@ class Broker(Observer):
                     orders = [o for o in orders if not (o.is_limit and o.is_reduce)]
 
                     # add market close
-                    mkt_close = MarketOrder(
+                    ExchOrder.market(
                         symbol=symbol,
                         qty=cur_qty * -1,
                         name='mkt_close_er').add(orders)
@@ -237,11 +237,12 @@ class Broker(Observer):
                     side=expected_side * -1)
 
                 # NOTE could enforce this as Limit only, keep retrying till success
-                limit_open = LimitOrder(
+                ExchOrder.limit(
                     symbol=symbol,
                     price=limit_price,
                     qty=wallet.available_quantity(price=limit_price) * expected_side,
-                    name='lim_open_er').add(orders)
+                    name='lim_open_er',
+                    prevent_market_fill=False).add(orders)
 
         return orders
 

@@ -348,6 +348,21 @@ class ExchOrder(BaseOrder, DictRepr, Serializable):
     def example(cls):
         return cls(order_type='limit', qty=-1000, price=50000, name='example_order')
 
+    @classmethod
+    def market(cls, **kw) -> 'ExchOrder':
+        """Convenience to create market order"""
+        return cls(order_type='market', **kw)
+
+    @classmethod
+    def limit(cls, **kw) -> 'ExchOrder':
+        """Convenience to create market order"""
+        return cls(order_type='limit', **kw)
+
+    @classmethod
+    def stop(cls, **kw) -> 'ExchOrder':
+        """Convenience to create market order"""
+        return cls(order_type='stop', **kw)
+
     @property
     def side_str(self) -> str:
         """Get side name for submitting ByBit orders"""
