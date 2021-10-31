@@ -427,14 +427,14 @@ def price_format(altstatus=False):
     return ans
 
 
-def get_price(pnl: float, entry_price: float, side: int, prec: float = 0.5) -> float:
+def get_price(pnl: float, price: float, side: int, prec: float = 0.5) -> float:
     """Get price at percentage offset
 
     Parameters
     ----------
     pnl : float
         percent offset from entry_price
-    entry_price : float
+    price : float
         price to offset from
     side : int
         order side
@@ -445,9 +445,9 @@ def get_price(pnl: float, entry_price: float, side: int, prec: float = 0.5) -> f
         price
     """
     if side == 1:
-        price = pnl * entry_price + entry_price
+        price = pnl * price + price
     elif side == -1:
-        price = entry_price / (1 + pnl)
+        price = price / (1 + pnl)
 
     return round_down(n=price, nearest=prec)
 
