@@ -11,7 +11,7 @@ from jambot import getlog
 from jambot.exchanges.exchange import SwaggerExchange
 from jambot.tradesys.base import Observer
 from jambot.tradesys.enums import OrderStatus
-from jambot.tradesys.orders import ExchOrder, MarketOrder, Order
+from jambot.tradesys.orders import ExchOrder, LimitOrder, MarketOrder, Order
 from jambot.tradesys.wallet import Wallet
 
 log = getlog(__name__)
@@ -187,7 +187,6 @@ class Broker(Observer):
         # rescale orders
         # TODO stops need to be related to limit open
         if not exch is None:
-            # TODO test how these are adjusted when bitmex "available balance" is adjusted by reserving some
             wallet = self.get_wallet(symbol)
             wallet.set_exchange_data(exch)  # IMPORTANT
             expected_side = wallet.side
@@ -200,16 +199,11 @@ class Broker(Observer):
                 #     # order is offside (price moved too fast from close)
                 #     # adjust close price to exch's last price + offset %
                 #     if (o.price - last_price) * o.side > 0:
-                #         o.price = f.get_price(pnl=o.offset, entry_price=last_price, side=o.side)
-
-                #         msg = f'Adjusting order price from [{o.price_original:,.1f} > {o.price:,.1f}]' \
-                #             + f' | {o.short_stats} | last_price: {last_price}'
-                #         cm.discord(msg=msg, channel='orders', log=log.info)
+                #         o.price = f.get_price(pnl=o.offset, price=last_price, side=o.side)
 
                 if o.is_reduce:
                     if not o.is_stop:
                         o.qty = cur_qty * -1
-
                     else:
                         raise NotImplementedError('Stop order rescaling not set up yet.')
 
@@ -220,20 +214,34 @@ class Broker(Observer):
             cur_qty += sum([o.qty for o in orders if o.is_market])
             cur_side = np.sign(cur_qty)
 
-            # final check to get position back to correct side
-            if expected_side * cur_side == -1:
-                log.warning(f'Position offside, market closing. Expected: {expected_side}, actual: {cur_side}')
+            # final checks to get position back to correct side
+            if not expected_side == cur_side:
 
-                # remove limit close
-                orders = [o for o in orders if not (o.is_limit and o.is_reduce)]
+                # Market Close
+                if expected_side * cur_side == -1:
+                    log.warning(f'Position offside, market closing. Expected: {expected_side}, actual: {cur_side}')
 
-                # add market close
-                mkt_close = MarketOrder(
+                    # remove limit close
+                    orders = [o for o in orders if not (o.is_limit and o.is_reduce)]
+
+                    # add market close
+                    mkt_close = MarketOrder(
+                        symbol=symbol,
+                        qty=cur_qty * -1,
+                        name='mkt_close_er').add(orders)
+
+                # Trailing limit open
+                limit_price = f.get_price(
+                    pnl=self.parent.order_offset,
+                    price=exch.last_price(symbol=symbol),
+                    side=expected_side * -1)
+
+                # NOTE could enforce this as Limit only, keep retrying till success
+                limit_open = LimitOrder(
                     symbol=symbol,
-                    qty=cur_qty * -1,
-                    name='mkt_close_er')
-
-                orders.append(mkt_close)
+                    price=limit_price,
+                    qty=wallet.available_quantity(price=limit_price) * expected_side,
+                    name='lim_open_er').add(orders)
 
         return orders
 
