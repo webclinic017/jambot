@@ -365,6 +365,7 @@ class ModelManager(object):
             max_train_size: int = None,
             regression: bool = False) -> pd.DataFrame:
         """Retrain model every x periods and add predictions for next batch_size"""
+        from lightgbm import LGBMClassifier
 
         nrows = df.shape[0]
         num_batches = ((nrows - min_size) // batch_size) + 1
@@ -375,9 +376,30 @@ class ModelManager(object):
             weight_linear=True).get_weight(df)
 
         if model is None:
-            model = self.pipes[name]
+            model = self.pipes[name].named_steps[name]
 
-        # TODO speed up by not using full pipeline? no drop cols/column transformer?
+        drop_cols = [c for c in cf.config['drop_cols'] if c in df.columns]
+        df_ohlc = df[drop_cols]
+        df = df.pipe(f.safe_drop, drop_cols)
+
+        def _get_imp_feats(x, y):
+            """Fit shap on history up to this point
+            - use n most important cols going forward
+            - NOTE could limit fitting important cols up to eg last year?
+            """
+            # need to pass in x/y for history till now
+            # need to know if we need ct for column names or not
+            spm = ShapManager(
+                x=x,
+                y=y,
+                ct=None,
+                model=LGBMClassifier(num_leaves=50, n_estimators=50, max_depth=30,
+                                     boosting_type='dart', learning_rate=0.1),
+                # model=self.models['lgbm'],
+                weights=weights,
+                n_sample=10_000)
+
+            return spm.shap_n_important(n=60, save=False, upload=False, as_list=True)['most']
 
         def _fit(i: int) -> pd.DataFrame:
             i_lower = min_size + i * batch_size  # "test" lower
@@ -388,28 +410,43 @@ class ModelManager(object):
             # NOTE max_train_size eg 2 yrs seems to be much worse
             i_train_lower = 0 if not max_train_size else max(0, i_lower - max_train_size)
 
+            # if cols is None:
+            #     cols = df.columns
+
             x_train, y_train = split(
                 df.iloc[i_train_lower: i_lower],
                 target=self.target)
 
+            # use shap to get important cols at each iter
+            # imp_cols = _get_imp_feats(x_train, y_train)
+            # x_train = x_train[imp_cols]
+
             model.fit(
                 x_train,
                 y_train,
-                **weighted_fit(name=name, weights=weights.loc[x_train.index]))
+                sample_weight=weights.loc[x_train.index]
+                # **weighted_fit(name=None, weights=weights.loc[x_train.index])
+            )
 
             x_test, _ = split(df.loc[idx_test], target=self.target)
+            # x_test = x_test[imp_cols]
 
             if len(idx_test) == 0:
                 return None
             else:
+                if not regression:
+                    proba_long = df_proba(x=x_test, model=model)['proba_long']
+                else:
+                    proba_long = df_y_pred(x=x_test, model=model)['y_pred']
+
                 return pd.DataFrame(
                     index=idx_test,
                     data=dict(
                         y_pred=model.predict(x_test),
-                        proba_long=df_proba(x=x_test, model=model)['proba_long']))
+                        proba_long=proba_long))
 
         result = ProgressParallel(n_jobs=-1, total=num_batches)(delayed(_fit)(i=i) for i in range(num_batches))
-        return df.pipe(f.left_merge, pd.concat([df for df in result if not df is None]))
+        return df_ohlc.pipe(f.left_merge, pd.concat([df for df in result if not df is None]))
 
     def add_predict(
             self,
@@ -444,7 +481,7 @@ class ModelManager(object):
 
         df = df \
             .pipe(add_y_pred, model=model, x=x_test) \
-            .pipe(add_probas, model=model, x=x_test)
+            .pipe(add_probas, model=model, x=x_test, do=proba)
 
         # save predicted values for each model
         self.df_preds[name] = df
@@ -488,7 +525,7 @@ class ModelManager(object):
 
         # MultiOutputRegressor needs estimator__
         if isinstance(model, MultiOutputRegressor):
-            print('multioutput')
+            log.info('multioutput')
             params = {f'estimator__{k}': v for k, v in params.items()}
 
         # rename params to include 'name__parameter'
@@ -586,7 +623,8 @@ class ShapManager():
             y: pd.Series,
             ct: ColumnTransformer,
             model: BaseEstimator,
-            n_sample: int = 10_000):
+            n_sample: int = 10_000,
+            weights: pd.Series = None):
         """
         Parameters
         ----------
@@ -598,9 +636,19 @@ class ShapManager():
         model : BaseEstimator
         n_sample : int, optional
             by default 2000
+        weights: pd.Series, optional
+            pass in weights so don't have to fit every time, default None
         """
         bs = BlobStorage(container=cf.p_data / 'feats')
         f.set_self(vars())
+        self._shap_values = None
+
+    @property
+    def shap_values(self) -> List[np.ndarray]:
+        """List of 2 (if two classes eg -1/1) arrays of shape (self.n_sample, self.x_enc.columns)
+        - eg [(10_000, 950), ...]
+        """
+        return self._shap_values
 
     def check_init(self):
         """Check if shap explainer init"""
@@ -609,31 +657,36 @@ class ShapManager():
 
     def init_explainer(self) -> None:
         """Create shap values/explainer to be used with summary or force plot, set to self
-
-        Parameters
-        ----------
-        n_sample : int, optional
-            by default 2000
+        - This can take ~20s to fit (cause fitting all 1000 columns)
+        - NOTE OHLC cols ARE needed to get sample_weight... could pass in weights to just merge instead
 
         Sets
-        -------
+        ----
         Tuple[shap.TreeExplainer, List[np.array], pd.DataFrame, pd.DataFrame]
         """
-        # TODO add weights!!
-        data = self.ct.fit_transform(self.x)
-        x_enc = df_transformed(data=data, ct=self.ct)
-        self.model.fit(
-            x_enc,
-            self.y,
-            **weighted_fit(
-                name=None,
-                weights=sg.WeightedPercentMaxMin(8, weight_linear=True).get_weight(self.x)))
+        weights = self.weights
+        if weights is None:
+            weights = sg.WeightedPercentMaxMin(8, weight_linear=True).get_weight(self.x)
+
+        weights = weights.loc[self.x.index]
+
+        if not self.ct is None:
+            # ensure cols are dropped/transformed correctly
+            data = self.ct.fit_transform(self.x)
+            x_enc = df_transformed(data=data, ct=self.ct)
+        else:
+            # just drop drop_cols
+            # NOTE this doesn't normalize anything
+            x_enc = self.x.pipe(f.safe_drop, cf.config['drop_cols'])
+
+        self.model.fit(x_enc, self.y, **weighted_fit(name=None, weights=weights))
 
         # use smaller sample to speed up plot
+        # NOTE sample will change every time new rows are added due to random_state
         x_sample = x_enc.sample(self.n_sample, random_state=0)
 
         self.explainer = shap.TreeExplainer(self.model)
-        self.shap_values = self.explainer.shap_values(x_sample)
+        self._shap_values = self.explainer.shap_values(x_sample)
         self.x_sample = x_sample
         self.x_enc = x_enc
 
@@ -672,6 +725,7 @@ class ShapManager():
             n: int = 50,
             as_list: bool = True,
             save: bool = True,
+            save_least_all: bool = False,
             upload: bool = False) -> Union[list, pd.DataFrame]:
         """Get list of n most important shap values
 
@@ -693,26 +747,33 @@ class ShapManager():
         self.check_init()
 
         # get correct column transformer index for numeric
-        transformer = 'numeric'
-        transformers = self.ct.transformers
-        t_idx = [t[0] for t in transformers].index(transformer)
+        if not self.ct is None:
+            transformer = 'numeric'
+            transformers = self.ct.transformers
+            t_idx = [t[0] for t in transformers].index(transformer)
+            col_names = transformers[t_idx][2]  # 2 is column names
+        else:
+            col_names = self.x_enc.columns.tolist()
 
         # 0/1 could be positive/negative class, not sure which
         # NOTE could maybe try mean of both?
         data = np.abs(self.shap_values[0]).mean(axis=0)
         # data2 = np.abs(self.shap_values[1]).mean(axis=0)
         # data = np.vstack((data1, data2)).T
-        num_cols = transformers[t_idx][2]  # 2 is column names
 
         # cols = ['cls_0', 'cls_1']
         # .assign(importance=lambda x: x[cols].mean(axis=1)) \
-        cols = ['importance']
-        df = pd.DataFrame(data=data, index=num_cols, columns=cols) \
+        # cols = ['importance']
+        df = pd.DataFrame(data=data, index=col_names, columns=['importance']) \
             .sort_values('importance', ascending=False)
 
         m_imp = dict(
             most=df.iloc[: n].index.tolist(),
             least=df.iloc[n:].index.tolist())
+
+        # save least important (500 important)
+        if save_least_all:
+            f.save_pickle(df.iloc[500:].index.tolist(), p=self.bs.p_local, name='least_imp_cols_500')
 
         if save:
             # for name, lst in m_imp.items():
@@ -818,7 +879,7 @@ def append_mean_std_score(
             .pipe(f.safe_drop, exclude_std)
             .std()
             .rename(std_cols)) \
-        .drop(exclude)
+        .drop(exclude)  # only drop for non regression
 
     df.loc[name, s_scores.index] = s_scores
 
@@ -1009,7 +1070,7 @@ def df_y_pred(x: pd.DataFrame, model: BaseEstimator) -> pd.DataFrame:
         index=x.index)
 
 
-def add_probas(df: pd.DataFrame, model: BaseEstimator, x: pd.DataFrame, **kw) -> pd.DataFrame:
+def add_probas(df: pd.DataFrame, model: BaseEstimator, x: pd.DataFrame, do: bool = True, **kw) -> pd.DataFrame:
     """Convenience func to add probas if don't exist
 
     Parameters
@@ -1020,6 +1081,8 @@ def add_probas(df: pd.DataFrame, model: BaseEstimator, x: pd.DataFrame, **kw) ->
         model/pipe
     x : pd.DataFrame
         section of df to predict on
+    do : bool, optional
+        pass False to skip (for regression)
 
     Returns
     -------
@@ -1028,7 +1091,7 @@ def add_probas(df: pd.DataFrame, model: BaseEstimator, x: pd.DataFrame, **kw) ->
     """
 
     # already added probas
-    if 'proba_long' in df.columns:
+    if not do or 'proba_long' in df.columns:
         return df
 
     return df.pipe(f.left_merge, df_right=df_proba(x=x, model=model))
@@ -1054,7 +1117,10 @@ def add_y_pred(df: pd.DataFrame, model: BaseEstimator, x: pd.DataFrame) -> pd.Da
     return df.pipe(f.left_merge, df_right=df_y_pred(x=x, model=model))
 
 
-def convert_proba_signal(df: pd.DataFrame, col: str = 'rolling_proba') -> pd.DataFrame:
+def convert_proba_signal(
+        df: pd.DataFrame,
+        col: str = 'rolling_proba',
+        regression: bool = False) -> pd.DataFrame:
     """Convert probas btwn 0-1 to a signal of 0, 1 or -1 with threshold 0.5
 
     Parameters
@@ -1070,9 +1136,13 @@ def convert_proba_signal(df: pd.DataFrame, col: str = 'rolling_proba') -> pd.Dat
         df with signal added
     """
     s = df[col]
+
+    # for regression, just using y_pred which is already pos/neg, not proba btwn 0-1
+    offset = 0.5 if not regression else 0
+
     return df \
         .assign(
-            signal=np.sign(np.diff(np.sign(s - 0.5), prepend=np.array([0]))))
+            signal=np.sign(np.diff(np.sign(s - offset), prepend=np.array([0]))))
 
 
 def weighted_score(
