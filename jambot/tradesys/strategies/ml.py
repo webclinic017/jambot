@@ -107,7 +107,7 @@ class Strategy(StrategyBase):
         # minmax_col = {-1: 'target_max', 1: 'target_min'}.get(side)
         # offset_true = abs(getattr(self.c, minmax_col)) * -1  #* 0.5
 
-        limit_price = f.get_price(pnl=offset, entry_price=price, side=side)
+        limit_price = f.get_price(pnl=offset, price=price, side=side)
 
         # NOTE timeout params are kinda arbitrary
         if name == 'open':
