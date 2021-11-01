@@ -148,6 +148,11 @@ class SignalManager():
             final_signals = {k: v for k, v in final_signals.items() if k in processed}
             drop_cols.extend(dep_only)
 
+        # always keep max 500 important
+        p = self.bs.p_local / 'least_imp_cols_500.pkl'
+        if p.exists():
+            drop_cols.extend(f.load_pickle(p))
+
         # remove first rows that can't be set with 200ema accurately
         return df.assign(**final_signals) \
             .pipe(f.safe_drop, cols=drop_cols) \
@@ -1021,6 +1026,31 @@ class TargetUpsideDownside(TargetMaxMin):
             target=drop_cols)
 
         f.set_self(vars())
+
+
+class TargetRatio(SignalGroup):
+    #  could either do ratio of up-downside
+    #   OR difference % of up - downside
+    #  using only close vs closes
+    #    OR close vs maxhigh/minlow?
+
+    # will need to define ratios for enter/exit
+    # eg 10% or so middle band where enter into means close current trade, exit out means enter new
+
+    def __init__(self, n_periods: int = 10, **kw):
+        n = n_periods
+
+        # (rolling close max - close) / (close - rolling close min)
+        # NOTE could try slicing values at min 0
+
+        kw['signals'] = dict(
+            # ratio_high=lambda x: (x.close.rolling(n).max().shift(-n) - x.close) / x.close,
+            # ratio_low=lambda x: (x.close.rolling(n).min().shift(-n) - x.close) / x.close,
+            # target=lambda x: x.ratio_high + x.ratio_low,
+            target=lambda x: 100 * (-2 + (x.close.rolling(n).max() + x.close.rolling(n).min()).shift(-n) / x.close)
+        )
+
+        super().__init__(**kw)
 
 
 class WeightedPercent(SignalGroup):
