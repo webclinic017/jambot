@@ -7,13 +7,15 @@ from sklearn.decomposition import PCA  # noqa
 from sklearn.linear_model import Ridge
 from sklearn.multioutput import MultiOutputRegressor
 from sklearn.pipeline import Pipeline
-from sklearn.preprocessing import MinMaxScaler
 
 from jambot import config as cf
 from jambot import functions as f
 from jambot import getlog
 from jambot import signals as sg
 from jambot import sklearn_utils as sk
+
+# from sklearn.preprocessing import MinMaxScaler
+
 
 log = getlog(__name__)
 
@@ -40,7 +42,7 @@ def model_cfg(name: str) -> dict:
             # drop_cols=['target_max', 'target_min'],
             model_kw=dict(
                 num_leaves=50,
-                n_estimators=50,
+                n_estimators=100,
                 max_depth=30,
                 boosting_type='dart',
                 random_state=0),
@@ -134,8 +136,8 @@ def make_model_manager(name: str, df: pd.DataFrame, use_important: bool = False)
 
     encoders = dict(
         drop='drop',
-        numeric=MinMaxScaler(feature_range=(0, 1))
-        # numeric='passthrough'
+        # numeric=MinMaxScaler(feature_range=(0, 1))
+        numeric='passthrough'
     )
 
     return sk.ModelManager(
@@ -229,4 +231,4 @@ def add_proba_trade_signal(df: pd.DataFrame, regression: bool = False, **kw) -> 
 
     return df \
         .pipe(sg.add_ema, p=cfg['n_smooth_proba'], c=rolling_col, col='rolling_proba') \
-        .pipe(sk.convert_proba_signal)
+        .pipe(sk.convert_proba_signal, regression=regression)
