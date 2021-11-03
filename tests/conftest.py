@@ -46,7 +46,7 @@ def pytest_addoption(parser):
     parser.addoption(
         '--exch_name',
         action='store',
-        default='bybit',
+        default='bitmex',
         choices=('bybit', 'bitmex'))
 
 
