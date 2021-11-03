@@ -9,7 +9,7 @@ from typing import *
 
 import pandas as pd
 import requests
-from bravado.client import SwaggerClient
+from bravado.client import CallableOperation, SwaggerClient
 from bravado.http_future import HttpFuture
 from bravado.requests_client import RequestsClient
 from swagger_spec_validator.common import SwaggerValidationWarning
@@ -52,6 +52,7 @@ class Exchange(DictRepr, metaclass=ABCMeta):
             from jambot.database import db
             sql = f"select [key], [secret] from apikeys where [user]='{user}' and exchange='{self.exch_name}'"
             api_key, api_secret = db.cursor.execute(sql).fetchall()[0]
+            log.warning('Loading exch api data from db')
 
         self._creds = dict(key=api_key, secret=api_secret)
 
@@ -64,6 +65,27 @@ class Exchange(DictRepr, metaclass=ABCMeta):
         """Create Exchange obj with default name"""
         user = 'jayme' if not test else 'testnet'
         return cls(user=user, test=test, refresh=refresh, **kw)
+
+    @classmethod
+    def from_dict(cls, m: dict, **kw) -> 'Exchange':
+        """Init from df_users dict row
+        - TODO probs have to change pct_balance key eventually
+
+        Parameters
+        ----------
+        m : dict
+            df row as dict
+
+        Returns
+        -------
+        Exchange
+        """
+        return cls(
+            pct_balance=m['xbt'],
+            api_key=m['key'],
+            api_secret=m['secret'],
+            discord=m['discord'],
+            **kw)
 
     def to_dict(self) -> dict:
         return dict(user=self.user, test=self.test, pct_balance=self.pct_balance)
@@ -231,6 +253,137 @@ class SwaggerExchange(Exchange, metaclass=ABCMeta):
         self.set_positions()
         self.set_orders()
 
+    def _get_endpoint(self, request: str) -> CallableOperation:
+        """Convert simple "Endpoint.request" to actual request
+        - eg self.client.Conditional.Conditional_getOrders(symbol=symbol)
+        - NOTE may be too simplified but works for now
+
+        Parameters
+        ----------
+        request : str
+            Endpoint.request which represents Endpoint.Endpoint_request()
+
+        Returns
+        -------
+        Any
+            CallableOperation
+
+        Raises
+        ------
+        RuntimeError
+            if request string not in correct format
+        """
+        if not '.' in request:
+            raise RuntimeError(f'Need to use "Endpoint.Endpoint_request", not: {request}')
+
+        base, endpoint = request.split('.')
+        return getattr(getattr(self.client, base), f'{base}_{endpoint}')
+
+    def _make_request(self, request: str, **kw) -> Union[Any, List[Any]]:
+        """Build request from str request and request params (kws)
+
+        Parameters
+        ----------
+        request : str
+            [description]
+
+        Returns
+        -------
+        Union[Any, List[Any]]
+            [description]
+        """
+        func = self._get_endpoint(request)
+
+        # filter correct keys to submit
+        kw = {k: v for k, v in kw.items() if k in func.operation.params.keys()}
+        return func(**kw)
+
+    def _reapply_auth(self, request: HttpFuture) -> HttpFuture:
+        """reapply authentication timeout/signature to HttpFuture request
+        - bitmex auth = request.future.request.headers['api-expires']
+        - bybit auth = request.future.request.params['timeout]
+
+        Parameters
+        ----------
+        request : HttpFuture
+            eg self.client.Position.Position_get()
+
+        Returns
+        -------
+        HttpFuture
+            request with authentication/timeout reset
+        """
+        request.future.request = request.operation.swagger_spec \
+            .http_client.apply_authentication(request.future.request)
+
+        return request
+
+    def check_request(self, request: HttpFuture, retries: int = 0):
+        """
+        Perform http request and retry with backoff if failed
+        - bitmex raises 400 bravado.exception.HTTPBadRequest on invalid request
+        - bybit just returns status codes w response
+
+        - type(request) = bravado.http_future.HttpFuture
+        - type(response) = bravado.response.BravadoResponse
+        - response = request.response(fallback_result=[400], exceptions_to_catch=bravado.exception.HTTPBadRequest)
+        """
+
+        backoff = 0.5
+        try:
+            # 400 HttpBadRequest raised at response()
+            response = request.response(fallback_result='')
+            status = response.metadata.status_code
+
+            if status < 300:
+                if self.exch_name == 'bitmex':
+                    ratelim_remaining = int(response.metadata.headers['x-ratelimit-remaining'])
+                    # "x-ratelimit-reset": "1635796268"  # could wait for this time
+
+                    if ratelim_remaining <= 1:
+                        log.warning('Ratelimit reached. Sleeping 10 seconds.')
+                        time.sleep(10)
+
+                return response.result
+            elif status == 503 and retries < 7:
+                retries += 1
+                sleeptime = backoff * (2 ** retries - 1)
+                time.sleep(sleeptime)
+
+                return self.check_request(request=self._reapply_auth(request), retries=retries)
+            else:
+                cm.send_error('{}: {}\n{}'.format(status, response.result, request.future.request.data))
+
+        except Exception as e:
+            data = request.future.request.data
+            err_msg = e.swagger_result.get('error', {}).get('message', '')
+
+            if 'balance' in err_msg.lower():
+                # convert eg 6559678800 sats to 65.597 btc for easier reading
+                n = re.search(r'(\d+)', err_msg)
+                if n:
+                    n = n.group()
+                    err_msg = err_msg.replace(n, str(round(int(n) / self.div, 3)))
+
+                m_bal = dict(
+                    avail_margin=self.avail_margin,
+                    total_balance_margin=self.total_balance_margin,
+                    total_balance_wallet=self.total_balance_wallet,
+                    unpl=self.unrealized_pnl)
+
+                data['avail_balance'] = {k: round(v, 3) for k, v in m_bal.items()}
+
+            # request data is dict of {key: str(list(dict))}
+            # need to deserialize inner items first
+            if isinstance(data, dict):
+                m = {k: json.loads(v) if isinstance(v, str) else v for k, v in data.items()}
+                data = f.pretty_dict(m=m, prnt=False, bold_keys=True)
+
+            if AZURE_WEB:
+                cm.send_error(f'{e.status_code} {e.__class__.__name__}: {err_msg}\n{data}')
+            else:
+                raise e
+
     @abstractmethod
     def _get_total_balance(self) -> dict:
         """swagger call to get user wallet balances"""
@@ -291,62 +444,6 @@ class SwaggerExchange(Exchange, metaclass=ABCMeta):
         """
         return self.total_balance_wallet - self.reserved_balance
 
-    def check_request(self, request: HttpFuture, retries: int = 0):
-        """
-        Perform http request and retry with backoff if failed
-
-        - type(request) = bravado.http_future.HttpFuture
-        - type(response) = bravado.response.BravadoResponse
-        - response = request.response(fallback_result=[400], exceptions_to_catch=bravado.exception.HTTPBadRequest)
-        """
-        # bravado.exception.HTTPBadRequest
-
-        try:
-            # 400 HttpBadRequest raised at response()
-            response = request.response(fallback_result='')
-            status = response.metadata.status_code
-            backoff = 0.5
-
-            if status < 300:
-                return response.result
-            elif status == 503 and retries < 7:
-                retries += 1
-                sleeptime = backoff * (2 ** retries - 1)
-                time.sleep(sleeptime)
-                return self.check_request(request=request, retries=retries)
-            else:
-                cm.send_error('{}: {}\n{}'.format(status, response.result, request.future.request.data))
-
-        except Exception as e:
-            data = request.future.request.data
-            err_msg = e.swagger_result.get('error', {}).get('message', '')
-
-            if 'balance' in err_msg.lower():
-                # convert eg 6559678800 sats to 65.597 btc for easier reading
-                n = re.search(r'(\d+)', err_msg)
-                if n:
-                    n = n.group()
-                    err_msg = err_msg.replace(n, str(round(int(n) / self.div, 3)))
-
-                m_bal = dict(
-                    avail_margin=self.avail_margin,
-                    total_balance_margin=self.total_balance_margin,
-                    total_balance_wallet=self.total_balance_wallet,
-                    unpl=self.unrealized_pnl)
-
-                data['avail_balance'] = {k: round(v, 3) for k, v in m_bal.items()}
-
-            # request data is dict of {key: str(list(dict))}
-            # need to deserialize inner items first
-            if isinstance(data, dict):
-                m = {k: json.loads(v) if isinstance(v, str) else v for k, v in data.items()}
-                data = f.pretty_dict(m=m, prnt=False, bold_keys=True)
-
-            if AZURE_WEB:
-                cm.send_error(f'{e.status_code} {e.__class__.__name__}: {err_msg}\n{data}')
-            else:
-                raise e
-
     @property
     def orders(self):
         return self._orders
@@ -380,6 +477,7 @@ class SwaggerExchange(Exchange, metaclass=ABCMeta):
         - add precision for rounding
         - Useful for getting precision or last price
         - no rest api delay
+        - no caching, this always refreshes live
 
         Parameters
         ----------
@@ -397,7 +495,7 @@ class SwaggerExchange(Exchange, metaclass=ABCMeta):
 
     def last_price(self, symbol: str = None) -> float:
         """Get last price for symbol (used for testing)
-        - NOTE currently just used in testing
+        - used in Broker.expected_orders
 
         Parameters
         ----------
@@ -431,6 +529,9 @@ class SwaggerExchange(Exchange, metaclass=ABCMeta):
         else:
             # all position qty
             return {k: v[_qty] for k, v in self.positions.items()}
+
+    def current_entry(self, symbol: str) -> float:
+        return self.get_position(symbol)['entry_price']
 
     def add_custom_specs(self, order_specs: List[dict]) -> List[dict]:
         """Preprocess orders from exchange to add custom markers
@@ -871,7 +972,7 @@ class SwaggerExchange(Exchange, metaclass=ABCMeta):
 
         if m_ords:
             # TODO add avg entry price
-            m['current_qty'] = f'{self.current_qty(symbol=symbol):+,}'
+            m['current_qty'] = f'{self.current_qty(symbol=symbol):+,} @ ${self.current_entry(symbol):,.0f}'
             m |= m_ords
             msg = f.pretty_dict(m, prnt=False, bold_keys=True)
             cm.discord(msg=f'{user}\n{msg}', channel='orders' if not test else 'test')
