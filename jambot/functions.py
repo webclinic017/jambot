@@ -567,11 +567,28 @@ def round_minutes(dt, resolution):
     return dt + delta(minutes=new_minute - dt.minute)
 
 
-def save_pickle(obj: object, p: Path, name: str):
-    """Save object to pickle file"""
+def save_pickle(obj: object, p: Path, name: str) -> Path:
+    """Save object to pickle file
+
+    Parameters
+    ----------
+    obj : object
+        object to save as pickle
+    p : Path
+        base dir to save in
+    name : str
+        file name (excluding .pkl)
+
+    Returns
+    -------
+    Path
+        path of saved file
+    """
     p = p / f'{name}.pkl'
     with open(check_path(p), 'wb') as file:
         pickle.dump(obj, file)
+
+    return p
 
 
 def load_pickle(p: Path) -> object:
