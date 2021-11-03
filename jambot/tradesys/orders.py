@@ -234,6 +234,27 @@ class BaseOrder(object, metaclass=ABCMeta):
         price = f'${self.price:,.0f}' if not self.price is None else ''
         return f'{self.symbol} | {self.name} | {qty:+,} | {price}'
 
+    def add(self, lst: Union['Trade', list]) -> 'Order':
+        """Convenience func to add self to trade or list of orders
+
+        Parameters
+        ----------
+        lst : Union['Trade', list]
+
+        Returns
+        -------
+        Order
+            self
+        """
+        if not lst is None:
+            if isinstance(lst, list):
+                lst.append(self)
+            else:
+                # actually a trade
+                lst.add_order(self)
+
+        return self
+
 
 class ExchOrder(BaseOrder, DictRepr, Serializable):
     """Class to represent bitmex live-trading orders"""
@@ -629,27 +650,6 @@ class Order(BaseOrder, Observer, metaclass=ABCMeta):
         # if self.is_expired:
         #     print('TIMED OUT')
         #     self.timedout.emit(self)
-
-    def add(self, lst: Union['Trade', list]) -> 'Order':
-        """Convenience func to add self to trade or list of orders
-
-        Parameters
-        ----------
-        lst : Union['Trade', list]
-
-        Returns
-        -------
-        Order
-            self
-        """
-        if not lst is None:
-            if isinstance(lst, list):
-                lst.append(self)
-            else:
-                # actually a trade
-                lst.add_order(self)
-
-        return self
 
     def fill(self) -> None:
         """Decide if adding or subtracting qty"""
