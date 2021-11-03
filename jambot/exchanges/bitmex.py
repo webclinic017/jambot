@@ -88,8 +88,33 @@ class Bitmex(SwaggerExchange):
     def client_api_auth():
         return APIKeyAuthenticator
 
+    def req(
+            self,
+            request: str,
+            **kw) -> Union[Any, Tuple[Any, int]]:
+        """Build bitmex request
+        - pass through super().check_request for request retries
+        - bitmex returns specific parameter as a 400 with error message, not unique codes like bybit
+
+        Parameters
+        ----------
+        request : str
+            Endpoint.function, eg 'Funding.get'
+        Returns
+        -------
+        Union[Any, Tuple[Any, int]]
+            order data List[dict] etc, with optional ret_code
+        """
+
+        # request submitted as str, split it and call on client
+        request = self._make_request(request, **kw)
+
+        # TODO possibly handle return data structure here?
+
+        return self.check_request(request)
+
     def _set_positions(self) -> List[dict]:
-        positions = self.client.Position.Position_get().result()[0]
+        positions = self.req('Position.get')
 
         # update position keys for easier access
         for p in positions:
@@ -99,10 +124,10 @@ class Bitmex(SwaggerExchange):
 
     def set_leverage(self, symbol: str = None, lev: float = 7.0) -> None:
         symbol = symbol or self.default_symbol
-        self.check_request(self.client.Position.Position_updateLeverage(symbol=symbol, leverage=lev))
+        self.req('Position_updateLeverage', symbol=symbol, leverage=lev)
 
     def _get_instrument(self, **kw) -> dict:
-        return self.client.Instrument.Instrument_get(**kw).response().result[0]
+        return self.req('Instrument.get', **kw)[0]
 
     def get_filled_orders(self, symbol: str = SYMBOL, starttime: dt = None) -> List[ExchOrder]:
         """Get orders filled since last starttime
@@ -141,27 +166,32 @@ class Bitmex(SwaggerExchange):
         if not fltr is None:
             fltr = json.dumps(fltr)
 
-        orders = self.client.Order \
-            .Order_getOrders(
-                filter=fltr,
-                reverse=reverse,
-                count=count,
-                startTime=starttime) \
-            .response().result
+        orders = self.req(
+            'Order.getOrders',
+            filter=fltr,
+            reverse=reverse,
+            count=count,
+            startTime=starttime)
 
         self._orders = self.add_custom_specs(orders)
 
-    def funding_rate(self, symbol=SYMBOL):
+    def next_funding(
+            self,
+            symbol: str = SYMBOL,
+            with_hours: bool = False) -> Union[float, Tuple[float, int]]:
         """Get current funding rate from exchange"""
-        result = self.client.Instrument.Instrument_get(symbol=symbol).response().result[0]
+        result = self._get_instrument(symbol=symbol)
 
         rate = result['fundingRate']
+        if not with_hours:
+            return rate
+
         hrs = int((result['fundingTimestamp'] - f.inter_now().replace(tzinfo=tz.utc)).total_seconds() / 3600)
 
         return rate, hrs
 
     def _get_total_balance(self) -> dict:
-        return self.check_request(self.client.User.User_getMargin(currency='XBt'))
+        return self.req('User.getMargin', currency='XBt')
 
     def _route_order_request(self, action: str, order_specs: List[ExchOrder]):
 
@@ -300,6 +330,42 @@ class Bitmex(SwaggerExchange):
         count = {1: 1, 15: 5}.get(interval, 1)
         return self.get_candles(interval=interval, reverse=True, count=count, include_partial=False, **kw)
 
+    def paged_req(self, request: str, page_max: int, pages: int = 100, **kw) -> List[dict]:
+        """Batch calls into pages for eg candles/funding history
+        - useful when updating full history
+        - requests will sleep 10s if ratelim hit
+
+        Parameters
+        ----------
+        request : str
+            eg 'Trade.getBucketed'
+        page_max : int
+            max results per page for request
+        pages : int, optional
+            max num pages to get, by default 100
+
+        Returns
+        -------
+        List[dict]
+            list of data
+        """
+        resultcount = float('inf')
+        start = 0
+        data = []
+
+        while resultcount >= page_max and start // page_max <= pages:
+            _data = self.req(
+                request,
+                count=page_max,
+                start=start,
+                **kw)
+
+            resultcount = len(_data)
+            data.extend(_data)
+            start += page_max
+
+        return data
+
     def get_candles(
             self,
             symbol: str = SYMBOL,
@@ -307,9 +373,7 @@ class Bitmex(SwaggerExchange):
             fltr: str = '',
             retain_partial: bool = False,
             include_partial: bool = True,
-            interval: int = 1,
-            count: int = 1000,
-            pages: int = 100,
+            interval: int = 15,
             reverse: bool = False) -> pd.DataFrame:
         """Get df of OHLCV candles from Bitmex converted to df
 
@@ -349,41 +413,24 @@ class Bitmex(SwaggerExchange):
         if not starttime is None:
             starttime += offset
 
-        resultcount = float('inf')
-        start = 0
-        page_max = 1000
-        lst = []
         cols = ['symbol', 'timestamp', 'open', 'high', 'low', 'close', 'volume']
 
         if isinstance(symbol, list) and fltr == '':
             fltr = json.dumps(dict(symbol=symbol))  # filter symbols needed
             symbol = None
 
-        while resultcount >= page_max and start // page_max <= pages:
-            request = self.client.Trade.Trade_getBucketed(
-                binSize=binsize,
-                symbol=symbol,
-                startTime=starttime,
-                filter=fltr,
-                count=count,
-                start=start,
-                reverse=reverse,
-                partial=include_partial,
-                columns=json.dumps(cols))
+        data = self.paged_req(
+            'Trade.getBucketed',
+            page_max=1000,
+            binSize=binsize,
+            symbol=symbol,
+            startTime=starttime,
+            filter=fltr,
+            reverse=reverse,
+            partial=include_partial,
+            columns=json.dumps(cols))
 
-            response = request.response()
-            result = response.result
-            ratelim_remaining = int(response.metadata.headers['x-ratelimit-remaining'])
-
-            resultcount = len(result)
-            lst.extend(result)
-            start += page_max
-
-            if ratelim_remaining <= 1:
-                log.info('Ratelimit reached. Sleeping 10 seconds.')
-                time.sleep(10)
-
-        df = pd.json_normalize(lst) \
+        df = pd.DataFrame(data) \
             .assign(timestamp=lambda x: x.timestamp.dt.tz_localize(None) + offset * -1) \
             .pipe(self.resample, include_partial=include_partial, do=interval == 15) \
             .assign(interval=interval)[['interval'] + cols]
@@ -395,3 +442,33 @@ class Bitmex(SwaggerExchange):
                 df.drop(df.index[-1], inplace=True)
 
         return df
+
+    def get_funding_history(self, symbol: str, starttime: dt) -> pd.DataFrame:
+        """Get funding history for symbol
+        - max count = 500
+
+        Parameters
+        ----------
+        symbol : str
+
+        Returns
+        -------
+        pd.DataFrame
+            df with [symbol, timestamp]: [funding_rate]
+        """
+        cols = ['timestamp', 'symbol', 'fundingRate']
+        data = self.paged_req(
+            'Funding.get',
+            page_max=500,
+            filter=json.dumps(dict(symbol=f.as_list(symbol))),
+            startTime=starttime,
+            columns=json.dumps(cols))
+
+        if not data:
+            log.warning(f'No funding data returned from Bitmex for symbols: {symbol}')
+            return
+
+        return pd.DataFrame(data)[cols] \
+            .assign(timestamp=lambda x: x.timestamp.dt.tz_localize(None)) \
+            .pipe(f.lower_cols) \
+            .set_index(['symbol', 'timestamp'])
