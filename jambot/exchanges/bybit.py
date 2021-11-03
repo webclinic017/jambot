@@ -4,7 +4,6 @@ from datetime import timezone as tz
 from typing import *
 
 import pandas as pd
-from bravado.client import CallableOperation
 from bravado.http_future import HttpFuture
 from bybit import bybit
 from BybitAuthenticator import APIKeyAuthenticator
@@ -38,6 +37,36 @@ ByBit API issues
     - Conditional_query doesnt have any fields to be able to determine its conditional
     - no way to filter orders by filled_time
 """
+
+
+class BybitAPIException(Exception):
+    def __init__(self, request: HttpFuture, result: dict, fail_msg: str = None, request_kw: dict = None, *args) -> None:
+        """Raise exception on bybit invalid api request
+
+        Parameters
+        ----------
+        request : HttpFuture
+            original request to get operation name
+        result : dict
+            bybit api dict with error response data
+        fail_msg : str, optional
+            custom additional err info message, by default None
+        request_kw : dict, optional
+            kws passed to request, by default None
+        """
+        try:
+            operation = request.operation.op_spec['operationId']
+        except Exception:
+            # just in case
+            operation = '*Missing Operation*'
+
+        code = result['ret_code']
+        api_message = result['ret_msg']
+        fail_msg = f'\n\t{fail_msg}\n\t' if not fail_msg is None else ''
+
+        msg = f'{code} - {api_message}{fail_msg}\n\t{operation}: {request_kw}'
+
+        super().__init__(msg, *args)
 
 
 class Bybit(SwaggerExchange):
@@ -92,32 +121,6 @@ class Bybit(SwaggerExchange):
     def _get_total_balance(self) -> dict:
         return self.req('Wallet.getBalance', coin='BTC')['BTC']
 
-    def _get_endpoint(self, request: str) -> CallableOperation:
-        """Convert simple "Endpoint.request" to actual request
-        - eg self.client.Conditional.Conditional_getOrders(symbol=symbol)
-        - NOTE may be too simplified but works for now
-
-        Parameters
-        ----------
-        request : str
-            Endpoint.request which represents Endpoint.Endpoint_request()
-
-        Returns
-        -------
-        Any
-            CallableOperation
-
-        Raises
-        ------
-        RuntimeError
-            if request string not in correct format
-        """
-        if not '.' in request:
-            raise RuntimeError(f'Need to have Endpoint.Endpoint_request, not: {request}')
-
-        base, endpoint = request.split('.')
-        return getattr(getattr(self.client, base), f'{base}_{endpoint}')
-
     def req(
             self,
             request: Union[HttpFuture, str],
@@ -152,18 +155,13 @@ class Bybit(SwaggerExchange):
 
         # request submitted as str, split it and call on client
         if isinstance(request, str):
-            func = self._get_endpoint(request)
-
-            # filter correct keys to submit
-            kw = {k: v for k, v in kw.items() if k in func.operation.params.keys()}
-            request = func(**kw)
+            request = self._make_request(request, **kw)
 
         full_result = self.check_request(request)
         ret_code = full_result['ret_code']
 
         if not ret_code == 0:
-            fail_msg = f'{fail_msg}\n' if not fail_msg is None else ''
-            cm.send_error(f'{fail_msg}Request failed:\n\t{full_result}\n\tkw: {kw}', _log=log)
+            raise BybitAPIException(request, full_result, fail_msg, kw)
 
         result = full_result['result']
 
@@ -210,7 +208,6 @@ class Bybit(SwaggerExchange):
                 stop_orders += _filter_keys(stop_orders, self.req('Conditional.query', **kw))
 
         self._orders = self.add_custom_specs(self.proc_raw_spec(orders + stop_orders))
-        # log.warning(f'Setting Orders:\n\t{self._orders}')
 
     def _set_positions(self) -> List[dict]:
         """Get position info, eg current qty
