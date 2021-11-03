@@ -232,8 +232,8 @@ class UserSettings(GoogleSheet):
         df[sym_cols] = df[sym_cols] / 100
 
         if load_api:
-            from jambot.database import db
-            df = df.pipe(f.left_merge, db.get_apikeys())
+            from jambot.tables import ApiKeys
+            df = df.pipe(f.left_merge, ApiKeys().get_df())
 
         return df
 
