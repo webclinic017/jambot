@@ -1,9 +1,9 @@
+import time
 from typing import List
 
 from jambot import getlog
-from jambot.exchanges.bitmex import Bitmex
-from jambot.exchanges.bybit import Bybit
 from jambot.exchanges.exchange import SwaggerExchange
+from jambot.livetrading import ExchangeManager
 from jambot.tradesys import orders as ords
 from jambot.tradesys.enums import OrderStatus
 from jambot.tradesys.orders import ExchOrder
@@ -14,10 +14,9 @@ log = getlog(__name__)
 
 
 @fixture(scope='session')
-def exch(exch_name: str) -> SwaggerExchange:
+def exch(exch_name: str, em: ExchangeManager) -> SwaggerExchange:
     """Exchange object"""
-    Exch = dict(bitmex=Bitmex, bybit=Bybit).get(exch_name)
-    return Exch.default(test=True, refresh=True)
+    return em.default(exch_name=exch_name, test=True, refresh=True)
 
 
 @fixture(scope='session')
@@ -38,12 +37,12 @@ def test_exch_is_test(exch) -> bool:
 @fixture(scope='session')
 def last_close(exch) -> float:
     """Get last close price offset by 15% higher to use as base for creating new orders"""
-    price = f.get_price(pnl=-0.15, entry_price=exch.last_price(symbol=exch.default_symbol), side=-1)
+    price = f.get_price(pnl=-0.15, price=exch.last_price(symbol=exch.default_symbol), side=-1)
     return round(price, 0)
 
 
 @fixture
-def exch_orders(last_close, symbol: str, exch_name: str) -> List[Bitmex]:
+def exch_orders(last_close, symbol: str, exch_name: str) -> List[ExchOrder]:
     """Create two bitmex orders for testing"""
     order_specs = [
         dict(symbol=symbol, order_type='limit', qty=-100, price=last_close, name='test_ord_1'),
@@ -53,7 +52,7 @@ def exch_orders(last_close, symbol: str, exch_name: str) -> List[Bitmex]:
     return ords.make_exch_orders(order_specs, exch_name=exch_name)
 
 
-def test_order_flow(exch: Bitmex, exch_orders):
+def test_order_flow(exch: SwaggerExchange, exch_orders):
     """Test submitting, amending, cancelling and comparing in/out order specs for multiple orders"""
 
     # submit orders
@@ -110,7 +109,7 @@ def _compare_order_specs(order_1: ExchOrder, order_2: ExchOrder) -> None:
             order[{k}]={item_in}, order_out[{k}]={item_out}\n\n{order_1}\n{order_2}'
 
 
-def test_reconcile_orders(exch: Bitmex, last_close: float, symbol: str) -> None:
+def test_reconcile_orders(exch: SwaggerExchange, last_close: float, symbol: str) -> None:
     """Test amending/cancelling/submitting orders from strategy
 
     - create matched, missing, and not_matched orders for limit/stop/market
@@ -143,6 +142,11 @@ def test_reconcile_orders(exch: Bitmex, last_close: float, symbol: str) -> None:
         exch.reconcile_orders(symbol=symbol, expected_orders=expected_orders, bybit_async=True, bybit_stops=True)
 
         # assert correct orders submitted, cancelled, and amended
+        if exch.exch_name == 'bybit':
+            # bybit api seems to be too slow even with async orders (only sometimes)
+            log.info('Sleeping 1s for Bybit')
+            time.sleep(1)
+
         final_orders = exch.get_orders(
             bot_only=True,
             new_only=False,

@@ -1,5 +1,6 @@
 from datetime import datetime as dt
 from datetime import timedelta as delta
+from typing import TYPE_CHECKING
 
 import numpy as np
 import pandas as pd
@@ -11,10 +12,13 @@ from jambot import functions as f
 from jambot import getlog
 from jambot import sklearn_utils as sk
 from jambot.common import DictRepr
-from jambot.database import db
 from jambot.ml import models as md
 from jambot.signals import WeightedPercentMaxMin
+from jambot.tables import Tickers
 from jambot.utils.azureblob import BlobStorage
+
+if TYPE_CHECKING:
+    from jambot.livetrading import ExchangeManager
 
 log = getlog(__name__)
 
@@ -45,6 +49,7 @@ class ModelStorageManager(DictRepr):
             filter training df to constant hour per day for consistency (11 pst = 18 utc)
         """
         container = 'jambot-app'
+        saved_models = []
 
         if test:
             container = f'{container}-test'
@@ -75,6 +80,7 @@ class ModelStorageManager(DictRepr):
 
     def fit_save_models(
             self,
+            em: 'ExchangeManager',
             interval: int = 15) -> None:
         """Main control function for retraining new models each day
 
@@ -95,7 +101,12 @@ class ModelStorageManager(DictRepr):
         estimator = md.make_model(name)
 
         self.fit_save(
-            df=db.get_df(symbol=SYMBOL, startdate=self.d_lower, interval=interval)
+            df=Tickers().get_df(
+                symbol=SYMBOL,
+                startdate=self.d_lower,
+                interval=interval,
+                funding=True,
+                funding_exch=em.default('bitmex'))
             .pipe(md.add_signals, name=name, drop_ohlc=False, use_important=True)
             .iloc[:-1 * n_periods, :],
             name=name,
@@ -157,7 +168,8 @@ class ModelStorageManager(DictRepr):
             # d = date model was trained
             d = index[cut_rows - 1] + delta(hours=cut_hrs)  # + delta(days=1)
             fname = f'{name}_{d:{self.dt_format_path}}'
-            f.save_pickle(estimator, p=self.p_model, name=fname)
+            p_save = f.save_pickle(estimator, p=self.p_model, name=fname)
+            self.saved_models.append(p_save)
             log.info(f'saved model: {fname}')
 
         # mirror saved models to azure blob

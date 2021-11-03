@@ -8,16 +8,135 @@ from jambot import comm as cm
 from jambot import config as cf
 from jambot import functions as f
 from jambot import getlog
+from jambot.common import DictRepr
 from jambot.exchanges.bitmex import Bitmex
 from jambot.exchanges.bybit import Bybit
 from jambot.exchanges.exchange import SwaggerExchange
 from jambot.ml import models as md
 from jambot.ml.storage import ModelStorageManager
+from jambot.tables import Tickers
 from jambot.tradesys import backtest as bt
 from jambot.tradesys.strategies import base, ml, sfp
 from jambot.utils import google as gg
 
 log = getlog(__name__)
+
+
+class ExchangeManager(DictRepr):
+    m_exch = dict(bitmex=Bitmex, bybit=Bybit)
+
+    def __init__(self, df_users: pd.DataFrame = None):
+        self._exchanges = {}
+
+        if df_users is None:
+            df_users = gg.UserSettings(auth=False).get_df(load_api=True)
+
+        self.df_users = df_users
+
+    def to_dict(self) -> dict:
+        return dict(init_exchanges=len(self.list_exchs))
+
+    @property
+    def exchanges(self) -> Dict[Tuple[str, str], SwaggerExchange]:
+        """Dict of init exchanges"""
+        return self._exchanges
+
+    @property
+    def list_exchs(self) -> List[SwaggerExchange]:
+        """Get list of all init exchanges
+
+        Returns
+        -------
+        List[SwaggerExchange]
+        """
+        return list(self.exchanges.values())
+
+    def default(self, exch_name: str, test: bool = False, **kw) -> SwaggerExchange:
+        """Convenience func to get main exch for api data eg funding/tickers
+
+        Parameters
+        ----------
+        exch_name : str
+        test : bool
+
+        Returns
+        -------
+        SwaggerExchange
+        """
+        user = 'jayme' if not test else 'testnet'
+        return self.get_exch(exch_name, user=user, test=test, **kw)
+
+    def get_exch(self, exch_name: str, user: str, **kw) -> SwaggerExchange:
+        """Get single exchange. Will init if not already init.
+
+        Parameters
+        ----------
+        exch_name : str
+        user : str
+
+        Returns
+        -------
+        SwaggerExchange
+        """
+        k = (exch_name, user)
+        return self.exchanges.get(k, self._init_exch(*k, **kw))
+
+    def _init_exch(self, exch_name: str, user: str, **kw) -> SwaggerExchange:
+        """Init single exchange
+
+        Parameters
+        ----------
+        exch_name : str
+        user : str
+
+        Returns
+        -------
+        SwaggerExchange
+        """
+        k = (exch_name, user)
+
+        if not k in self.df_users.index:
+            raise ValueError(f'User: {k} not in self.df_users')
+
+        m = self.df_users.loc[k].to_dict()
+
+        # NOTE only set up for XBT currently
+        Exchange = self.m_exch[exch_name]
+        exch = Exchange.from_dict(user=user, m=m, **kw)
+
+        # save to exchange cache
+        self.exchanges[k] = exch
+
+        return exch
+
+    def iter_exchanges(
+            self,
+            refresh: bool = True,
+            exch_name: Union[str, List[str]] = None) -> SwaggerExchange:
+        """Iterate exchange objs for all users where bot is enabled
+
+        Parameters
+        ----------
+        refresh : bool
+            refresh exch data on init or not
+        exch_name : Union[str, List[str]], optional
+            single or multiple exchanges to filter, default None
+
+        Yields
+        ------
+        SwaggerExchange
+            initialized exch obj
+        """
+        df_users = self.df_users.query('bot_enabled == True')
+
+        # filter to single exchange
+        if exch_name:
+            df_users = df_users.loc[f.as_list(exch_name)]
+
+        for (exch_name, user), m in df_users.to_dict(orient='index').items():
+
+            test = True if 'test' in user.lower() else False
+            yield self.get_exch(exch_name, user, test=test, refresh=refresh)
 
 
 def check_sfp(df):
@@ -57,24 +176,23 @@ def check_sfp(df):
         cm.discord(msg=msg, channel='sfp')
 
 
-def check_filled_orders(minutes: int = 5, test: bool = True) -> None:
+def check_filled_orders(minutes: int = 5, em: ExchangeManager = None) -> None:
     """Get orders filled in last n minutes and send discord msg
 
     Parameters
     ----------
     minutes : int, optional
         default 5
-    test : bool, optional
-        use testnet, default True
+    em : ExchangeManager
     """
     symbol = 'XBTUSD'
     starttime = dt.utcnow() + delta(minutes=minutes * -1)
 
     # Get discord username for tagging
-    df_users = gg.UserSettings().get_df(load_api=True)
+    em = em or ExchangeManager()
 
     # TODO not done for bybit yet... cant get all orders at once...
-    for exch in iter_exchanges(refresh=False, df_users=df_users, exch_name='bitmex'):
+    for exch in em.iter_exchanges(refresh=False, exch_name='bitmex'):
 
         orders = exch.get_filled_orders(starttime=starttime)
         prec = exch.get_instrument(symbol=symbol)['precision']
@@ -90,7 +208,7 @@ def check_filled_orders(minutes: int = 5, test: bool = True) -> None:
                 bold_keys=True)
 
             msg = '{}\n{}{}'.format(
-                df_users.loc[(exch.exch_name, exch.user)]['discord'],
+                em.df_users.loc[(exch.exch_name, exch.user)]['discord'],
                 cm.py_codeblock(msg),
                 current_qty)
             cm.discord(msg=msg, channel='orders')
@@ -167,7 +285,11 @@ def replace_ohlc(df: pd.DataFrame, df_new: pd.DataFrame) -> pd.DataFrame:
     return df.drop(columns=cols).pipe(f.left_merge, df_new[cols])
 
 
-def get_df_raw(exch_name: str, symbol: str, interval: int = 15) -> pd.DataFrame:
+def get_df_raw(
+        exch_name: str,
+        symbol: str,
+        interval: int = 15,
+        funding_exch: SwaggerExchange = None) -> pd.DataFrame:
     """get OHLCV df for running strat live
 
     Parameters
@@ -176,17 +298,24 @@ def get_df_raw(exch_name: str, symbol: str, interval: int = 15) -> pd.DataFrame:
         by default SYMBOL
     interval : int, optional
         by default 15
+    funding_exch : SwaggerExchange, optional
+        pass in exch to use to get latest funding data
 
     Returns
     -------
     pd.DataFrame
     """
-    from jambot.database import db
 
     offset = {1: 16, 15: 4}.get(interval)
     startdate = f.inter_now(interval) + delta(days=-offset)
 
-    return db.get_df(exch_name=exch_name, symbol=symbol, startdate=startdate, interval=interval)
+    return Tickers().get_df(
+        exch_name=exch_name,
+        symbol=symbol,
+        startdate=startdate,
+        interval=interval,
+        funding=True if exch_name == 'bitmex' else False,
+        funding_exch=funding_exch)
 
 
 def get_df_pred(
@@ -217,51 +346,6 @@ def get_df_pred(
         .df_pred_from_models(df=df, name=name)
 
 
-def iter_exchanges(
-        refresh: bool = True,
-        df_users: pd.DataFrame = None,
-        exch_name: Union[str, List[str]] = None) -> SwaggerExchange:
-    """Iterate exchange objs for all users where bot is enabled
-
-    Parameters
-    ----------
-    refresh : bool
-        refresh exch data on init or not
-    df_users : pd.DataFrame, optional
-        df with user data from google, default None
-    exch_name : Union[str, List[str]], optional
-        single or multiple exchanges to filter, default None
-
-    Returns
-    -------
-    Bitmex
-        initialized Bitmex exch obj
-    """
-    if df_users is None:
-        df_users = gg.UserSettings().get_df(load_api=True)
-
-    df_users = df_users.query('bot_enabled == True')
-
-    if not exch_name is None:
-        df_users = df_users.loc[f.as_list(exch_name)]
-
-    m_exch = dict(bitmex=Bitmex, bybit=Bybit)
-
-    for (exch_name, user), m in df_users.to_dict(orient='index').items():
-        test = True if 'test' in user.lower() else False
-        Exchange = m_exch[exch_name]
-
-        # NOTE only set up for XBT currently
-        yield Exchange(
-            user=user,
-            test=test,
-            refresh=refresh,
-            pct_balance=m['xbt'],
-            api_key=m['key'],
-            api_secret=m['secret'],
-            discord=m['discord'])
-
-
 def run_strat(
         name: str = 'lgbm',
         df_pred: pd.DataFrame = None,
@@ -278,7 +362,7 @@ def run_strat(
     strat = ml.make_strat(live=True, order_offset=order_offset, exch_name=exch_name, symbol=symbol, **kw)
 
     cols = ['open', 'high', 'low', 'close', 'signal']
-    bm = bt.BacktestManager(
+    bt.BacktestManager(
         startdate=df_pred.index[0],
         strat=strat,
         df=df_pred[cols]).run()
@@ -289,7 +373,9 @@ def run_strat(
 def run_strat_live(
         interval: int = 15,
         exch_name: Union[str, List[str]] = None,
-        test: bool = False) -> None:
+        test: bool = False,
+        em: ExchangeManager = None,
+        use_test_models: bool = False) -> None:
     """Run strategy on given interval and adjust orders
     - run at 15 seconds passed the interval (bitmex OHLC REST delay)
 
@@ -298,27 +384,35 @@ def run_strat_live(
     interval : int, default 15
     exch_name: Union[str, List[str]], optional
         limit live exchanges, default None
+    em : ExchangeManager, optional
+    use_test_models : bool, optional
+        use models from 'jambot-app-test' not 'jambot-app', default False
+        - Must have recently fit/saved models with ModelStorageManager
     """
     name = 'lgbm'
+    em = em or ExchangeManager()
 
     # run strat for bmex first
-    strat_bmex = run_strat(interval=interval, symbol='XBTUSD', name=name, exch_name='bitmex')
+    strat_bmex = run_strat(
+        interval=interval,
+        symbol='XBTUSD',
+        name=name,
+        exch_name='bitmex',
+        funding_exch=em.get_exch('bitmex', 'jayme'),
+        test=use_test_models)
 
     # replace ohlc and run strat for bbit data
     df_bbit = replace_ohlc(
         df=strat_bmex.df,
         df_new=get_df_raw(exch_name='bybit', symbol='BTCUSD', interval=interval))
 
-    strat_bbyt = run_strat(name=name, df_pred=df_bbit, symbol='BTCUSD', exch_name='bybit')
+    strat_bbit = run_strat(name=name, df_pred=df_bbit, symbol='BTCUSD', exch_name='bybit')
 
     m_strats = dict(
         bitmex=strat_bmex,
-        bybit=strat_bbyt)
+        bybit=strat_bbit)
 
-    df_users = gg.UserSettings(auth=False).get_df(load_api=True)
-
-    exchs = []
-    for exch in iter_exchanges(df_users=df_users, exch_name=exch_name):
+    for exch in em.iter_exchanges(exch_name=exch_name):
         strat = m_strats[exch.exch_name]
         symbol = exch.default_symbol
 
@@ -328,7 +422,5 @@ def run_strat_live(
             expected_orders=strat.broker.expected_orders(symbol=symbol, exch=exch),
             test=test)
 
-        exchs.append(exch)
-
     # write current strat trades/open positions to google
-    write_balance_google(strat=strat, exchs=exchs, test=test)
+    write_balance_google(strat=strat, exchs=em.list_exchs, test=test)
