@@ -25,7 +25,6 @@ ta = "^0.7.0"
 lightgbm = "^3.2.1"
 cryptography = "^3.4.7"
 azure-storage-blob = "^12.8.1"
-google-cloud-logging = "^2.6.0"
 pygsheets = "^2.0.5"
 jsonschema = "<4.0"
 
@@ -51,6 +50,7 @@ filprofiler = "==2021.8.0"
 colored-traceback = "^0.3.0"
 colorlog = "^6.4.1"
 graphviz = "^0.17"
+google-cloud-logging = "^2.6.0"
 
 [tool.pytest.ini_options]
 testpaths = [
