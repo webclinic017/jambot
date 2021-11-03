@@ -149,9 +149,9 @@ class SignalManager():
             drop_cols.extend(dep_only)
 
         # always keep max 500 important
-        p = self.bs.p_local / 'least_imp_cols_500.pkl'
-        if p.exists():
-            drop_cols.extend(f.load_pickle(p))
+        # p = self.bs.p_local / 'least_imp_cols_500.pkl'
+        # if p.exists():
+        #     drop_cols.extend(f.load_pickle(p))
 
         # remove first rows that can't be set with 200ema accurately
         return df.assign(**final_signals) \
