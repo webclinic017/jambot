@@ -6,7 +6,7 @@ https://github.com/Azure/azure-sdk-for-python/blob/main/sdk/storage/azure-storag
 """
 
 from pathlib import Path
-from typing import Union
+from typing import *
 
 from azure.storage.blob import (BlobClient, BlobServiceClient,  # noqa
                                 ContainerClient)
@@ -148,6 +148,7 @@ class BlobStorage():
         except Exception as e:
             msg = f'Failed to download files from container "{container.container_name}"'
             cm.discord(msg, channel='err', log=log.warning)
+            raise e
 
         log.info(f'Downloaded [{i}] file(s) from container "{container.container_name}"')
 
@@ -201,6 +202,22 @@ class BlobStorage():
         names = [c.name for c in self.client.list_containers()]
         f.pretty_dict(names)
 
+    def list_files(self, container: str = None) -> List[str]:
+        """Get list of files in container
+
+        Parameters
+        ----------
+        container : str, optional
+            container to show files in, default self.container
+
+        Returns
+        -------
+        List[str]
+            list of files in container
+        """
+        container = self.get_container(container)
+        return [b.name for b in container.list_blobs()]
+
     def show_files(self, container: str = None) -> None:
         """Print list of files in container
 
@@ -209,9 +226,7 @@ class BlobStorage():
         container : str, optional
             container to show files in, default self.container
         """
-        container = self.get_container(container)
-        names = [b.name for b in container.list_blobs()]
-        f.pretty_dict(names)
+        f.pretty_dict(self.list_files(container))
 
     def create_container(self, name: str) -> None:
         """Wrapper to create container in storage account
