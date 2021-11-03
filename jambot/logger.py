@@ -3,7 +3,6 @@ import logging
 import re
 import traceback
 
-import google.cloud.logging as gcl
 from google.auth.credentials import Credentials
 from google.oauth2 import service_account
 
@@ -12,6 +11,7 @@ from jambot.config import AZURE_WEB
 try:
     import colored_traceback
     import colorlog
+    import google.cloud.logging as gcl
     from colored_traceback import Colorizer
 
     # color tracebacks in terminal - uncaught exceptions in scripts only, not logging
@@ -132,7 +132,7 @@ def get_creds(scopes: list = None) -> Credentials:
     return service_account.Credentials.from_service_account_info(m, scopes=scopes)
 
 
-def get_google_logging_client() -> gcl.Client:
+def get_google_logging_client() -> 'gcl.Client':
     """Create google logging client
 
     Returns
