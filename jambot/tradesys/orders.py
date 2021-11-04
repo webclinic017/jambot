@@ -109,6 +109,16 @@ class BaseOrder(object, metaclass=ABCMeta):
         return 'open' in self.name
 
     @property
+    def is_limit_open(self) -> bool:
+        """If order is a limit_open"""
+        return self.is_increase and self.is_limit
+
+    @property
+    def is_limit_close(self) -> bool:
+        """If order is a limit_close"""
+        return self.is_reduce and self.is_limit
+
+    @property
     def is_buy(self) -> bool:
         """If order is buy"""
         return self.side == TradeSide.LONG
@@ -392,6 +402,7 @@ class ExchOrder(BaseOrder, DictRepr, Serializable):
     @property
     def qty(self):
         """Ensure ExchOrders always in multiples of 100 (Bitmex only)
+        - TODO need to enforce error if exch_name == ''
 
         - Bybit reduce orders need to use exact qty (no 100 bin_size limit)
         """
