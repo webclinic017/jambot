@@ -41,7 +41,7 @@ def model_cfg(name: str) -> dict:
             target_cls=sg.TargetUpsideDownside,
             # drop_cols=['target_max', 'target_min'],
             model_kw=dict(
-                num_leaves=50,
+                num_leaves=30,
                 n_estimators=100,
                 max_depth=30,
                 boosting_type='dart',
