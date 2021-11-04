@@ -80,6 +80,7 @@ class Exchange(DictRepr, metaclass=ABCMeta):
         -------
         Exchange
         """
+        kw['test'] = True if 'test' in kw['user'] else False
         return cls(
             pct_balance=m['xbt'],
             api_key=m['key'],
@@ -141,7 +142,7 @@ class SwaggerExchange(Exchange, metaclass=ABCMeta):
         super().__init__(*args, **kw)
         self.balance_set = False
         self.avail_margin = 0
-        self.total_balance_margin = 0
+        self._total_balance_margin = None
         self.total_balance_wallet = 0
         self.reserved_balance = 0
         self.unrealized_pnl = 0
@@ -383,6 +384,19 @@ class SwaggerExchange(Exchange, metaclass=ABCMeta):
                 cm.send_error(f'{e.status_code} {e.__class__.__name__}: {err_msg}\n{data}')
             else:
                 raise e
+
+    @property
+    def total_balance_margin(self) -> float:
+        val = self._total_balance_margin
+        if val is None:
+            log.warning('balance not set, refreshing')
+            self.set_total_balance()
+
+        return self._total_balance_margin
+
+    @total_balance_margin.setter
+    def total_balance_margin(self, val: float) -> None:
+        self._total_balance_margin = val
 
     @abstractmethod
     def _get_total_balance(self) -> dict:
@@ -765,7 +779,9 @@ class SwaggerExchange(Exchange, metaclass=ABCMeta):
         if not order_specs and not action == 'cancel_all':
             return
 
+        # print('specs before: ', order_specs)
         order_specs = self.convert_exch_keys(order_specs)
+        # print('\n\nspecs after: ', order_specs)
 
         # temp convert XBTUSD <> BTCUSD for bitmex/bybit
         for spec in order_specs:
@@ -774,6 +790,7 @@ class SwaggerExchange(Exchange, metaclass=ABCMeta):
                     spec['symbol'] = replace
 
         # exchange specific
+        # print(action, order_specs)
         result = self._route_order_request(action=action, order_specs=order_specs)
 
         # result can be None if bad orders
