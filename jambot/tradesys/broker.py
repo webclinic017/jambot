@@ -213,36 +213,45 @@ class Broker(Observer):
             # consider impact of submitting market orders this period first
             cur_qty += sum([o.qty for o in orders if o.is_market])
             cur_side = np.sign(cur_qty)
+            # print('cur_side: ', cur_side)
 
             # final checks to get position back to correct side
             if not expected_side == cur_side:
+                # print('expected side not equal')
 
                 # Market Close
                 if expected_side * cur_side == -1:
                     log.warning(f'Position offside, market closing. Expected: {expected_side}, actual: {cur_side}')
 
                     # remove limit close
-                    orders = [o for o in orders if not (o.is_limit and o.is_reduce)]
+                    orders = [o for o in orders if not o.is_limit_close]
 
                     # add market close
                     ExchOrder.market(
+                        exch_name=exch.exch_name,
                         symbol=symbol,
                         qty=cur_qty * -1,
                         name='mkt_close_er').add(orders)
 
                 # Trailing limit open
-                limit_price = f.get_price(
-                    pnl=self.parent.order_offset,
-                    price=exch.last_price(symbol=symbol),
-                    side=expected_side * -1)
+                has_opens = len([o for o in orders if o.is_increase]) > 0
+                if not has_opens:
 
-                # NOTE could enforce this as Limit only, keep retrying till success
-                ExchOrder.limit(
-                    symbol=symbol,
-                    price=limit_price,
-                    qty=wallet.available_quantity(price=limit_price) * expected_side,
-                    name='lim_open_er',
-                    prevent_market_fill=False).add(orders)
+                    limit_price = f.get_price(
+                        pnl=self.parent.order_offset,
+                        price=exch.last_price(symbol=symbol),
+                        side=expected_side)
+
+                    # # NOTE could enforce this as Limit only, keep retrying till success
+                    lim_er = ExchOrder.limit(
+                        exch_name=exch.exch_name,
+                        symbol=symbol,
+                        price=limit_price,
+                        qty=wallet.available_quantity(price=limit_price) * expected_side,
+                        name='lim_open_er',
+                        prevent_market_fill=False).add(orders)
+
+                    log.warning(f'Adding limit_open_er: {lim_er}')
 
         return orders
 
