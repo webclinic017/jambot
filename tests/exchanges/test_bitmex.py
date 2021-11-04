@@ -111,6 +111,8 @@ def _compare_order_specs(order_1: ExchOrder, order_2: ExchOrder) -> None:
 
 def test_reconcile_orders(exch: SwaggerExchange, last_close: float, symbol: str) -> None:
     """Test amending/cancelling/submitting orders from strategy
+    - TODO test position offside > add lim_open_er
+    - TODO test wallets have been refreshed to set total_balance_margin
 
     - create matched, missing, and not_matched orders for limit/stop/market
     """

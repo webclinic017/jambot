@@ -23,4 +23,4 @@ def test_run_strat_live(em: ExchangeManager):
     """Test strategy runs fully with all active exchanges
     - runs in test mode so only prints order output, doesn't send
     """
-    live.run_strat_live(interval=15, em=em, test=True, use_test_models=True)
+    live.run_strat_live(interval=15, em=em, test=True, test_models=True)

@@ -4,7 +4,7 @@ import pandas as pd
 from jambot import display, dt
 from jambot import functions as f
 from jambot import getlog
-from jambot.exchanges.bitmex import Bitmex
+from jambot.exchanges.exchange import SwaggerExchange
 from jambot.tradesys.base import DictRepr, Observer
 from jambot.tradesys.enums import OrderType, TradeSide
 from jambot.tradesys.exceptions import InsufficientBalance
@@ -135,12 +135,12 @@ class Wallet(Observer):
             # live trading
             return self._total_balance_margin
 
-    def set_exchange_data(self, exch: Bitmex) -> None:
+    def set_exchange_data(self, exch: SwaggerExchange) -> None:
         """Adjust current balance/upnl to match available on exchange
 
         Parameters
         ----------
-        exch : Bitmex
+        exch : SwaggerExchange
             exchange obj
         """
         # Margin Balance = Wallet Balance + uPNL
