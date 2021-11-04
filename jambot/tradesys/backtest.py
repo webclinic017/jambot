@@ -48,6 +48,7 @@ class BacktestManager(Clock):
         BacktestManager
             self
         """
+        self.strat.wallet.reset()
         super().run()
         self.end_session.emit()
 
