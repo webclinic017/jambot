@@ -1,3 +1,5 @@
+from datetime import timedelta as delta
+
 import numpy as np
 import pandas as pd
 
@@ -51,6 +53,7 @@ class Wallet(Observer):
         self.reset()
         _total_balance_margin = None  # live trading, comes from exch
         precision = 8
+        self._lev = 3
 
         maker_fee, taker_fee = self.exch_fees[exch_name]
 
@@ -65,7 +68,6 @@ class Wallet(Observer):
         self._qty = 0  # number of open qty
         self.filled_orders = []
         self.price = 0
-        self._lev = 3
 
     def step(self):
         pass
@@ -358,7 +360,8 @@ class Wallet(Observer):
             .from_dict(
                 m,
                 orient='index',
-                columns=['balance'])
+                columns=['balance']) \
+            .rename_axis('timestamp')
 
     def plot_balance(self, logy: bool = True, title: str = None) -> None:
         """Show plot of account balance over time with red/blue color depending on slope"""
@@ -366,6 +369,7 @@ class Wallet(Observer):
         import matplotlib.ticker as mticker
         from matplotlib import dates as mdates
         from matplotlib.collections import LineCollection
+        from matplotlib.colors import rgb2hex
         from seaborn import diverging_palette
         _cmap = diverging_palette(240, 10, n=21, as_cmap=True)
 
@@ -389,23 +393,54 @@ class Wallet(Observer):
         segments = np.concatenate([points[:-1], points[1:]], axis=1)
         lc = LineCollection(segments, cmap=_cmap.reversed(), norm=norm)
 
-        fig, ax = plt.subplots(figsize=(14, 5))
+        fig, (ax1, ax2) = plt.subplots(
+            nrows=2,
+            figsize=(14, 7),
+            sharex=True,
+            gridspec_kw=dict(height_ratios=(3, 1)))
+
+        # monthly pct change
+        s = df.resample(rule='M').last()
+        s.loc[s.index.min() + delta(days=-31)] = 1
+        s.sort_index(inplace=True)
+
+        s = s.pct_change() \
+            .set_index(s.index + delta(days=-15)) \
+            .dropna()['balance']
+
+        blue = rgb2hex(_cmap(0))
+        red = rgb2hex(_cmap(_cmap.N))
+        colors = (s > 0).apply(lambda x: blue if x else red)
+
+        ax2.bar(x=s.index, height=s.values, width=10, color=colors)
+        ax2.yaxis.set_major_formatter(mticker.StrMethodFormatter('{x:,.0%}'))
+
+        for p in ax2.patches:
+            height = p.get_height()
+            ax2.text(
+                size=12,
+                x=p.get_x() + p.get_width() / 2,
+                y=height + 1,
+                s=f'{height:,.0%}',
+                ha='center')
 
         lc.set_array(dydx)
         lc.set_linewidth(2)
-        ax.add_collection(lc)
+        ax1.add_collection(lc)
 
-        ax.xaxis.set_major_locator(mdates.MonthLocator())
-        monthFmt = mdates.DateFormatter('%Y-%m-%d')
-        ax.xaxis.set_major_formatter(monthFmt)
+        ax1.xaxis.set_major_locator(mdates.MonthLocator())
+        monthFmt = mdates.DateFormatter('%Y-%m')
+        ax1.xaxis.set_major_formatter(monthFmt)
 
-        ax.set_yscale('log')
-        ax.yaxis.set_major_formatter(mticker.StrMethodFormatter('{x:.0f}'))
+        ax1.set_yscale('log')
+        ax1.yaxis.set_major_formatter(mticker.StrMethodFormatter('{x:,.0f}'))
 
-        ax.grid(axis='y', linewidth=0.3, which='both')
-        ax.grid(axis='x', linewidth=0.3, which='major')
-        ax.autoscale_view()
+        ax1.grid(axis='y', linewidth=0.3, which='both')
+        ax1.grid(axis='x', linewidth=0.3, which='major')
+        ax1.autoscale_view()
+
         plt.xticks(rotation=45)
+        plt.tight_layout()
 
     def print_txns(self):
         data = []
