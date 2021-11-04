@@ -1,3 +1,5 @@
+# TODO secondary model for "trade or no trade?"
+
 # %% - IMPORTS
 if True:
     import json
@@ -42,7 +44,7 @@ if True:
     from sklearn.svm import SVC
     from sklearn.tree import (DecisionTreeClassifier, DecisionTreeRegressor,
                               export_graphviz)
-    from xgboost import XGBClassifier
+    from xgboost import XGBClassifier, XGBRegressor
 
     from jambot import charts as ch
     from jambot import config as cf
@@ -53,7 +55,9 @@ if True:
     from jambot import sklearn_utils as sk
     from jambot.database import db
     from jambot.exchanges.bitmex import Bitmex
+    from jambot.livetrading import ExchangeManager
     from jambot.ml import models as md
+    from jambot.tables import Tickers
     from jambot.tradesys import backtest as bt
     from jambot.tradesys.strategies import ml as ml
     from jambot.utils import styles as st
@@ -76,10 +80,17 @@ if True:
     reload_df = False
     if reload_df or not p.exists() or dt.fromtimestamp(p.stat().st_mtime) < dt.now() + delta(days=-1):
         log.info('Downloading from db')
-        df = db.get_df(
+
+        em = ExchangeManager()
+
+        df = Tickers().get_df(
             symbol='XBTUSD',
             startdate=dt(2017, 1, 1),
-            interval=interval)
+            interval=interval,
+            funding=True,
+            funding_exch=em.default('bitmex')
+        )
+        # df.funding_rate.loc[:'2018-06-01'] = 0
 
         df.to_csv(p)
     else:
@@ -94,6 +105,7 @@ if True:
 if True:
     name = 'lgbm'
     cfg = md.model_cfg(name)
+    regression = False
 
     # slope = [1, 4, 8, 16, 32, 64]
     # _sum = [12, 24, 96]
@@ -102,12 +114,14 @@ if True:
     sm = sg.SignalManager(slope=slope, sum=_sum)
 
     n_periods = cfg['target_kw']['n_periods']
+    # n_periods = 2
     p_ema = None  # 6
     # Target = sg.TargetMeanEMA
     # Target = sg.TargetMean
-    Target = sg.TargetUpsideDownside
-    # regression = True
-    regression = False
+    if not regression:
+        Target = sg.TargetUpsideDownside
+    else:
+        Target = sg.TargetRatio
     # pct_min = 0.01
     # pct_min = 0.000000005 # long or short, no neutral
     pct_min = 0
@@ -143,6 +157,8 @@ if True:
         sk.show_prop(df=df)
 
 # %% - FEATURES, MODELMANAGER
+# df = df_all.copy()
+# use_important = False
 if True:
     n_splits = 5
     train_size = 0.9
@@ -158,6 +174,7 @@ if True:
 
     if regression:
         scoring = dict(rmse='neg_root_mean_squared_error')
+        scorer = None
     else:
         scorer = ml.StratScorer()
 
@@ -175,15 +192,19 @@ if True:
         df=df,
         split_date=dt(2021, 1, 1))
 
-    cv_args |= dict(
-        fit_params=sk.weighted_fit(name, weights=weights[x_train.index]),
-        return_estimator=True)
+    # cv_args |= dict(
+    #     fit_params=sk.weighted_fit(name, weights=weights[x_train.index]),
+    #     return_estimator=True)
 
     mm.init_cv(scoring=scoring, cv_args=cv_args, scorer=scorer)
 
+    LGBM = LGBMClassifier if not regression else LGBMRegressor
     models = dict(
-        lgbm=LGBMClassifier(
-            num_leaves=50, n_estimators=50, max_depth=30, boosting_type='dart', learning_rate=0.1))
+        lgbm=LGBM(
+            num_leaves=30, n_estimators=100, max_depth=30, boosting_type='dart', learning_rate=0.1))
+
+    # models = dict(
+    #     lgbm=LinearRegression(normalize=True))
 
     mm.init_models(models)
 
@@ -194,12 +215,16 @@ if True:
 # --%%time
 #  --%%prun -s cumulative -l 40
 
-# steps = [
-#     (1, ('pca', PCA(n_components=20, random_state=0)))]
-steps = None
-mm.cross_val(models, steps=steps)
-res_dfs = [m.cv_data['df_result'] for m in mm.cv_data[name]]
-scorer.show_summary(dfs=res_dfs, scores=mm.scores[name])
+if False:
+    # steps = [
+    #     (1, ('pca', PCA(n_components=60, random_state=0)))]
+    # steps = None
+    mm.cross_val(models)
+
+    if not regression:
+        res_dfs = [m.cv_data['df_result'] for m in mm.cv_data[name]]
+        scorer.show_summary(dfs=res_dfs, scores=mm.scores[name])
+
 
 # %% - MAXMIN PREDS
 
@@ -238,8 +263,7 @@ if False:
 
 # %% - GRID - LGBMClassifier
 
-best_est = True
-if best_est:
+if False:
     params = dict(
         boosting_type=['dart', 'goss'],
         n_estimators=[25, 50, 100, 200],
@@ -258,8 +282,8 @@ if best_est:
         params=params,
         # search_type='grid',
         # refit='acc',
-        # refit='rmse',
-        refit='final'
+        refit='rmse',
+        # refit='final'
     )
 
 # %% - CLASSIFICATION REPORT
@@ -269,7 +293,7 @@ if best_est:
 
 # TODO test iter_predict maxhigh/minlow
 
-if True:
+if False:
     # fit_params = sk.weighted_fit(name, n=mm.df_train.shape[0])
     fit_params = sk.weighted_fit(
         name=name,
@@ -286,14 +310,13 @@ if True:
             name=name,
             proba=not regression,
             fit_params=fit_params)
-
 else:
     # retrain every x hours (24 ish) and predict for the test set
     df_pred = mm \
         .add_predict_iter(
             df=df,
             name=name,
-            batch_size=24 * 4 * 1,
+            batch_size=24 * 4 * 8,
             min_size=mm.df_train.shape[0],
             max_train_size=None,
             regression=regression)
@@ -302,7 +325,7 @@ else:
     # df_pred = df_pred_iter.copy()
 
 df_pred = df_pred \
-    .pipe(md.add_proba_trade_signal)
+    .pipe(md.add_proba_trade_signal, regression=regression)
 
 strat = ml.make_strat(symbol='XBTUSD', exch_name='bitmex', order_offset=-0.0006)
 
@@ -316,7 +339,7 @@ bm = bt.BacktestManager(
 
 # %% - PLOT
 
-periods = 60 * 24 * 4
+periods = 30 * 24 * 4
 startdate = dt(2021, 5, 1)
 startdate = dt(2021, 8, 1)
 startdate = None
@@ -342,11 +365,14 @@ ch.plot_strat_results(
 # %% - INIT SHAP MANAGER
 x_shap = df.drop(columns=['target'])
 y_shap = df.target
+x_shap = x_shap.loc['2021-08-01':]
+y_shap = y_shap.loc['2021-08-01':]
 # x_shap = x_test
 # y_shap = y_test
 # x_shap = x_train
 # y_shap = y_train
-spm = sk.ShapManager(x=x_shap, y=y_shap, ct=mm.ct, model=mm.models['lgbm'], n_sample=10_000)
+# spm = sk.ShapManager(x=x_shap, y=y_shap, ct=mm.ct, model=mm.models['lgbm'], n_sample=10_000)
+spm = sk.ShapManager(x=x_shap, y=y_shap, ct=None, model=mm.models['lgbm'], n_sample=9123)
 
 # %% - SHAP PLOT
 spm.plot(plot_type='violin')
@@ -355,14 +381,15 @@ spm.plot(plot_type='violin')
 spm.force_plot(sample_n=0)
 
 # %%
-res = spm.shap_n_important(n=60, save=True, upload=False, as_list=True)
+res = spm.shap_n_important(n=65, save=True, upload=False, as_list=True)
 cols = res['most']
 cols
 
 # %% LGBM Tree Digraph
 spm.check_init()
 lgb.create_tree_digraph(
-    spm.model,
+    # spm.model,
+    mm.models['lgbm'],
     show_info=['internal_count', 'leaf_count', 'data_percentage'],
     orientation='vertical')
 
