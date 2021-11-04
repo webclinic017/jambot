@@ -65,6 +65,7 @@ class Wallet(Observer):
         self._qty = 0  # number of open qty
         self.filled_orders = []
         self.price = 0
+        self._lev = 3
 
     def step(self):
         pass
