@@ -48,25 +48,23 @@ class Wallet(Observer):
 
     def __init__(self, symbol: str, exch_name: str = 'bitmex', **kw):
         super().__init__(**kw)
-        _balance = 1  # base instrument, eg XBT
-        _default_balance = _balance
-        _min_balance = 0.01
+        self.reset()
         _total_balance_margin = None  # live trading, comes from exch
         precision = 8
-        _max = 0
-        _min = _balance
-        txns = []
-        _qty = 0  # number of open qty
-        _lev = 3.0
-        price = 0  # entry price of current position
 
         maker_fee, taker_fee = self.exch_fees[exch_name]
-        # maker_fee = 0.0001
-        # taker_fee = -0.0005
-        # maker_fee = 0.00025
-        # taker_fee = -0.00075
-        filled_orders = []
+
         f.set_self(vars())
+
+    def reset(self):
+        self._balance = 1  # base instrument, eg XBT
+        self._max = 0
+        self._min = 1
+        self._min_balance = 0.01
+        self.txns = []
+        self._qty = 0  # number of open qty
+        self.filled_orders = []
+        self.price = 0
 
     def step(self):
         pass
@@ -315,9 +313,6 @@ class Wallet(Observer):
             dt.strftime(txlow.timestamp, f.time_format()))
 
         return drawdown * -1, drawdates
-
-    def reset(self):
-        self._balance = self._default_balance
 
     def get_percent_change(self, balance, change):
         return f.percent(change / balance)
