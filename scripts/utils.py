@@ -2,6 +2,7 @@ import argparse
 
 from jambot import config as cf
 from jambot import getlog
+from jambot.livetrading import ExchangeManager
 from jambot.ml.storage import ModelStorageManager
 from jambot.utils.azureblob import BlobStorage
 from jambot.utils.secrets import SecretsManager
@@ -30,7 +31,8 @@ if __name__ == '__main__':
     elif a.fit_models:
 
         # fit models and upload
-        ModelStorageManager().fit_save_models()
+        em = ExchangeManager()
+        ModelStorageManager().fit_save_models(em=em)
 
         # also upload current "least_important_cols"
         p = cf.p_data / 'feats'
