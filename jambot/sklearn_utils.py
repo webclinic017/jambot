@@ -777,10 +777,13 @@ class ShapManager():
 
         if save:
             # for name, lst in m_imp.items():
-            f.save_pickle(m_imp['least'], p=self.bs.p_local, name='least_imp_cols')
+            if not m_imp['least']:
+                log.warning('No least_imp_cols to save')
+            else:
+                f.save_pickle(m_imp['least'], p=self.bs.p_local, name='least_imp_cols')
 
-            if upload:
-                self.bs.upload_dir()
+                if upload:
+                    self.bs.upload_dir()
 
         return m_imp if as_list else df
 
