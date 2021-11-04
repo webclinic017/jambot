@@ -6,7 +6,6 @@ try:
     import azure.functions as func
     from __app__.jambot import comm as cm
     from __app__.jambot import livetrading as live
-    from __app__.jambot.database import db
     from __app__.jambot.livetrading import ExchangeManager
     from __app__.jambot.tables import Funding, Tickers
 except:
@@ -33,14 +32,11 @@ def main(mytimer: func.TimerRequest) -> None:
         if d.hour in (4, 12, 20) and is_zero_hour:
             Funding().update_from_exch(exchs=bmex, symbols='XBTUSD')
 
-        live.run_strat_live(
-            interval=interval,
-            em=em,
-            next_funding=bmex.next_funding('XBTUSD'))
+        live.run_strat_live(interval=interval, em=em)
 
         # update hourly candles after strat run on 15 min (bitmex only for now)
         if is_zero_hour:
-            db.update_all_symbols(exchs=bmex, interval=1)
+            Tickers().update_from_exch(exchs=bmex, interval=1)
 
     except:
         cm.send_error()
