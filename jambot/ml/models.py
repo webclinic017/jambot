@@ -211,7 +211,7 @@ def add_preds_probas(df: pd.DataFrame, pipe: BaseEstimator, **kw) -> pd.DataFram
         .pipe(add_proba_trade_signal, **kw)
 
 
-def add_proba_trade_signal(df: pd.DataFrame, regression: bool = False, **kw) -> pd.DataFrame:
+def add_proba_trade_signal(df: pd.DataFrame, regression: bool = False, n_smooth: int = None, **kw) -> pd.DataFrame:
     """Convert probas into trade signal for strategy
 
     Parameters
@@ -228,7 +228,8 @@ def add_proba_trade_signal(df: pd.DataFrame, regression: bool = False, **kw) -> 
 
     # NOTE not implemented yet, need to make func dynamic for regression
     rolling_col = 'proba_long' if not regression else 'y_pred'
+    n_smooth = n_smooth or cfg['n_smooth_proba']
 
     return df \
-        .pipe(sg.add_ema, p=cfg['n_smooth_proba'], c=rolling_col, col='rolling_proba') \
+        .pipe(sg.add_ema, p=n_smooth, c=rolling_col, col='rolling_proba') \
         .pipe(sk.convert_proba_signal, regression=regression)
