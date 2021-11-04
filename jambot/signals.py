@@ -995,7 +995,8 @@ class TargetMaxMin(TargetClass):
 
     def __init__(self, n_periods: int, **kw):
 
-        items = [('max', 'high'), ('min', 'low')]
+        # items = [('max', 'high'), ('min', 'low')]
+        items = [('max', 'close'), ('min', 'close')]
         kw['signals'] = {f'target_{fn}': lambda x, fn=fn, c=c: (
             x[c]
             .rolling(n_periods).__getattribute__(fn)()
