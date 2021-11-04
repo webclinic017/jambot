@@ -112,7 +112,8 @@ class ExchangeManager(DictRepr):
     def iter_exchanges(
             self,
             refresh: bool = True,
-            exch_name: Union[str, List[str]] = None) -> SwaggerExchange:
+            exch_name: Union[str, List[str]] = None,
+            test_exchs: bool = False) -> SwaggerExchange:
         """Iterate exchange objs for all users where bot is enabled
 
         Parameters
@@ -121,13 +122,18 @@ class ExchangeManager(DictRepr):
             refresh exch data on init or not
         exch_name : Union[str, List[str]], optional
             single or multiple exchanges to filter, default None
+        test_exchs : bool
+            use testnets regardless if enabled or not
 
         Yields
         ------
         SwaggerExchange
             initialized exch obj
         """
-        df_users = self.df_users.query('bot_enabled == True')
+        if not test_exchs:
+            df_users = self.df_users.query('bot_enabled == True')
+        else:
+            df_users = self.df_users.loc[(slice(None), 'testnet'), :]
 
         # filter to single exchange
         if exch_name:
@@ -135,8 +141,7 @@ class ExchangeManager(DictRepr):
 
         for (exch_name, user), m in df_users.to_dict(orient='index').items():
 
-            test = True if 'test' in user.lower() else False
-            yield self.get_exch(exch_name, user, test=test, refresh=refresh)
+            yield self.get_exch(exch_name, user, refresh=refresh)
 
 
 def check_sfp(df):
@@ -375,7 +380,8 @@ def run_strat_live(
         exch_name: Union[str, List[str]] = None,
         test: bool = False,
         em: ExchangeManager = None,
-        use_test_models: bool = False) -> None:
+        test_models: bool = False,
+        test_exchs: bool = False) -> None:
     """Run strategy on given interval and adjust orders
     - run at 15 seconds passed the interval (bitmex OHLC REST delay)
 
@@ -385,9 +391,13 @@ def run_strat_live(
     exch_name: Union[str, List[str]], optional
         limit live exchanges, default None
     em : ExchangeManager, optional
-    use_test_models : bool, optional
+    test : bool
+        don't submit orders, just print
+    test_models : bool, optional
         use models from 'jambot-app-test' not 'jambot-app', default False
         - Must have recently fit/saved models with ModelStorageManager
+    test_exchs : bool, optional
+        only use test exchanges (eg testnets)
     """
     name = 'lgbm'
     em = em or ExchangeManager()
@@ -399,7 +409,7 @@ def run_strat_live(
         name=name,
         exch_name='bitmex',
         funding_exch=em.get_exch('bitmex', 'jayme'),
-        test=use_test_models)
+        test=test_models)
 
     # replace ohlc and run strat for bbit data
     df_bbit = replace_ohlc(
@@ -412,7 +422,7 @@ def run_strat_live(
         bitmex=strat_bmex,
         bybit=strat_bbit)
 
-    for exch in em.iter_exchanges(exch_name=exch_name):
+    for exch in em.iter_exchanges(exch_name=exch_name, test_exchs=test_exchs):
         strat = m_strats[exch.exch_name]
         symbol = exch.default_symbol
 
