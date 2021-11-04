@@ -12,6 +12,7 @@ from pypika import functions as fn
 from pypika.terms import Criterion
 
 from jambot import SYMBOL
+from jambot import comm as cm
 from jambot import functions as f
 from jambot import getlog
 from jambot.database import db
@@ -68,7 +69,7 @@ class Table(object, metaclass=ABCMeta):
 
         return q
 
-    def process_df(self, df: pd.DataFrame) -> pd.DataFrame:
+    def process_df(self, df: pd.DataFrame, **kw) -> pd.DataFrame:
         return df
 
     def get_df(self, prnt: bool = False, **kw) -> pd.DataFrame:
@@ -191,7 +192,11 @@ class Table(object, metaclass=ABCMeta):
             if not test:
                 df.to_sql(name=self.name, con=db.engine, if_exists='append', index=False)
 
-        log.info(f'Imported [{nrows}] row(s) for [{nsymbols}] symbol(s)')
+        msg = f'Imported [{nrows}] row(s) for [{nsymbols}] symbol(s)'
+        log.info(msg)
+
+        if self.name == 'funding':
+            cm.discord(f'Funding: {msg}', channel='test')
 
 
 class Tickers(Table):
