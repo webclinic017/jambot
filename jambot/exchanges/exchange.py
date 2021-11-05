@@ -137,6 +137,7 @@ class SwaggerExchange(Exchange, metaclass=ABCMeta):
     order_params = abstractproperty()
     conv_symbol = {}
     other_keys = abstractproperty()
+    m_emoji = dict(submit='✅ ', amend='🌀 ', cancel='❌ ')
 
     def __init__(self, *args, **kw):
         super().__init__(*args, **kw)
@@ -991,6 +992,10 @@ class SwaggerExchange(Exchange, metaclass=ABCMeta):
             # TODO add avg entry price
             m['current_qty'] = f'{self.current_qty(symbol=symbol):+,} @ ${self.current_entry(symbol):,.0f}'
             m |= m_ords
+
+            # add emoji actions
+            m = {f'{self.m_emoji.get(k, "")}{k}': v for k, v in m.items()}
+
             msg = f.pretty_dict(m, prnt=False, bold_keys=True)
             cm.discord(msg=f'{user}\n{msg}', channel='orders' if not test else 'test')
 

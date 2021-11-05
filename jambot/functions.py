@@ -150,7 +150,7 @@ def pretty_dict(m: dict, html: bool = False, prnt: bool = True, bold_keys: bool 
     if bold_keys:
         m = _bold_keys(m)
 
-    s = json.dumps(m, indent=4)
+    s = json.dumps(m, indent=4, ensure_ascii=False)
     newline_char = '\n' if not html else '<br>'
 
     # remove these chars from string
