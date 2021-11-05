@@ -505,7 +505,7 @@ class ExchOrder(BaseOrder, DictRepr, Serializable):
         self.price = order.price
         self.qty = order.qty
 
-    def raw_spec(self, key: str) -> Any:
+    def raw_spec(self, key: str, default: Any = None) -> Any:
         """Return val from raw order spec
 
         Parameters
@@ -530,14 +530,18 @@ class ExchOrder(BaseOrder, DictRepr, Serializable):
                 try:
                     return self.order_spec_raw[self.m_conv.get(key)]
                 except KeyError:
-                    log.warning(f'key "{key}" doesn\'t exist in order_spec_raw')
-                    return None
+                    if not default is None:
+                        return default
+                    else:
+                        log.warning(f'key "{key}" doesn\'t exist in order_spec_raw')
+                        return None
         else:
             raise AttributeError('order_spec_raw not set.')
 
     def summary_msg(self, exch: 'SwaggerExchange' = None, nearest: float = 0.5) -> str:
         """Get buy/sell price qty summary for discord msg
         -eg "XBT | Sell -2,000 at $44,975.5 (44972.0) | limit_open"
+        - TODO this will need precision handled for other symbols
 
         Returns
         -------
@@ -547,7 +551,7 @@ class ExchOrder(BaseOrder, DictRepr, Serializable):
         if not exch is None:
             avgpx = f.round_down(n=m.get(self._m_conv[exch.exch_name]['avg_price']), nearest=nearest)
         else:
-            avgpx = None
+            avgpx = 0
 
         ordprice = f' (${self.price:,})' if not self.price == avgpx else ''
 
@@ -562,7 +566,10 @@ class ExchOrder(BaseOrder, DictRepr, Serializable):
 
         qty = self.qty if not self.is_partially_filled else self.raw_spec('cum_qty')
 
-        return '{} | {:<4} {:>+8,} at ${:,}{:>12} | {:<12}{}'.format(
+        action = '🟢' if qty >= 0 else '🔴'
+
+        return '{} {} | {:<4} {:>+8,} at ${:,}{:>12} | {:<12}{}'.format(
+            action,
             self.sym_short,
             m['side_str'],
             qty,
