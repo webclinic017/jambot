@@ -420,7 +420,7 @@ class Wallet(Observer):
             ax2.text(
                 size=12,
                 x=p.get_x() + p.get_width() / 2,
-                y=height + 1,
+                y=height + 0.2,
                 s=f'{height:,.0%}',
                 ha='center')
 
