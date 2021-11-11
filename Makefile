@@ -32,7 +32,7 @@ app:  ## push jambot app to azure
 		echo "Starting Docker";\
 		open /Applications/Docker.app;\
 	fi
-	@func azure functionapp publish jambot-app --build-native-deps
+	@func azure functionapp publish jambot-app --python --build-native-deps
 
 .PHONY : run-app-local
 run-app-local:  ## run app for local testing
@@ -62,6 +62,29 @@ fit_models:  ## fit models for last 3 days, upload to azure
 .PHONY : codecount
 codecount:  ## show lines of code
 	@pygount --suffix=py --format=summary jambot
+
+.PHONY : init
+init:  ## install steps for M1 Mac
+	# maybe don't actually need scipy, comes with numpy
+	@brew install openblas # for scipy/pandas/sklearn
+	@export OPENBLAS=$(brew --prefix openblas)
+	@export CFLAGS="-falign-functions=8 ${CFLAGS}" (for scipy maybe)
+	@brew install llvm@11 # for shap/numba
+	@export LLVM_CONFIG=/opt/homebrew/Cellar/llvm@11/11.1.0_3/bin/llvm-config
+	@brew install cmake
+	@brew install libomp
+	@brew install ta-lib  # not actually used, but python ta-lib is just a wrapper around this
+	@brew install unixodbc  # pyodbc
+	@brew install libjpeg  # matplotlib
+	@export PATH="/opt/homebrew/opt/llvm/bin:$PATH" # matplotlib needs to use llvm@13 not 11
+
+	# for numpy 1.20.3 (for numba, for shap)
+	@export MACOSX_DEPLOYMENT_TARGET=12.0
+	@poetry run pip install numpy==1.20.3 --no-use-pep517
+
+	# for azure app
+	@brew install azuer-cli
+	@brew install azure-functions-core-tools@4
 
 help: ## show this help message
 	@## https://gist.github.com/prwhite/8168133#gistcomment-1716694

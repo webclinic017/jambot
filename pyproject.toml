@@ -9,29 +9,27 @@ description = ""
 authors = ["Jayme Gordon <jaymegordo@gmail.com>"]
 
 [tool.poetry.dependencies]
-python = "^3.9"
+python = ">=3.9,<3.10"
 bitmex = "^0.2.2"
 Bybit = "^0.2.12"
 discord = "^1.0.1"
 PyPika = "^0.48.1"
-pyodbc = "^4.0.30"
+pyodbc = "^4.0.32"
 pandas = "^1.2.3"
 SQLAlchemy = {version = ">=1.4,<1.4.23"}
 PyYAML = "^5.4.1"
-numpy = "^1.20.2"
+numpy = "==1.20.3"  # poetry run pip install numpy==1.20.3 --no-use-pep517
 aenum = "^3.0.0"
 sklearn = "^0.0"
 ta = "^0.7.0"
-lightgbm = "^3.2.1"
 cryptography = "^3.4.7"
 azure-storage-blob = "^12.8.1"
 pygsheets = "^2.0.5"
 jsonschema = "<4.0"
+lightgbm = "^3.3.1"
 
 [tool.poetry.group.dev.dependencies]
 jupyter = "^1.0.0"
-shap = "^0.39.0" # LLVM_CONFIG=/usr/local/Cellar/llvm@9/9.0.1_2/bin/llvm-config poetry add shap
-seaborn = "^0.11.1"
 plotly = "^4.14.3"
 joblib = "^1.0.1"
 pylint = "^2.7.4"
@@ -46,11 +44,13 @@ TA-Lib = "^0.4.19"
 findiff = "^0.8.9"
 icecream = "^2.1.0"
 memory-profiler = "^0.58.0"
-filprofiler = "==2021.8.0"
+# filprofiler = "==2021.8.0"
 colored-traceback = "^0.3.0"
 colorlog = "^6.4.1"
 graphviz = "^0.17"
-google-cloud-logging = "^2.6.0"
+seaborn = "^0.11.2"
+llvmlite = "^0.37.0"
+shap = "^0.40.0"
 
 [tool.pytest.ini_options]
 testpaths = [
