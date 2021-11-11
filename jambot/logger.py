@@ -11,7 +11,7 @@ from jambot.config import AZURE_WEB
 try:
     import colored_traceback
     import colorlog
-    import google.cloud.logging as gcl
+    # import google.cloud.logging as gcl
     from colored_traceback import Colorizer
 
     # color tracebacks in terminal - uncaught exceptions in scripts only, not logging
@@ -132,28 +132,28 @@ def get_creds(scopes: list = None) -> Credentials:
     return service_account.Credentials.from_service_account_info(m, scopes=scopes)
 
 
-def get_google_logging_client() -> 'gcl.Client':
-    """Create google logging client
+# def get_google_logging_client() -> 'gcl.Client':
+#     """Create google logging client
 
-    Returns
-    -------
-    google.logging.cloud.Client
-        logging client to add handler to Python logger
-    """
-    return gcl.Client(credentials=get_creds())
+#     Returns
+#     -------
+#     google.logging.cloud.Client
+#         logging client to add handler to Python logger
+#     """
+#     return gcl.Client(credentials=get_creds())
 
 
-def add_google_logging_handler(log: logging.Logger) -> None:
-    """Add gcl handler to Python logger
+# def add_google_logging_handler(log: logging.Logger) -> None:
+#     """Add gcl handler to Python logger
 
-    Parameters
-    ----------
-    log : logging.Logger
-    """
-    gcl_client = get_google_logging_client()
-    handler = gcl_client.get_default_handler()
-    handler.setLevel(logging.INFO)
-    log.addHandler(handler)
+#     Parameters
+#     ----------
+#     log : logging.Logger
+#     """
+#     gcl_client = get_google_logging_client()
+#     handler = gcl_client.get_default_handler()
+#     handler.setLevel(logging.INFO)
+#     log.addHandler(handler)
 
 
 def getlog(name):
