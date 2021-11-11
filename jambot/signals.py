@@ -2,6 +2,7 @@ import copy
 import inspect
 import operator as opr
 import sys
+import warnings
 from collections import defaultdict as dd
 from collections import deque
 from typing import *
@@ -29,6 +30,8 @@ from jambot.config import AZURE_WEB
 from jambot.utils.azureblob import BlobStorage
 
 log = getlog(__name__)
+
+warnings.filterwarnings('ignore', message='invalid value encountered in double_scalars')
 
 # TODO distance to bolinger bands!
 
@@ -118,7 +121,7 @@ class SignalManager():
         if use_important:
             processed, dep_only = [], []
             if AZURE_WEB:
-                self.bs.download_dir()
+                self.bs.download_file(p='least_imp_cols.pkl')
 
             exclude_cols = f.load_pickle(p=self.bs.p_local / 'least_imp_cols.pkl')
 
@@ -582,14 +585,28 @@ class Volatility(SignalGroup):
             # norm_ema=lambda x: np.interp(x.vty_ema, (0, 0.25), (norm[0], norm[1])),
             # norm_sma=lambda x: np.interp(x.vty_sma, (0, 0.25), (norm[0], norm[1])),
         )
+        ns = (48, 96, 192, 384)
+        m_rng = {f'rng{n:03}': lambda x, n=n: self.vty_range(x, n_periods=n) for n in ns}
+        kw['signals'] |= m_rng
 
         super().__init__(**kw)
+        no_slope_cols = [f'vty_{c}' for c in m_rng]
         drop_cols = ['spread', 'vty_maxhigh', 'vty_minlow']
         require_cols = dict(
             vty_spread=['vty_maxhigh', 'vty_minlow'],
             vty_ema='vty_spread',
             vty_sma='vty_spread')
         f.set_self(vars())
+
+    @staticmethod
+    def vty_range(df: pd.DataFrame, n_periods: int = 48) -> pd.Series:
+
+        # could use candle bodys only or high/low
+        rng_high = df.close.rolling(n_periods).max()
+        rng_low = df.close.rolling(n_periods).min()
+        rng = rng_high - rng_low
+        cdl_size = np.abs(df.close - df.open).rolling(n_periods).sum()
+        return (rng / cdl_size).astype(np.float32)
 
 
 class Trend(SignalGroup):
@@ -993,10 +1010,14 @@ class TargetMaxMin(TargetClass):
     Create two outputs - min_low, max_high
     """
 
-    def __init__(self, n_periods: int, **kw):
+    def __init__(self, n_periods: int, use_close: bool = True, **kw):
 
-        # items = [('max', 'high'), ('min', 'low')]
-        items = [('max', 'close'), ('min', 'close')]
+        # log.info(f'use_close: {use_close}')
+        if use_close:
+            items = [('max', 'close'), ('min', 'close')]
+        else:
+            items = [('max', 'high'), ('min', 'low')]
+
         kw['signals'] = {f'target_{fn}': lambda x, fn=fn, c=c: (
             x[c]
             .rolling(n_periods).__getattribute__(fn)()
@@ -1107,7 +1128,7 @@ class WeightedPercentMaxMin(WeightedPercent, TargetMaxMin):
 
     def __init__(self, n_periods: int, **kw):
         super().__init__(n_periods=n_periods, **kw)
-        # TargetMaxMin.__init__(self, n_periods=n_periods, **kw)
+        TargetMaxMin.__init__(self, n_periods=n_periods, use_close=True, **kw)
 
         drop_cols = ['target_max', 'target_min']
 
@@ -1201,7 +1222,7 @@ def get_extrema(is_min, mom, momacc, s, window: int = 1):
 
 
 def add_extrema(df, side):
-    import peakutils
+    import peakutils  # type: ignore # not installed
     if side == 1:
         name = 'maxima'
         col = 'high'
