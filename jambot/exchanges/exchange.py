@@ -330,7 +330,6 @@ class SwaggerExchange(Exchange, metaclass=ABCMeta):
         - type(response) = bravado.response.BravadoResponse
         - response = request.response(fallback_result=[400], exceptions_to_catch=bravado.exception.HTTPBadRequest)
         """
-
         backoff = 0.5
         try:
             # 400 HttpBadRequest raised at response()

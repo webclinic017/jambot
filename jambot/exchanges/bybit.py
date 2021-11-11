@@ -1,3 +1,4 @@
+import time
 from datetime import datetime as dt
 from datetime import timedelta as delta
 from datetime import timezone as tz
@@ -37,6 +38,21 @@ ByBit API issues
     - Conditional_query doesnt have any fields to be able to determine its conditional
     - no way to filter orders by filled_time
 """
+
+
+class BybitAuth(APIKeyAuthenticator):
+    """
+    Wrap BybitAPIKeyAuthenticator to add longer expiry timeout
+    """
+
+    def apply(self, r):
+        r.headers['User-Agent'] = 'Official-SDKs'
+        expires = str(int(round(time.time()) - 1)) + '000'
+        r.params['timestamp'] = expires
+        r.params['recv_window'] = 20_000
+        r.params['api_key'] = self.api_key
+        r.params['sign'] = self.generate_signature(r)
+        return r
 
 
 class BybitAPIException(Exception):
@@ -116,7 +132,7 @@ class Bybit(SwaggerExchange):
 
     @staticmethod
     def client_api_auth():
-        return APIKeyAuthenticator
+        return BybitAuth
 
     def _get_total_balance(self) -> dict:
         return self.req('Wallet.getBalance', coin='BTC')['BTC']

@@ -21,6 +21,24 @@ log = getlog(__name__)
 warnings.filterwarnings('ignore', category=Warning, message='.*format is not registered')
 
 
+class BitmexAuth(APIKeyAuthenticator):
+    """
+    Wrap BitmexAPIKeyAuthenticator to add longer expiry timeout
+    """
+
+    def apply(self, r):
+        # 20s grace period in case of clock skew
+        timeout = 20
+        expires = int(round(time.time()) + timeout)
+        r.headers['api-expires'] = str(expires)
+        r.headers['api-key'] = self.api_key
+        prepared = r.prepare()
+        body = prepared.body or ''
+        url = prepared.path_url
+        r.headers['api-signature'] = self.generate_signature(self.api_secret, r.method, url, expires, body)
+        return r
+
+
 class Bitmex(SwaggerExchange):
     div = 1e8
     default_symbol = SYMBOL
@@ -86,7 +104,7 @@ class Bitmex(SwaggerExchange):
 
     @staticmethod
     def client_api_auth():
-        return APIKeyAuthenticator
+        return BitmexAuth
 
     def req(
             self,
@@ -472,3 +490,14 @@ class Bitmex(SwaggerExchange):
             .assign(timestamp=lambda x: x.timestamp.dt.tz_localize(None)) \
             .pipe(f.lower_cols) \
             .set_index(['symbol', 'timestamp'])
+
+    def check_clock_skew(self) -> None:
+        """Check local time vs exchange server for clock skew
+        - locally seems to be ~1-4s average
+        """
+        pos = self.get_position('XBTUSD', refresh=True)
+        t_server = pos['currentTimestamp'].timestamp()
+        t_local = dt.utcnow().replace(tzinfo=tz.utc).timestamp()
+        diff = t_server - t_local
+        msg = f't_server: {t_server:.2f}\nt_local: {t_local:.2f}\ndiff: {diff:.2f}s'
+        return msg
