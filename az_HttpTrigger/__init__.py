@@ -38,6 +38,12 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
         elif action == 'cancel_orders':
             u = live.User()
             u.cancel_manual()
+        elif action == 'clock_skew':
+            em = live.ExchangeManager()
+            bm = em.default(exch_name='bitmex', test=False, refresh=False)
+            msg = bm.check_clock_skew()
+            return func.HttpResponse(msg, status_code=200)
+
         else:
             return err()
 
