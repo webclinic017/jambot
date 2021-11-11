@@ -1,6 +1,8 @@
 import logging
 import warnings
 
+from pytest import fixture
+
 from jambot.livetrading import ExchangeManager
 from jambot.ml.storage import ModelStorageManager
 
@@ -12,6 +14,7 @@ warnings.filterwarnings('ignore', message='.*DataFrame is highly fragmented')
 logging.getLogger('azure.core.pipeline.policies.http_logging_policy').disabled = True
 
 
+@fixture(scope='session')
 def test_fit_save(em: ExchangeManager):
     msm = ModelStorageManager(test=True)
     msm.fit_save_models(em=em)

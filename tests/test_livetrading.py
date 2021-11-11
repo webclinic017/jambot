@@ -1,4 +1,4 @@
-from pytest import fixture
+from pytest import fixture, mark
 
 from jambot import getlog
 from jambot import livetrading as live
@@ -19,6 +19,7 @@ def test_iter_exchanges(em: ExchangeManager):
     log.info(f'Init {len(exchs)} exchanges.')
 
 
+@mark.usefixtures('test_fit_save')
 def test_run_strat_live(em: ExchangeManager):
     """Test strategy runs fully with all active exchanges
     - runs in test mode so only prints order output, doesn't send
