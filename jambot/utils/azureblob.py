@@ -154,17 +154,21 @@ class BlobStorage():
 
     def download_file(
             self,
-            p: Path,
+            p: Union[Path, str],
             container: Union[str, ContainerClient] = None,
             _log: bool = True) -> Path:
         """Download file from container and save to local file
 
         Parameters
         ----------
-        p : Path
+        p : Union[Path, str]
             path to save to, p.name will be used to find file in blob
+            - if str, must have p_local set
         container : str, optional
         """
+        if isinstance(p, str):
+            p = self.p_local / p
+
         container = self.get_container(container)
         blob = container.get_blob_client(p.name)
 
