@@ -382,7 +382,8 @@ class SwaggerExchange(Exchange, metaclass=ABCMeta):
                 data = f.pretty_dict(m=m, prnt=False, bold_keys=True)
 
             if AZURE_WEB:
-                cm.send_error(f'{e.status_code} {e.__class__.__name__}: {err_msg}\n{data}')
+                msg = f'{e.status_code} {e.__class__.__name__}: {err_msg}\nretries: {retries}\n{data}'
+                cm.send_error(msg)
             else:
                 raise e
 
