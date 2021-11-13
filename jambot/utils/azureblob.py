@@ -5,6 +5,7 @@ More file operation examples:
 https://github.com/Azure/azure-sdk-for-python/blob/main/sdk/storage/azure-storage-blob/samples/blob_samples_directory_interface.py
 """
 
+import logging
 from pathlib import Path
 from typing import *
 
@@ -17,6 +18,9 @@ from jambot import getlog
 from jambot.utils.secrets import SecretsManager
 
 log = getlog(__name__)
+
+# azure blob logs every http request by default
+logging.getLogger('azure.core.pipeline.policies').setLevel(logging.WARNING)
 
 
 class BlobStorage():
