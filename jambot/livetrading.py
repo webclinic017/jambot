@@ -246,7 +246,7 @@ def write_balance_google(
     batcher.run_batch()
 
 
-def show_current_status(n: int = 30, **kw) -> None:
+def show_current_status(exch_name: str, symbol: str, n: int = 30, **kw) -> None:
     """Show current live strategy signals
 
     # NOTE this is kinda extra, should probs just show strat's recent trades
@@ -266,7 +266,7 @@ def show_current_status(n: int = 30, **kw) -> None:
         -1: (cf.colors['lightred'], 'white')}
 
     # show last n rows of current active strategy df_pred
-    return get_df_pred(**kw)[list(m_fmt.keys())] \
+    return get_df_pred(exch_name=exch_name, symbol=symbol, **kw)[list(m_fmt.keys())] \
         .tail(n) \
         .style.format(m_fmt) \
         .apply(highlight_val, subset=['signal'], m=m_color)
@@ -324,6 +324,8 @@ def get_df_raw(
 
 
 def get_df_pred(
+        exch_name: str,
+        symbol: str,
         name: str = 'lgbm',
         test: bool = False,
         **kw) -> pd.DataFrame:
@@ -331,6 +333,8 @@ def get_df_pred(
 
     Parameters
     ----------
+    exch_name: str
+    symbol: str
     name : str, optional
         model name, by default 'lgbm'
     test : bool
@@ -343,7 +347,7 @@ def get_df_pred(
     """
 
     # add signals
-    df = get_df_raw(**kw) \
+    df = get_df_raw(exch_name=exch_name, symbol=symbol, **kw) \
         .pipe(md.add_signals, name=name)
 
     # load saved/trained models from blob storage and add pred signals
