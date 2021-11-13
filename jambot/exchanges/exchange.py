@@ -1031,8 +1031,8 @@ class SwaggerExchange(Exchange, metaclass=ABCMeta):
         # convert to dicts for easier matching
         expected_orders = ords.list_to_dict(expected_orders, use_ts=False)
         actual_orders = ords.list_to_dict(actual_orders, use_ts=False)
-        log.debug(f'\n\nexpected_orders:\n\t{expected_orders}')
-        log.debug(f'\n\nactual_orders:\n\t{actual_orders}')
+        # log.debug(f'\n\nexpected_orders:\n\t{expected_orders}')
+        # log.debug(f'\n\nactual_orders:\n\t{actual_orders}')
         all_orders = dd(list, {k: [] for k in ('valid', 'cancel', 'amend', 'submit', 'manual')})
 
         for k, o in actual_orders.items():
