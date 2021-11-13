@@ -1,17 +1,14 @@
 import io
 import logging
 import re
+import sys
 import traceback
-
-from google.auth.credentials import Credentials
-from google.oauth2 import service_account
 
 from jambot.config import AZURE_WEB
 
 try:
     import colored_traceback
     import colorlog
-    # import google.cloud.logging as gcl
     from colored_traceback import Colorizer
 
     # color tracebacks in terminal - uncaught exceptions in scripts only, not logging
@@ -88,76 +85,9 @@ class ColoredFormatter(Formatter):
         return highlight_filepath(message)
 
 
-class Logger(logging.Logger):
-    def __init__(self, *args, **kw):
-        super().__init__(*args, **kw)
-        self.propagate = False  # this prevents duplicate outputs
-        self.setLevel(logging.DEBUG)
-
-        if not AZURE_WEB:
-            # local app, use colored formatter
-            Formatter = ColoredFormatter
-        else:
-            Formatter = logging.Formatter
-
-        # Console/stream handler
-        fmt_stream = '%(levelname)-7s %(lineno)-4d %(name)-20s %(message)s'
-        formatter = Formatter(fmt_stream)
-        sh = logging.StreamHandler()
-        sh.setLevel(logging.INFO)
-        sh.setFormatter(formatter)
-
-        if not self.handlers:
-            self.addHandler(sh)
-
-            # if AZURE_WEB:
-            #     add_google_logging_handler(self)
-
-
-def get_creds(scopes: list = None) -> Credentials:
-    """Create google oauth2 credentials
-    - NOTE duplicated from jambot.utils.google to avoid imports
-
-    Parameters
-    ----------
-    scopes : list, optional
-        default None
-
-    Returns
-    -------
-    Credentials
-    """
-    from jambot.utils.secrets import SecretsManager
-    m = SecretsManager('google_creds.json').load
-    return service_account.Credentials.from_service_account_info(m, scopes=scopes)
-
-
-# def get_google_logging_client() -> 'gcl.Client':
-#     """Create google logging client
-
-#     Returns
-#     -------
-#     google.logging.cloud.Client
-#         logging client to add handler to Python logger
-#     """
-#     return gcl.Client(credentials=get_creds())
-
-
-# def add_google_logging_handler(log: logging.Logger) -> None:
-#     """Add gcl handler to Python logger
-
-#     Parameters
-#     ----------
-#     log : logging.Logger
-#     """
-#     gcl_client = get_google_logging_client()
-#     handler = gcl_client.get_default_handler()
-#     handler.setLevel(logging.INFO)
-#     log.addHandler(handler)
-
-
-def getlog(name):
+def getlog(name: str) -> logging.Logger:
     """Create logger object with predefined stream handler & formatting
+    - need to instantiate with logging.getLogger to inherit from azure's root logger
 
     Parameters
     ----------
@@ -170,16 +100,38 @@ def getlog(name):
 
     Examples
     --------
-    >>> from smseventlog import getlog
+    >>> from jambot.logger import getlog
     >>> log = getlog(__name__)
     """
-    name = '.'.join(str(name).split('.')[1:])
+    # remove __app__ prefix for azure
+    name = name.replace('__app__.', '')
+    name = '.'.join(name.split('.')[1:])
 
     # cant set name to nothing or that calls the ROOT logger
     if name == '':
         name = 'base'
 
-    return Logger(name)
+    log = logging.getLogger(name)
+    log.setLevel(logging.DEBUG)
+
+    if not AZURE_WEB:
+        # local app, use colored formatter
+        Formatter = ColoredFormatter
+        # log.propagate = False  # this prevents duplicate outputs
+    else:
+        Formatter = logging.Formatter
+
+    # Console/stream handler
+    fmt_stream = '%(levelname)-7s %(lineno)-4d %(name)-20s %(message)s'
+    formatter = Formatter(fmt_stream)
+    sh = logging.StreamHandler(stream=sys.stdout)
+    # sh.setLevel(logging.INFO)
+    sh.setFormatter(formatter)
+
+    # if not log.handlers:
+    log.addHandler(sh)
+
+    return log
 
 
 def highlight_filepath(s: str, color: str = 'blue') -> str:
