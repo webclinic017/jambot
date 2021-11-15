@@ -13,9 +13,9 @@ from jambot import getlog
 from jambot import sklearn_utils as sk
 from jambot.common import DictRepr
 from jambot.ml import models as md
-from jambot.signals import WeightedPercentMaxMin
 from jambot.tables import Tickers
 from jambot.utils.azureblob import BlobStorage
+from jambot.weights import WeightsManager
 
 if TYPE_CHECKING:
     from jambot.livetrading import ExchangeManager
@@ -139,10 +139,8 @@ class ModelStorageManager(DictRepr):
             + delta(hours=reset_hour_offset)
 
         # get weights for fit params
-        weights = WeightedPercentMaxMin(
-            n_periods=cfg['n_periods_weighted'],
-            weight_linear=True) \
-            .get_weight(df).loc[:d_upper]
+
+        weights = WeightsManager.from_config(df).weights.loc[:d_upper]
 
         index = df.loc[:d_upper].index
         df = df \
@@ -160,8 +158,7 @@ class ModelStorageManager(DictRepr):
             estimator.fit(
                 df[:upper, :-1],
                 df[:upper, -1],
-                **sk.weighted_fit(name=None, weights=weights.iloc[:upper])
-                # **sk.weighted_fit(name=None, n=len(df) + cut_rows)
+                sample_weight=weights.iloc[:upper]
             )
 
             # save - add back cut hrs so always consistent

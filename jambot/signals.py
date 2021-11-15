@@ -9,7 +9,7 @@ from typing import *
 
 import numpy as np
 import pandas as pd
-from sklearn.preprocessing import MinMaxScaler, minmax_scale
+from sklearn.preprocessing import MinMaxScaler
 from ta.momentum import (AwesomeOscillatorIndicator, KAMAIndicator,  # noqa
                          PercentageVolumeOscillator, ROCIndicator,
                          RSIIndicator, StochasticOscillator, StochRSIIndicator,
@@ -120,6 +120,7 @@ class SignalManager():
         # filter only most imporant cols before adding all
         if use_important:
             processed, dep_only = [], []
+            # TODO THIS NEEDS TO STAY IN SYNC WITH LIVE DATA
             if AZURE_WEB:
                 self.bs.download_file(p='least_imp_cols.pkl')
 
@@ -1073,92 +1074,6 @@ class TargetRatio(SignalGroup):
         )
 
         super().__init__(**kw)
-
-
-class WeightedPercent(SignalGroup):
-    def __init__(self, weight_linear: bool = True, **kw):
-        super().__init__(**kw)
-
-        # weight history linearly if live training
-        self.linear = (lambda x: np.linspace(0.5, 1, len(x))) if weight_linear else lambda x: 1.0
-
-        f.set_self(vars())
-
-    def get_weight(self, df: pd.DataFrame) -> pd.Series:
-        """return single array of weighted values to pass as fit_params
-
-        Parameters
-        ----------
-        df : pd.DataFrame
-            df with ['high', 'low', 'close']
-
-        Returns
-        -------
-        pd.Series
-            column weighted by abs movement up/down in next n_periods
-        """
-        cols = ['high', 'low', 'close']
-        return df[cols] \
-            .pipe(self.add_all_signals) \
-            .assign(weight=lambda x: x.weight.fillna(x.weight.mean()).astype(np.float32))['weight']
-
-    def show_plot(self, weight: pd.Series = None, df: pd.DataFrame = None) -> None:
-        """Show scatter plot of dist of weights
-
-        Parameters
-        ----------
-        weight : pd.Series, optional
-            from self.get_weight(), by default None
-        df : pd.DataFrame, optional
-        """
-        if weight is None:
-            weight = self.get_weight(df)
-
-        weight.to_frame() \
-            .reset_index(drop=False) \
-            .plot(kind='scatter', x='timestamp', y='weight', s=1, alpha=0.1)
-
-
-class WeightedPercentMaxMin(WeightedPercent, TargetMaxMin):
-    """
-    Create array of normalized weights based on absolute movement up/down from current close in next n periods
-    - eg weight periods where lots of movement happens higher = more consequential
-    - Also optional weight based on age eg np.linspace 0.5 > 1.0
-    """
-
-    def __init__(self, n_periods: int, **kw):
-        super().__init__(n_periods=n_periods, **kw)
-        TargetMaxMin.__init__(self, n_periods=n_periods, use_close=True, **kw)
-
-        drop_cols = ['target_max', 'target_min']
-
-        # clip at max 0.2 = 20% movement
-        self.signals |= dict(
-            weight=lambda x: minmax_scale(
-                x[drop_cols].abs().max(axis=1).clip(upper=0.2) * self.linear(x),
-                feature_range=(0, 1)))
-
-        self.signals = self.init_signals(self.signals)
-        f.set_self(vars())
-
-
-class WeightedPercentMean(WeightedPercent):
-    """
-    Create array of normalized weights based on mean pct change in next n_periods relative to close
-    """
-
-    def __init__(self, n_periods: int, **kw):
-
-        # clip at max 0.2 = 20% movement
-        kw['signals'] = dict(
-            weight=lambda x: minmax_scale(
-                ((x.close.rolling(n_periods).mean().shift(-n_periods) - x.close) / x.close)
-                .abs().clip(upper=0.1) * self.linear(x),
-                feature_range=(0, 1)))
-
-        # self.signals = self.init_signals(self.signals)
-        super().__init__(**kw)
-        f.set_self(vars())
 
 
 def add_emas(df, emas: list = None):

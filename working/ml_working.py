@@ -44,8 +44,8 @@ if True:
     from sklearn.svm import SVC
     from sklearn.tree import (DecisionTreeClassifier, DecisionTreeRegressor,
                               export_graphviz)
-    from xgboost import XGBClassifier, XGBRegressor
 
+    # from xgboost import XGBClassifier, XGBRegressor
     from jambot import charts as ch
     from jambot import config as cf
     from jambot import data
@@ -61,6 +61,7 @@ if True:
     from jambot.tradesys import backtest as bt
     from jambot.tradesys.strategies import ml as ml
     from jambot.utils import styles as st
+    from jambot.weights import WeightsManager
 
     log = getlog(__name__)
 
@@ -71,13 +72,13 @@ if True:
     blue, red = colors[3], colors[0]
 
 # %% - LOAD DF
+reload_df = False
 if True:
     interval = 15
     p = Path('df.csv')
     # if p.exists(): p.unlink()
 
     # read from db or csv
-    reload_df = False
     if reload_df or not p.exists() or dt.fromtimestamp(p.stat().st_mtime) < dt.now() + delta(days=-1):
         log.info('Downloading from db')
 
@@ -88,8 +89,7 @@ if True:
             startdate=dt(2017, 1, 1),
             interval=interval,
             funding=True,
-            funding_exch=em.default('bitmex')
-        )
+            funding_exch=em.default('bitmex', refresh=False))
         # df.funding_rate.loc[:'2018-06-01'] = 0
 
         df.to_csv(p)
@@ -101,6 +101,7 @@ if True:
 # %% - ADD SIGNALS
 # --%%prun -s cumulative -l 40
 # --%%time
+use_important = True
 
 if True:
     name = 'lgbm'
@@ -147,7 +148,7 @@ if True:
 
     # drop last rows which we cant set proper target
     # don't need to drop last n_periods rows if positive we aren't fitting on them
-    use_important = True
+
     df = sm.add_signals(df=df, signals=signals, use_important=use_important) \
         # .iloc[:-1 * n_periods, :]
     if not use_important:
@@ -159,6 +160,7 @@ if True:
 # %% - FEATURES, MODELMANAGER
 # df = df_all.copy()
 # use_important = False
+split_date = dt(2021, 2, 1)
 if True:
     n_splits = 5
     train_size = 0.9
@@ -167,10 +169,7 @@ if True:
     max_train_size = None
     cv = TimeSeriesSplit(n_splits=n_splits, max_train_size=max_train_size)
 
-    weights = sg.WeightedPercentMaxMin(
-        n_periods=cfg['n_periods_weighted'],
-        weight_linear=False) \
-        .get_weight(df)
+    wm = WeightsManager.from_config(df)
 
     if regression:
         scoring = dict(rmse='neg_root_mean_squared_error')
@@ -180,28 +179,30 @@ if True:
 
         scoring = dict(
             acc='accuracy',
-            wt=make_scorer(sk.weighted_score, weights=weights),
+            wt=make_scorer(sk.weighted_score, weights=wm.weights),
             max=lambda *args: scorer.score(*args, _type='max'),
             final=lambda *args: scorer.score(*args, _type='final')
         )
 
     cv_args = dict(cv=cv, n_jobs=-1, return_train_score=True, scoring=scoring)
-    mm = md.make_model_manager(name=name, df=df, use_important=use_important)
+    mm = md.make_model_manager(name=name, df=df, use_important=use_important, wm=wm)
 
-    x_train, y_train, x_test, y_test = mm.make_train_test(
-        df=df,
-        split_date=dt(2021, 1, 1))
+    x_train, y_train, x_test, y_test = mm.make_train_test(df=df, split_date=split_date)
 
-    # cv_args |= dict(
-    #     fit_params=sk.weighted_fit(name, weights=weights[x_train.index]),
-    #     return_estimator=True)
+    cv_args |= dict(
+        fit_params=wm.fit_params(x=x_train, name=name),
+        return_estimator=True)
 
     mm.init_cv(scoring=scoring, cv_args=cv_args, scorer=scorer)
 
     LGBM = LGBMClassifier if not regression else LGBMRegressor
     models = dict(
         lgbm=LGBM(
-            num_leaves=30, n_estimators=100, max_depth=30, boosting_type='dart', learning_rate=0.1))
+            num_leaves=80, n_estimators=100, max_depth=20, boosting_type='dart', learning_rate=0.1,
+            # device='gpu', max_bins=15
+        ))
+
+    # num_leaves=30, n_estimators=100, max_depth=30, boosting_type='dart', learning_rate=0.1)
 
     # models = dict(
     #     lgbm=LinearRegression(normalize=True))
@@ -215,7 +216,7 @@ if True:
 # --%%time
 #  --%%prun -s cumulative -l 40
 
-if False:
+if True:
     # steps = [
     #     (1, ('pca', PCA(n_components=60, random_state=0)))]
     # steps = None
@@ -226,80 +227,11 @@ if False:
         scorer.show_summary(dfs=res_dfs, scores=mm.scores[name])
 
 
-# %% - MAXMIN PREDS
-
-if False:
-    models_multi = dict(
-        lgbm=LGBMRegressor(num_leaves=50, n_estimators=50, max_depth=10, boosting_type='dart'),
-        ridge=Ridge()
-    )
-
-    models_multi = sk.as_multi_out(models_multi)
-
-    steps = [
-        (1, ('pca', PCA(n_components=20, random_state=0)))]
-    # steps = None
-
-    mm.cross_val(models_multi, steps=steps)
-
-# %% - OPTIMIZE FEATURES
-if False:
-    feature_names = 'vol_mfi'
-    # params = sm.get_signal_params(feature_names=feature_names)
-
-    windows = [2, 4, 6, 12, 18, 24, 36, 48]
-    # windows = [96]
-    params = dict(vol_mfi=dict(window=windows))  # , window_slow=windows, cycle=windows))
-    # params = dict(trend_cci=dict(constant=[0.05, 0.01, 0.015, 0.02, 0.04, 0.05, 0.06]))
-    sk.pretty_dict(params)
-
-    name = 'lgbm'
-    mm.cross_val_feature_params(
-        signal_manager=sm,
-        name=name,
-        model=models[name],
-        feature_params=params,
-        train_size=train_size)
-
-# %% - GRID - LGBMClassifier
-
-if False:
-    params = dict(
-        boosting_type=['dart', 'goss'],
-        n_estimators=[25, 50, 100, 200],
-        max_depth=[-1, 5, 10, 20, 30, 40],
-        num_leaves=[5, 10, 20, 40, 100],
-        learning_rate=[0.1, 0.2, 0.5, 0.75]
-    )
-
-    # ridge
-    # params = dict(
-    #     alpha=[0.1, 0.5, 1, 5, 10, 100]
-    # )
-
-    grid = mm.search(
-        name='lgbm',
-        params=params,
-        # search_type='grid',
-        # refit='acc',
-        refit='rmse',
-        # refit='final'
-    )
-
-# %% - CLASSIFICATION REPORT
-# mm.class_rep('lgbm', best_est=best_est)
-
 # %% - RUN STRAT
 
 # TODO test iter_predict maxhigh/minlow
 
 if False:
-    # fit_params = sk.weighted_fit(name, n=mm.df_train.shape[0])
-    fit_params = sk.weighted_fit(
-        name=name,
-        weights=sg.WeightedPercentMaxMin(8, weight_linear=True).get_weight(x_train))
-    # fit_params = None
-
     # if False:
     #     df_bbit = db.get_df('bybit', 'BTCUSD', startdate=dt(2021,1,1))
     #     df2 = df.pipe(live.replace_ohlc, df_bbit)
@@ -307,22 +239,26 @@ if False:
     df_pred = mm \
         .add_predict(
             df=df,
+            weighted_fit=True,
+            filter_fit_quantile=0.6,
             name=name,
-            proba=not regression,
-            fit_params=fit_params)
+            proba=not regression)
 else:
     # retrain every x hours (24 ish) and predict for the test set
+    # NOTE limiting max train data to ~3yrs ish could be helpful
     df_pred = mm \
         .add_predict_iter(
             df=df,
             name=name,
             batch_size=24 * 4 * 8,
-            min_size=mm.df_train.shape[0],
+            split_date=split_date,
+            # min_size=mm.df_train.shape[0],
             max_train_size=None,
+            # max_train_size=4*24*365*3,
+            # filter_fit_quantile=0.7,
             regression=regression)
 
     df_pred_iter = df_pred.copy()
-    # df_pred = df_pred_iter.copy()
 
 df_pred = df_pred \
     .pipe(md.add_proba_trade_signal, regression=regression)
@@ -338,41 +274,34 @@ bm = bt.BacktestManager(
     df=df_pred.pipe(f.clean_cols, cols)).run(prnt=True)
 
 # %% - PLOT
+if True:
+    periods = 30 * 24 * 4
+    startdate = dt(2021, 5, 1)
+    startdate = dt(2021, 8, 1)
+    startdate = None
 
-periods = 30 * 24 * 4
-startdate = dt(2021, 5, 1)
-startdate = dt(2021, 8, 1)
-startdate = None
+    df_balance = strat.wallet.df_balance
+    df_trades = strat.df_trades()
 
-df_balance = strat.wallet.df_balance
-df_trades = strat.df_trades()
+    # cv data
+    # i = 3
+    # m = mm.cv_data['lgbm'][i].cv_data
+    # startdate = m['startdate']
+    # startdate = dt(2020, 3, 1)
+    # df_balance = m['df_balance']
+    # df_trades = m['df_trades']
 
-# cv data
-# i = 3
-# m = mm.cv_data['lgbm'][i].cv_data
-# startdate = m['startdate']
-# startdate = dt(2020, 3, 1)
-# df_balance = m['df_balance']
-# df_trades = m['df_trades']
-
-ch.plot_strat_results(
-    df=df_pred.pipe(f.clean_cols, cols + ['target']),
-    df_balance=df_balance,
-    df_trades=df_trades,
-    startdate=startdate,
-    periods=periods)
+    ch.plot_strat_results(
+        df=df_pred.pipe(f.clean_cols, cols + ['target']),
+        df_balance=df_balance,
+        df_trades=df_trades,
+        startdate=startdate,
+        periods=periods)
 
 # %% - INIT SHAP MANAGER
-x_shap = df.drop(columns=['target'])
-y_shap = df.target
-x_shap = x_shap.loc['2021-08-01':]
-y_shap = y_shap.loc['2021-08-01':]
-# x_shap = x_test
-# y_shap = y_test
-# x_shap = x_train
-# y_shap = y_train
-# spm = sk.ShapManager(x=x_shap, y=y_shap, ct=mm.ct, model=mm.models['lgbm'], n_sample=10_000)
-spm = sk.ShapManager(x=x_shap, y=y_shap, ct=None, model=mm.models['lgbm'], n_sample=9123)
+# x_shap = x_shap.loc['2021-08-01':]
+# y_shap = y_shap.loc['2021-08-01':]
+spm = sk.ShapManager(df=df, ct=None, model=mm.models['lgbm'], n_sample=10_000)
 
 # %% - SHAP PLOT
 spm.plot(plot_type='violin')
@@ -381,12 +310,12 @@ spm.plot(plot_type='violin')
 spm.force_plot(sample_n=0)
 
 # %%
-res = spm.shap_n_important(n=65, save=True, upload=False, as_list=True)
+res = spm.shap_n_important(n=70, save=True, upload=False, as_list=True)
 cols = res['most']
 cols
 
 # %% LGBM Tree Digraph
-spm.check_init()
+# spm.check_init()
 lgb.create_tree_digraph(
     # spm.model,
     mm.models['lgbm'],
@@ -502,3 +431,63 @@ rfecv.n_features_
 # import pstats
 # ps = pstats.Stats('stats.stats')
 # ps.sort_stats(pstats.SortKey.CUMULATIVE).print_stats(20)
+
+# %% - MAXMIN PREDS
+
+if False:
+    models_multi = dict(
+        lgbm=LGBMRegressor(num_leaves=50, n_estimators=50, max_depth=10, boosting_type='dart'),
+        ridge=Ridge()
+    )
+
+    models_multi = sk.as_multi_out(models_multi)
+
+    steps = [
+        (1, ('pca', PCA(n_components=20, random_state=0)))]
+    # steps = None
+
+    mm.cross_val(models_multi, steps=steps)
+
+# %% - OPTIMIZE FEATURES
+if False:
+    feature_names = 'vol_mfi'
+    # params = sm.get_signal_params(feature_names=feature_names)
+
+    windows = [2, 4, 6, 12, 18, 24, 36, 48]
+    # windows = [96]
+    params = dict(vol_mfi=dict(window=windows))  # , window_slow=windows, cycle=windows))
+    # params = dict(trend_cci=dict(constant=[0.05, 0.01, 0.015, 0.02, 0.04, 0.05, 0.06]))
+    sk.pretty_dict(params)
+
+    name = 'lgbm'
+    mm.cross_val_feature_params(
+        signal_manager=sm,
+        name=name,
+        model=models[name],
+        feature_params=params,
+        train_size=train_size)
+
+# %% - GRID - LGBMClassifier
+
+if False:
+    params = dict(
+        boosting_type=['dart', 'goss'],
+        n_estimators=[25, 50, 100, 200],
+        max_depth=[-1, 5, 10, 20, 30, 40],
+        num_leaves=[5, 10, 20, 40, 100],
+        learning_rate=[0.1, 0.2, 0.5, 0.75]
+    )
+
+    # ridge
+    # params = dict(
+    #     alpha=[0.1, 0.5, 1, 5, 10, 100]
+    # )
+
+    grid = mm.search(
+        name='lgbm',
+        params=params,
+        # search_type='grid',
+        # refit='acc',
+        refit='rmse',
+        # refit='final'
+    )

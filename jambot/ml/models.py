@@ -48,7 +48,6 @@ def model_cfg(name: str) -> dict:
                 random_state=0),
             model_cls=LGBMClassifier,
             n_smooth_proba=3,
-            n_periods_weighted=8
         ),
         ridge=dict(
             target=['target_max', 'target_min'],
@@ -102,7 +101,11 @@ def add_signals(
         .pipe(f.safe_drop, cols=cf.config['drop_cols'], do=drop_ohlc)
 
 
-def make_model_manager(name: str, df: pd.DataFrame, use_important: bool = False) -> 'sk.ModelManager':
+def make_model_manager(
+        name: str,
+        df: pd.DataFrame,
+        use_important: bool = False,
+        **kw) -> 'sk.ModelManager':
     """Instantiate ModelManager
 
     Parameters
@@ -111,6 +114,8 @@ def make_model_manager(name: str, df: pd.DataFrame, use_important: bool = False)
         model name
     df : pd.DataFrame
         df with signals added
+    use_important : bool
+        filter to important cols only
 
     Returns
     -------
@@ -142,7 +147,7 @@ def make_model_manager(name: str, df: pd.DataFrame, use_important: bool = False)
 
     return sk.ModelManager(
         features=features,
-        encoders=encoders)
+        encoders=encoders, **kw)
 
 
 def make_model(name: str) -> BaseEstimator:

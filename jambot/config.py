@@ -27,7 +27,11 @@ config = dict(
     drop_cols=['open', 'high', 'low', 'close', 'volume', 'ema10', 'ema50', 'ema200'],
     signalmanager_kw=dict(
         slope=[1, 4, 8, 16, 32, 64],
-        sum=[12, 24, 96])
+        sum=[12, 24, 96]),
+    weightsmanager_kw=dict(
+        n_periods=8,
+        weight_linear=True
+    )
 )
 
 colors = dict(

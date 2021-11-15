@@ -27,8 +27,8 @@ from jambot import functions as f
 from jambot import getlog
 from jambot import signals as sg
 from jambot.common import ProgressParallel
-from jambot.ml import models as md
 from jambot.utils.azureblob import BlobStorage
+from jambot.weights import WeightsManager
 
 # not needed when running on azure
 try:
@@ -56,6 +56,7 @@ class ModelManager(object):
             random_state=0,
             target: str = 'target',
             scorer=None,
+            wm: WeightsManager = None,
             **kw):
         cv_args = cv_args if not cv_args is None else {}
         df_results = pd.DataFrame()
@@ -67,6 +68,8 @@ class ModelManager(object):
         cv_data = {}  # used to return estimator/strats for each cv fold
         v = {**vars(), **kw}
         f.set_self(v)
+
+        self.wm = wm
 
         if any(item in kw for item in ('features', 'encoders')):
             self.make_column_transformer(**kw)
@@ -253,7 +256,8 @@ class ModelManager(object):
             show: bool = True,
             steps: List[Tuple[int, tuple]] = None,
             df_scores: pd.DataFrame = None,
-            extra_cv_args: dict = None):
+            extra_cv_args: dict = None,
+            filter_train_quantile: float = None):
         """Perform cross validation on multiple classifiers
 
         Parameters
@@ -281,8 +285,15 @@ class ModelManager(object):
             if extra_cv_args:
                 self.cv_args |= extra_cv_args
 
-            scores = cross_validate(
-                pipe, self.x_train, self.y_train, error_score='raise', **self.cv_args)
+            # if not filter_train_quantile is None:
+            #     # TODO not done
+            #     x_train, y_train = self.wm.filter_highest(
+            #         datas=[self.x_train, self.y_train],
+            #         quantile=filter_train_quantile)
+            # else:
+            x_train, y_train = self.x_train, self.y_train
+
+            scores = cross_validate(pipe, x_train, y_train, error_score='raise', **self.cv_args)
 
             # use estimator obj to return dfs from cross_val for plotting
             if 'return_estimator' in self.cv_args:
@@ -309,7 +320,11 @@ class ModelManager(object):
     def fit(
             self,
             model: BaseEstimator,
-            fit_params: dict = None,
+            weighted_fit: bool = True,
+            filter_fit_quantile: float = None,
+            name: str = None,
+            # fit_params: dict = None,
+            force: bool = False,
     ) -> BaseEstimator:
         """Fit model to self.x_train with self.y_train (if not fit already)
 
@@ -319,17 +334,30 @@ class ModelManager(object):
             estimator/pipeline
         fit_params : dict, optional
             eg lgbm__sample_weight, by default None
+        force: : bool, optional
+            sometimes just need to pipe this but not fit again
+        filter_fit_quantile : float, optional
+            filter data before fitting to highest quantile
 
         Returns
         -------
         BaseEstimator
             fitted model
         """
-        fit_params = fit_params or {}
+        x_train, y_train = self.x_train, self.y_train
 
-        if not is_fitted(model):
-            log.info('fitting model')
-            model.fit(self.x_train, self.y_train, **fit_params)
+        if not filter_fit_quantile is None:
+            x_train, y_train = self.wm.filter_highest(
+                datas=[x_train, y_train],
+                quantile=filter_fit_quantile)
+
+        fit_params = self.wm.fit_params(x_train, name=name) if weighted_fit else {}
+
+        if force or not is_fitted(model):
+            log.info(f'Fitting model, x_train: {x_train.shape[0]}')
+            model.fit(x_train, y_train, **fit_params)
+        else:
+            log.warning('Not fitting model')
 
         return model
 
@@ -359,21 +387,19 @@ class ModelManager(object):
             self,
             df: pd.DataFrame,
             name: str,
+            split_date: dt,
             model: BaseEstimator = None,
             batch_size: int = 96,
-            min_size: int = 180 * 24,
+            # min_size: int = 180 * 24,
             max_train_size: int = None,
-            regression: bool = False) -> pd.DataFrame:
+            regression: bool = False,
+            filter_fit_quantile: float = None) -> pd.DataFrame:
         """Retrain model every x periods and add predictions for next batch_size"""
         from lightgbm import LGBMClassifier
 
         nrows = df.shape[0]
+        min_size = df[df.index < split_date].shape[0]
         num_batches = ((nrows - min_size) // batch_size) + 1
-
-        cfg = md.model_cfg(name)
-        weights = sg.WeightedPercentMaxMin(
-            cfg['n_periods_weighted'],
-            weight_linear=True).get_weight(df)
 
         if model is None:
             model = self.pipes[name].named_steps[name]
@@ -395,8 +421,6 @@ class ModelManager(object):
                 ct=None,
                 model=LGBMClassifier(num_leaves=50, n_estimators=50, max_depth=30,
                                      boosting_type='dart', learning_rate=0.1),
-                # model=self.models['lgbm'],
-                weights=weights,
                 n_sample=10_000)
 
             return spm.shap_n_important(n=60, save=False, upload=False, as_list=True)['most']
@@ -410,11 +434,13 @@ class ModelManager(object):
             # NOTE max_train_size eg 2 yrs seems to be much worse
             i_train_lower = 0 if not max_train_size else max(0, i_lower - max_train_size)
 
-            # if cols is None:
-            #     cols = df.columns
+            df_train = df.iloc[i_train_lower: i_lower]
+
+            if filter_fit_quantile:
+                df_train = self.wm.filter_highest(df_train, quantile=filter_fit_quantile)
 
             x_train, y_train = split(
-                df.iloc[i_train_lower: i_lower],
+                df_train,
                 target=self.target)
 
             # use shap to get important cols at each iter
@@ -424,9 +450,7 @@ class ModelManager(object):
             model.fit(
                 x_train,
                 y_train,
-                sample_weight=weights.loc[x_train.index]
-                # **weighted_fit(name=None, weights=weights.loc[x_train.index])
-            )
+                **self.wm.fit_params(x_train))
 
             x_test, _ = split(df.loc[idx_test], target=self.target)
             # x_test = x_test[imp_cols]
@@ -445,17 +469,20 @@ class ModelManager(object):
                         y_pred=model.predict(x_test),
                         proba_long=proba_long))
 
-        result = ProgressParallel(n_jobs=-1, total=num_batches)(delayed(_fit)(i=i) for i in range(num_batches))
+        result = ProgressParallel(batch_size=2, n_jobs=-1, total=num_batches)(delayed(_fit)(i=i)
+                                                                              for i in range(num_batches))
         return df_ohlc.pipe(f.left_merge, pd.concat([df for df in result if not df is None]))
 
     def add_predict(
             self,
             df: pd.DataFrame,
+            weighted_fit: bool = True,
+            filter_fit_quantile: float = None,
+            x_train: pd.DataFrame = None,
             x_test: pd.DataFrame = None,
             proba: bool = True,
             model: BaseEstimator = None,
             name: str = None,
-            fit_params: dict = None,
             **kw) -> pd.DataFrame:
         """Add predicted vals to df
 
@@ -474,7 +501,12 @@ class ModelManager(object):
         if model is None:
             model = self.pipes[name]
 
-        model = self.fit(model, fit_params=fit_params)
+        model = self.fit(
+            name=name,
+            model=model,
+            force=True,
+            weighted_fit=weighted_fit,
+            filter_fit_quantile=filter_fit_quantile)
 
         if x_test is None:
             x_test = self.x_test
@@ -619,26 +651,24 @@ class ShapManager():
 
     def __init__(
             self,
-            x: pd.DataFrame,
-            y: pd.Series,
-            ct: ColumnTransformer,
+            df: pd.DataFrame,
             model: BaseEstimator,
             n_sample: int = 10_000,
-            weights: pd.Series = None):
+            wm: WeightsManager = None):
         """
         Parameters
         ----------
-        x : pd.DataFrame
-            x_train/test
-        y : pd.Series
-            y_train/test
-        ct : ColumnTransformer
+        df : pd.DataFrame
+            full df, x_train/test + y
         model : BaseEstimator
         n_sample : int, optional
             by default 2000
-        weights: pd.Series, optional
-            pass in weights so don't have to fit every time, default None
+        wm: WeightsManager, optional
+            initialized WeightsManager
         """
+        if wm is None:
+            wm = WeightsManager.from_config(df)
+
         bs = BlobStorage(container=cf.p_data / 'feats')
         f.set_self(vars())
         self._shap_values = None
@@ -664,22 +694,16 @@ class ShapManager():
         ----
         Tuple[shap.TreeExplainer, List[np.array], pd.DataFrame, pd.DataFrame]
         """
-        weights = self.weights
-        if weights is None:
-            weights = sg.WeightedPercentMaxMin(8, weight_linear=True).get_weight(self.x)
+        df = self.df
+        df = self.wm.filter_highest(df=df, quantile=0.6)
 
-        weights = weights.loc[self.x.index]
+        x = df.drop(columns=['target'])
+        y = df.target
 
-        if not self.ct is None:
-            # ensure cols are dropped/transformed correctly
-            data = self.ct.fit_transform(self.x)
-            x_enc = df_transformed(data=data, ct=self.ct)
-        else:
-            # just drop drop_cols
-            # NOTE this doesn't normalize anything
-            x_enc = self.x.pipe(f.safe_drop, cf.config['drop_cols'])
+        # NOTE this doesn't normalize anything
+        x_enc = x.pipe(f.safe_drop, cf.config['drop_cols'])
 
-        self.model.fit(x_enc, self.y, **weighted_fit(name=None, weights=weights))
+        self.model.fit(x_enc, y, **self.wm.fit_params(x=x_enc, name=None))
 
         # use smaller sample to speed up plot
         # NOTE sample will change every time new rows are added due to random_state
@@ -1302,31 +1326,6 @@ def add_preds_minmax(df, features: dict, encoders: dict, train_size: float) -> p
 def as_multi_out(models: dict) -> Dict[str, MultiOutputRegressor]:
     """Convert dict of models to MultiOutputRegressors for predicting more than one target"""
     return {k: MultiOutputRegressor(model) for k, model in models.items()}
-
-
-def weighted_fit(name: str = None, n: int = None, weights: np.ndarray = None) -> Dict[str, np.ndarray]:
-    """Create dict of weighted samples for fit params
-
-    Parameters
-    ----------
-    name : str, optional
-        model name to prepend to dict key, by default None
-    n : int, optional
-        length of array, by default None
-    weights : np.ndarray, optional
-        allow passing in other weights to just use this for dict formatting, by default None
-
-    Returns
-    -------
-    Dict[str, np.ndarray]
-        {lgbm__sample_weight: [0.5, ..., 1.0]}
-    """
-    name = f'{name}__' if not name is None else ''
-
-    if weights is None:
-        weights = np.linspace(0.5, 1, n)
-
-    return {f'{name}sample_weight': weights}
 
 
 def plot_pred_dist(df: pd.DataFrame, cols: list = None) -> None:
