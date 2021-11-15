@@ -7,6 +7,7 @@ from datetime import timedelta as delta
 from datetime import timezone as tz
 from typing import *
 
+import numpy as np
 import pandas as pd
 from bitmex import bitmex
 from BitMEXAPIKeyAuthenticator import APIKeyAuthenticator
@@ -278,11 +279,9 @@ class Bitmex(SwaggerExchange):
         if not do:
             return df
 
-        gb = df.groupby('symbol')
         lst = []
 
-        for symbol in gb.groups:
-            df = gb.get_group(symbol)
+        for symbol, df in df.groupby('symbol'):
 
             rs = df \
                 .resample('15Min', on='timestamp')
@@ -448,9 +447,13 @@ class Bitmex(SwaggerExchange):
             partial=include_partial,
             columns=json.dumps(cols))
 
+        # fix bitmex high/low being less/greater than the open
         df = pd.DataFrame(data) \
             .assign(timestamp=lambda x: x.timestamp.dt.tz_localize(None) + offset * -1) \
             .pipe(self.resample, include_partial=include_partial, do=interval == 15) \
+            .assign(
+                high=lambda x: np.where(x.open > x.high, x.open, x.high),
+                low=lambda x: np.where(x.open < x.low, x.open, x.low)) \
             .assign(interval=interval)[['interval'] + cols]
 
         if include_partial:
