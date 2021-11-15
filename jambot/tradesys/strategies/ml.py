@@ -187,6 +187,10 @@ class Strategy(StrategyBase):
 
 class StratScorer():
     """Obj to allow scoring only for cross_val test but not train"""
+    summary_format = BacktestManager.summary_format | \
+        dict(
+            test_wt='{:.2f}',
+            train_wt='{:.2f}')
 
     def __init__(self):
         self.p_results = cf.p_data / 'scoring'
@@ -198,27 +202,6 @@ class StratScorer():
         self.runs = {}
         f.clean_dir(self.p_results)
         f.clean_dir(self.p_strats)
-
-    @property
-    def summary_format(self):
-        """Dict to use for styling summary df
-        - NOTE copied from BacktestManager
-        """
-        return dict(
-            start='{:%Y-%m-%d}',
-            end='{:%Y-%m-%d}',
-            dur='{:,.0f}',
-            min='{:.3f}',
-            max='{:.3f}',
-            final='{:.3f}',
-            drawdown='{:.1%}',
-            tpd='{:.2f}',
-            good='{:,.0f}',
-            filled='{:,.0f}',
-            total='{:,.0f}',
-            pct='{:.0%}',
-            test_wt='{:.2f}',
-            train_wt='{:.2f}')
 
     def show_summary(self, dfs: List[pd.DataFrame], scores: dict = None) -> None:
         """Show summary df of all backtest runs
@@ -241,7 +224,6 @@ class StratScorer():
         df = pd.concat(dfs) \
             .sort_values('start') \
             .reset_index(drop=True) \
-            .rename(columns=dict(good_pct='pct')) \
             .pipe(f.safe_drop, cols='lev')
 
         # add in test/train weight scores per run
@@ -250,7 +232,7 @@ class StratScorer():
             df = df.join(pd.DataFrame(data))
 
         fmt = self.summary_format
-        higher = ['drawdown', 'pct']
+        higher = ['dd', 'gpct', 'pnl', 'pnl_rt']
         higher_centered = ['min', 'max', 'final']  # centered at 1.0
         higher_centered_2 = ['test_wt', 'train_wt']
 
@@ -292,22 +274,18 @@ class StratScorer():
         # NOTE will need to not use proba for regression
         # NOTE could build proba/predict together like mm.add_predict
         idx = x.index
-        bm = self.runs.get(idx[0], None)
+        startdate = idx[0]
+        bm = self.runs.get(startdate, None)
 
         if bm is None:
             df_pred = x.pipe(md.add_preds_probas, pipe=estimator, regression=regression)
+            # f.save_pickle(df_pred, p=self.p_results, name=f'df_pred_{startdate:%Y-%m-%d}')
 
-            strat = make_strat(regression=regression)
-
-            kw_args = dict(
-                symbol='XBTUSD',
-                startdate=idx[0])
+            strat = make_strat(symbol='XBTUSD', exch_name='bitmex', order_offset=-0.0006, regression=regression)
 
             cols = ['open', 'high', 'low', 'close', 'signal']
-            bm = BacktestManager(**kw_args, strat=strat, df=df_pred[cols])
-            bm.run(prnt=False)
-
-            self.runs[idx[0]] = bm
+            bm = BacktestManager(startdate=startdate, strat=strat, df=df_pred[cols]).run(prnt=False)
+            self.runs[startdate] = bm
 
             # save df result to disk so can be used with multithreading
             df_res = bm.df_result

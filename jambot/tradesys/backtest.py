@@ -9,6 +9,23 @@ from jambot.tradesys.strategies.base import StrategyBase
 class BacktestManager(Clock):
     """Organize and run strategies over dataframe with signals"""
 
+    # Dict to use for styling summary df
+    summary_format = dict(
+        start='{:%Y-%m-%d}',
+        end='{:%Y-%m-%d}',
+        dur='{:,.0f}',
+        min='{:.2f}',
+        max='{:.1f}',
+        final='{:.1f}',
+        dd='{:.1%}',
+        pnl='{:.1%}',
+        pnl_rt='{:.1f}',
+        tpd='{:.2f}',
+        good='{:,.0f}',
+        filled='{:,.0f}',
+        total='{:,.0f}',
+        gpct='{:.0%}')
+
     def __init__(
         self,
         strat: 'StrategyBase',
@@ -58,23 +75,6 @@ class BacktestManager(Clock):
 
         return self
 
-    @property
-    def summary_format(self):
-        """Dict to use for styling summary df"""
-        return dict(
-            start='{:%Y-%m-%d}',
-            end='{:%Y-%m-%d}',
-            dur='{:,.0f}',
-            min='{:.3f}',
-            max='{:.3f}',
-            final='{:.3f}',
-            drawdown='{:.1%}',
-            tpd='{:.2f}',
-            good='{:,.0f}',
-            total='{:,.0f}',
-            good_pct='{:.0%}'
-        )
-
     def print_final(self):
         """Style backtest summary df"""
         style = self.df_result.style \
@@ -87,9 +87,11 @@ class BacktestManager(Clock):
     def df_result(self):
         """df of backtest results"""
         strat = self.strat
+        df_trades = strat.df_trades()
         a = strat.wallet
 
         drawdown, drawdates = a.drawdown()
+        pnl = df_trades.pnl.sum()
 
         data = dict(
             # symbol=self.symbol,
@@ -99,10 +101,12 @@ class BacktestManager(Clock):
             min=a.min,
             max=a.max,
             final=a.balance,
-            drawdown=drawdown,
+            dd=drawdown,
+            pnl=pnl,
+            pnl_rt=a.balance / pnl,
             # period=drawdates,
             tpd=strat.tpd,
-            lev=strat.lev,
+            # lev=strat.lev,
             good=strat.good_trades,
             filled=strat.num_trades_filled,
             total=strat.num_trades
@@ -111,7 +115,7 @@ class BacktestManager(Clock):
         # only count "good" as pct of filled trades, ignore unfilled
         return pd.DataFrame. \
             from_dict(data, orient='index').T \
-            .assign(good_pct=lambda x: x.good / x.filled)
+            .assign(gpct=lambda x: x.good / x.filled)
 
     # def write_csv(self):
     #     self.df.to_csv('dfout.csv')
