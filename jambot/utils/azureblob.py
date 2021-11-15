@@ -180,7 +180,7 @@ class BlobStorage():
             file.write(blob.download_blob().readall())
 
         if _log:
-            log.info(f'Downloaded "{blob.blob_name}"" from container "{container.container_name}"')
+            log.info(f'Downloaded "{blob.blob_name}" from container "{container.container_name}"')
 
         return blob
 

@@ -131,6 +131,7 @@ class Broker(Observer):
                 order.price = self.c.close
 
             # fill if order lies in current candle's range
+            # NOTE technically this should just check if price > low or < high, per side
             if self.c.low <= order.price <= self.c.high:
 
                 self.fill_order(order)
