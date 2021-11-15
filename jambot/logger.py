@@ -117,7 +117,7 @@ def getlog(name: str) -> logging.Logger:
     if not AZURE_WEB:
         # local app, use colored formatter
         Formatter = ColoredFormatter
-        # log.propagate = False  # this prevents duplicate outputs
+        log.propagate = False  # this prevents duplicate outputs (eg for pytest)
     else:
         Formatter = logging.Formatter
 
@@ -128,8 +128,8 @@ def getlog(name: str) -> logging.Logger:
     # sh.setLevel(logging.INFO)
     sh.setFormatter(formatter)
 
-    # if not log.handlers:
-    log.addHandler(sh)
+    if not log.handlers:
+        log.addHandler(sh)
 
     return log
 
