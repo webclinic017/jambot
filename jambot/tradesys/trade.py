@@ -218,7 +218,8 @@ class Trade(Observer):
 
         if not self.is_closed:
             if not self.qty_filled == 0:
-                raise ValueError(f'Cant close trade [{self.trade_num}] with [{self.qty_filled}] contracts open!')
+                raise ValueError(
+                    f'Cant close trade [{self.trade_num}] with [{self.qty_filled}] contracts open!\n{self.orders}')
 
             self.status = TradeStatus.CLOSED
             self.exit_balance = self.wallet.balance
