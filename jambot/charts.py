@@ -578,6 +578,7 @@ def chart(
         i['font'] = dict(size=9)
         i['x'] = 0.05
 
+    # fig.update_xaxes(type='date', range=[df.index[0], df.index[30]])
     return fig
 
 

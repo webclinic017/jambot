@@ -216,7 +216,10 @@ def add_preds_probas(df: pd.DataFrame, pipe: BaseEstimator, **kw) -> pd.DataFram
         .pipe(add_proba_trade_signal, **kw)
 
 
-def add_proba_trade_signal(df: pd.DataFrame, regression: bool = False, n_smooth: int = None, **kw) -> pd.DataFrame:
+def add_proba_trade_signal(
+        df: pd.DataFrame,
+        regression: bool = False,
+        n_smooth: int = None, **kw) -> pd.DataFrame:
     """Convert probas into trade signal for strategy
 
     Parameters
