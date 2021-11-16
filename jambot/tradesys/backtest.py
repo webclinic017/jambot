@@ -4,9 +4,10 @@ from jambot import display
 from jambot import functions as f
 from jambot.tradesys.base import Clock, SignalEvent
 from jambot.tradesys.strategies.base import StrategyBase
+from jambot.utils.mlflow import MLFlowLoggable
 
 
-class BacktestManager(Clock):
+class BacktestManager(Clock, MLFlowLoggable):
     """Organize and run strategies over dataframe with signals"""
 
     # Dict to use for styling summary df
@@ -27,11 +28,10 @@ class BacktestManager(Clock):
         gpct='{:.0%}')
 
     def __init__(
-        self,
-        strat: 'StrategyBase',
-        df: pd.DataFrame,
-        startdate: str,
-        u=None,
+            self,
+            strat: 'StrategyBase',
+            df: pd.DataFrame,
+            startdate: str,
             **kw):
 
         super().__init__(df=df, **kw)
@@ -52,13 +52,15 @@ class BacktestManager(Clock):
         """Top level doesn't need to do anything"""
         pass
 
-    def run(self, prnt: bool = False) -> 'BacktestManager':
+    def run(self, prnt: bool = False, _log: bool = False) -> 'BacktestManager':
         """Top level step function
 
         Parameters
         ----------
         prnt : bool
             print summary stats at end of run
+        _log : bool
+            log to mlflow, default False
 
         Returns
         -------
@@ -73,6 +75,9 @@ class BacktestManager(Clock):
             self.print_final()
             self.strat.wallet.plot_balance(logy=True)
 
+        if _log:
+            self.log_mlflow()
+
         return self
 
     def print_final(self):
@@ -82,6 +87,11 @@ class BacktestManager(Clock):
             .hide_index()
 
         display(style)
+
+    @property
+    def log_items(self) -> dict:
+        return self.df_result.iloc[0].to_dict() \
+            | self.strat.log_items
 
     @property
     def df_result(self):
@@ -116,17 +126,3 @@ class BacktestManager(Clock):
         return pd.DataFrame. \
             from_dict(data, orient='index').T \
             .assign(gpct=lambda x: x.good / x.filled)
-
-    # def write_csv(self):
-    #     self.df.to_csv('dfout.csv')
-    #     self.account.get_df().to_csv('df2out.csv')
-
-    # def expected_orders(self):
-    #     # don't use this yet.. maybe when we have combined strats?
-
-    #     expected = []
-    #     for strat in self.strats:
-    #         for order in strat.final_orders():
-    #             expected.append(order)
-
-    #     return expected

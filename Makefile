@@ -58,6 +58,10 @@ creds:  ## re-encrypt credentials
 fit_models:  ## fit models for last 3 days, upload to azure
 	$(utils) --fit_models
 
+.PHONY : mlflow
+mlflow: ## show mlflow UI in browser
+	@open http://127.0.0.1:5000
+	@poetry run mlflow ui
 
 .PHONY : codecount
 codecount:  ## show lines of code

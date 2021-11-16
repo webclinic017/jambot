@@ -5,6 +5,7 @@ import sys
 import warnings
 from collections import defaultdict as dd
 from collections import deque
+from pathlib import Path
 from typing import *
 
 import numpy as np
@@ -28,6 +29,7 @@ from jambot import getlog
 from jambot import sklearn_utils as sk
 from jambot.config import AZURE_WEB
 from jambot.utils.azureblob import BlobStorage
+from jambot.utils.mlflow import MLFlowLoggable
 
 log = getlog(__name__)
 
@@ -36,7 +38,7 @@ warnings.filterwarnings('ignore', message='invalid value encountered in double_s
 # TODO distance to bolinger bands!
 
 
-class SignalManager():
+class SignalManager(MLFlowLoggable):
     def __init__(
             self,
             signals_list: list = None,
@@ -45,7 +47,8 @@ class SignalManager():
             sum: int = 0,
             cut_periods: int = 200):
 
-        signal_groups = {}
+        self.signal_groups = {}
+        self.final_feats = None
         features = {}  # map of {feature_name: signal_group}
         scaler = MinMaxScaler()
 
@@ -53,6 +56,22 @@ class SignalManager():
         self.bs = BlobStorage(container=cf.p_data / 'feats')
 
         f.set_self(vars())
+
+    @property
+    def log_items(self) -> dict:
+        """Merge all logable params from signal groups"""
+        m = {}
+        for sg in self.signal_groups.values():
+            if isinstance(sg, MLFlowLoggable):
+                m |= sg.log_items
+
+        return m
+
+    @property
+    def log_artifact(self) -> Path:
+        """Save sm used columns as artifact for mlflow"""
+        p = f.save_pickle(self.final_feats, cf.p_data / 'feats', 'feats')
+        return p
 
     def get_signal_group(self, feature_name: str) -> 'SignalGroup':
         """Return signal_group object from feature_name"""
@@ -156,6 +175,9 @@ class SignalManager():
         # p = self.bs.p_local / 'least_imp_cols_500.pkl'
         # if p.exists():
         #     drop_cols.extend(f.load_pickle(p))
+
+        # save for logging
+        self.final_feats = sorted(list(set(final_signals.keys()) - set(drop_cols)))
 
         # remove first rows that can't be set with 200ema accurately
         return df.assign(**final_signals) \
@@ -935,7 +957,7 @@ class CandlePatterns(SignalGroup):
         f.set_self(vars())
 
 
-class TargetClass(SignalGroup):
+class TargetClass(SignalGroup, MLFlowLoggable):
     """
     target classification
     - 3 classes
@@ -951,6 +973,10 @@ class TargetClass(SignalGroup):
         pct_min = pct_min / 2
 
         f.set_self(vars())
+
+    @property
+    def log_items(self) -> Dict[str, Any]:
+        return dict(target_n_periods=self.n_periods)
 
 
 class TargetMeanEMA(TargetClass):

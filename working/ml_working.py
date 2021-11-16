@@ -2,9 +2,6 @@
 
 # %% - IMPORTS
 if True:
-    import json
-    import os
-    import sys
     from datetime import datetime as dt
     from datetime import timedelta as delta
     from pathlib import Path
@@ -12,36 +9,24 @@ if True:
     import lightgbm as lgb
     import matplotlib as mpl
     import matplotlib.pyplot as plt
+    import mlflow
     import numpy as np
     import pandas as pd
     import seaborn as sns
-    import shap
-    from IPython.display import display
     from lightgbm.sklearn import LGBMClassifier, LGBMRegressor
-    from sklearn.compose import ColumnTransformer, make_column_transformer
     from sklearn.decomposition import PCA
-    from sklearn.discriminant_analysis import QuadraticDiscriminantAnalysis
-    from sklearn.dummy import DummyClassifier
     from sklearn.ensemble import (AdaBoostClassifier,
                                   GradientBoostingClassifier,
                                   RandomForestClassifier)
     from sklearn.feature_selection import RFE, RFECV
-    from sklearn.impute import SimpleImputer
     from sklearn.linear_model import (LinearRegression, LogisticRegression,
                                       Ridge, RidgeClassifier, RidgeCV)
     from sklearn.metrics import (accuracy_score, classification_report,
                                  f1_score, make_scorer, mean_squared_error,
                                  recall_score)
-    from sklearn.model_selection import (GridSearchCV, RandomizedSearchCV,
-                                         TimeSeriesSplit, cross_val_score,
-                                         cross_validate, train_test_split)
+    from sklearn.model_selection import TimeSeriesSplit
     from sklearn.multioutput import MultiOutputRegressor
-    from sklearn.naive_bayes import GaussianNB
     from sklearn.pipeline import FeatureUnion, Pipeline, make_pipeline
-    from sklearn.preprocessing import (MinMaxScaler, OneHotEncoder,
-                                       OrdinalEncoder, PolynomialFeatures,
-                                       RobustScaler, StandardScaler)
-    from sklearn.svm import SVC
     from sklearn.tree import (DecisionTreeClassifier, DecisionTreeRegressor,
                               export_graphviz)
 
@@ -53,17 +38,18 @@ if True:
     from jambot import getlog
     from jambot import signals as sg
     from jambot import sklearn_utils as sk
-    from jambot.database import db
-    from jambot.exchanges.bitmex import Bitmex
     from jambot.livetrading import ExchangeManager
     from jambot.ml import models as md
     from jambot.tables import Tickers
     from jambot.tradesys import backtest as bt
     from jambot.tradesys.strategies import ml as ml
     from jambot.utils import styles as st
+    from jambot.utils.mlflow import MLFlowManager
     from jambot.weights import WeightsManager
 
     log = getlog(__name__)
+
+    mfm = MLFlowManager()
 
     plt.rcParams |= {'figure.figsize': (12, 5), 'font.size': 14, 'lines.linewidth': 1.0}
     plt.style.use('dark_background')
@@ -75,8 +61,7 @@ if True:
 reload_df = False
 if True:
     interval = 15
-    p = Path('df.csv')
-    # if p.exists(): p.unlink()
+    p = cf.p_data / 'feather/df.ftr'
 
     # read from db or csv
     if reload_df or not p.exists() or dt.fromtimestamp(p.stat().st_mtime) < dt.now() + delta(days=-1):
@@ -90,13 +75,12 @@ if True:
             interval=interval,
             funding=True,
             funding_exch=em.default('bitmex', refresh=False))
-        # df.funding_rate.loc[:'2018-06-01'] = 0
 
-        df.to_csv(p)
+        df.reset_index(drop=False).to_feather(p)
     else:
         df = data.default_df()
 
-    log.info(f'DateRange: {df.index.min()} - {df.index.max()}')
+    log.info(f'Loaded df: [{df.shape[0]:,.0f}] {df.index.min()} - {df.index.max()}')
 
 # %% - ADD SIGNALS
 # --%%prun -s cumulative -l 40
@@ -112,7 +96,7 @@ if True:
     # _sum = [12, 24, 96]
     slope = cf.config['signalmanager_kw']['slope']
     _sum = cf.config['signalmanager_kw']['sum']
-    sm = sg.SignalManager(slope=slope, sum=_sum)
+    sm = sg.SignalManager(slope=slope, sum=_sum).register(mfm)
 
     n_periods = cfg['target_kw']['n_periods']
     # n_periods = 2
@@ -169,7 +153,7 @@ if True:
     max_train_size = None
     cv = TimeSeriesSplit(n_splits=n_splits, max_train_size=max_train_size)
 
-    wm = WeightsManager.from_config(df)
+    wm = WeightsManager.from_config(df).register(mfm)
 
     if regression:
         scoring = dict(rmse='neg_root_mean_squared_error')
@@ -198,7 +182,7 @@ if True:
     LGBM = LGBMClassifier if not regression else LGBMRegressor
     models = dict(
         lgbm=LGBM(
-            num_leaves=80, n_estimators=100, max_depth=20, boosting_type='dart', learning_rate=0.1,
+            num_leaves=100, n_estimators=100, max_depth=20, boosting_type='dart', learning_rate=0.1,
             # device='gpu', max_bins=15
         ))
 
@@ -213,10 +197,10 @@ if True:
 
 # %% - CROSS VALIDATION
 
-# --%%time
-#  --%%prun -s cumulative -l 40
+if False:
 
-if True:
+    # --%%time
+    #  --%%prun -s cumulative -l 40
     # steps = [
     #     (1, ('pca', PCA(n_components=60, random_state=0)))]
     # steps = None
@@ -230,8 +214,17 @@ if True:
 # %% - RUN STRAT
 
 # TODO test iter_predict maxhigh/minlow
+is_iter = True
 
-if False:
+mfm.check_end()
+mlflow.start_run(experiment_id='0')
+mlflow.log_param('is_iter', is_iter)
+
+# TODO make LGBMClassifier mfloggable?
+model_keys = ['boosting_type', 'num_leaves', 'max_depth', 'learning_rate', 'n_estimators']
+mlflow.log_params({k: v for k, v in mm.models[name].__dict__.items() if k in model_keys})
+
+if not is_iter:
     # if False:
     #     df_bbit = db.get_df('bybit', 'BTCUSD', startdate=dt(2021,1,1))
     #     df2 = df.pipe(live.replace_ohlc, df_bbit)
@@ -255,7 +248,7 @@ else:
             # min_size=mm.df_train.shape[0],
             max_train_size=None,
             # max_train_size=4*24*365*3,
-            # filter_fit_quantile=0.7,
+            filter_fit_quantile=0.6,
             regression=regression)
 
     df_pred_iter = df_pred.copy()
@@ -266,12 +259,24 @@ df_pred = df_pred \
 strat = ml.make_strat(symbol='XBTUSD', exch_name='bitmex', order_offset=-0.0006)
 
 cols = ['open', 'high', 'low', 'close', 'y_pred', 'proba_long',
-        'rolling_proba', 'signal', 'pred_max', 'pred_min', 'target_max',
-        'target_min']
+        'rolling_proba', 'signal']
 bm = bt.BacktestManager(
     startdate=mm.df_test.index[0],
     strat=strat,
-    df=df_pred.pipe(f.clean_cols, cols)).run(prnt=True)
+    df=df_pred.pipe(f.clean_cols, cols)).run(prnt=True).register(mfm)
+
+scores = dict(
+    acc=sk.accuracy_score(df_pred.target, df_pred.y_pred),
+    w_acc=sk.weighted_score(df_pred.target, df_pred.y_pred, wm.weights),
+)
+mlflow.log_metrics(scores)
+
+mfm.log_all()
+
+log_cols = ['target', 'y_pred', 'proba_long', 'rolling_proba', 'signal']
+mfm.log_df(df_pred[log_cols].dropna(), name='df_pred')
+
+mlflow.end_run()
 
 # %% - PLOT
 if True:
@@ -301,18 +306,18 @@ if True:
 # %% - INIT SHAP MANAGER
 # x_shap = x_shap.loc['2021-08-01':]
 # y_shap = y_shap.loc['2021-08-01':]
-spm = sk.ShapManager(df=df, ct=None, model=mm.models['lgbm'], n_sample=10_000)
+spm = sk.ShapManager(df=df, model=mm.models['lgbm'], n_sample=10_000)
+
+# %%
+res = spm.shap_n_important(n=70, save=True, upload=False, as_list=True)
+cols = res['most']
+cols
 
 # %% - SHAP PLOT
 spm.plot(plot_type='violin')
 
 # %%
 spm.force_plot(sample_n=0)
-
-# %%
-res = spm.shap_n_important(n=70, save=True, upload=False, as_list=True)
-cols = res['most']
-cols
 
 # %% LGBM Tree Digraph
 # spm.check_init()

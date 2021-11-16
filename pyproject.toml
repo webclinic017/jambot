@@ -51,6 +51,8 @@ graphviz = "^0.17"
 seaborn = "^0.11.2"
 llvmlite = "^0.37.0"
 shap = "^0.40.0"
+pyarrow = "^6.0.0"
+mlflow = "^1.21.0"
 
 [tool.pytest.ini_options]
 testpaths = [

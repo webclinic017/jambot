@@ -38,6 +38,13 @@ class Strategy(StrategyBase):
 
         f.set_self(vars())
 
+    @property
+    def log_items(self) -> Dict[str, Any]:
+        return super().log_items \
+            | dict(
+                order_offset=self.order_offset,
+                market_on_timeout=self.market_on_timeout)
+
     def limit_open(self, *args, **kw) -> LimitOrder:
         return self.limit_order(name='open', *args, **kw)
 

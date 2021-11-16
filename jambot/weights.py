@@ -8,11 +8,12 @@ from jambot import config as cf
 from jambot import functions as f
 from jambot import getlog
 from jambot.common import DictRepr
+from jambot.utils.mlflow import MLFlowLoggable
 
 log = getlog(__name__)
 
 
-class WeightsManager(DictRepr):
+class WeightsManager(DictRepr, MLFlowLoggable):
     """Class to manage creating weighted series and filtering by weights"""
 
     def __init__(self, df: pd.DataFrame, n_periods: int, weight_linear: bool = True):
@@ -34,6 +35,12 @@ class WeightsManager(DictRepr):
         return dict(
             df=f'{self.df.shape[0]:,.0f}',
             n_periods=self.n_periods,
+            weight_linear=self.weight_linear)
+
+    @property
+    def log_items(self) -> dict:
+        return dict(
+            weights_n_periods=self.n_periods,
             weight_linear=self.weight_linear)
 
     @property
@@ -65,6 +72,7 @@ class WeightsManager(DictRepr):
 
     def get_weight(self, df: pd.DataFrame, filter_quantile: int = None) -> pd.Series:
         """return single array of weighted values to pass as fit_params
+        - NOTE not used
 
         Parameters
         ----------
@@ -76,10 +84,6 @@ class WeightsManager(DictRepr):
         pd.Series
             column weighted by abs movement up/down in next n_periods
         """
-        # cols = ['high', 'low', 'close']
-        # s = df[cols] \
-        #     .pipe(self.add_all_signals) \
-        #     .assign(weight=lambda x: x.weight.fillna(x.weight.mean()).astype(np.float32))['weight']
 
         s = self.weights
         if not filter_quantile is None:
@@ -101,17 +105,12 @@ class WeightsManager(DictRepr):
             {lgbm__sample_weight: [0.5, ..., 1.0]}
         """
         name = f'{name}__' if not name is None else ''
-
-        # if weights is None:
-        #     weights = np.linspace(0.5, 1, n)
-
         return {f'{name}sample_weight': self.weights.loc[x.index]}
 
     def filter_highest(
             self,
             datas: Union[pd.DataFrame, pd.Series, list],
-            quantile: float = 0.5,
-    ) -> Union[pd.DataFrame, pd.Series, list]:
+            quantile: float = 0.5) -> Union[pd.DataFrame, pd.Series, list]:
         """Filter df or series to highest qualtile based on index of weights
 
         Parameters

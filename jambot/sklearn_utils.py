@@ -4,6 +4,7 @@ import time
 from datetime import datetime as dt
 from typing import *
 
+import mlflow
 import numpy as np
 import pandas as pd
 from joblib import delayed
@@ -14,6 +15,7 @@ from sklearn.exceptions import NotFittedError
 from sklearn.feature_extraction.text import _VectorizerMixin
 from sklearn.feature_selection._base import SelectorMixin
 from sklearn.linear_model import Ridge
+from sklearn.metrics import accuracy_score as sk_accuracy_score
 from sklearn.metrics import classification_report
 from sklearn.model_selection import (GridSearchCV, RandomizedSearchCV,
                                      cross_validate, train_test_split)
@@ -396,6 +398,9 @@ class ModelManager(object):
             filter_fit_quantile: float = None) -> pd.DataFrame:
         """Retrain model every x periods and add predictions for next batch_size"""
         from lightgbm import LGBMClassifier
+        df_orig = df.copy()  # to keep all original cols when returned
+        mlflow.log_metric('batch_size', batch_size)
+        mlflow.log_metric('filter_fit_quantile', filter_fit_quantile)
 
         nrows = df.shape[0]
         min_size = df[df.index < split_date].shape[0]
@@ -405,7 +410,6 @@ class ModelManager(object):
             model = self.pipes[name].named_steps[name]
 
         drop_cols = [c for c in cf.config['drop_cols'] if c in df.columns]
-        df_ohlc = df[drop_cols]
         df = df.pipe(f.safe_drop, drop_cols)
 
         def _get_imp_feats(x, y):
@@ -471,7 +475,7 @@ class ModelManager(object):
 
         result = ProgressParallel(batch_size=2, n_jobs=-1, total=num_batches)(delayed(_fit)(i=i)
                                                                               for i in range(num_batches))
-        return df_ohlc.pipe(f.left_merge, pd.concat([df for df in result if not df is None]))
+        return df_orig.pipe(f.left_merge, pd.concat([df for df in result if not df is None]))
 
     def add_predict(
             self,
@@ -669,6 +673,8 @@ class ShapManager():
         if wm is None:
             wm = WeightsManager.from_config(df)
 
+        self.wm = wm
+
         bs = BlobStorage(container=cf.p_data / 'feats')
         f.set_self(vars())
         self._shap_values = None
@@ -695,7 +701,7 @@ class ShapManager():
         Tuple[shap.TreeExplainer, List[np.array], pd.DataFrame, pd.DataFrame]
         """
         df = self.df
-        df = self.wm.filter_highest(df=df, quantile=0.6)
+        df = self.wm.filter_highest(df, quantile=0.6)
 
         x = df.drop(columns=['target'])
         y = df.target
@@ -771,13 +777,13 @@ class ShapManager():
         self.check_init()
 
         # get correct column transformer index for numeric
-        if not self.ct is None:
-            transformer = 'numeric'
-            transformers = self.ct.transformers
-            t_idx = [t[0] for t in transformers].index(transformer)
-            col_names = transformers[t_idx][2]  # 2 is column names
-        else:
-            col_names = self.x_enc.columns.tolist()
+        # if not self.ct is None:
+        #     transformer = 'numeric'
+        #     transformers = self.ct.transformers
+        #     t_idx = [t[0] for t in transformers].index(transformer)
+        #     col_names = transformers[t_idx][2]  # 2 is column names
+        # else:
+        col_names = self.x_enc.columns.tolist()
 
         # 0/1 could be positive/negative class, not sure which
         # NOTE could maybe try mean of both?
@@ -1189,10 +1195,24 @@ def weighted_score(
     -------
     float
     """
+    if not isinstance(y_pred, pd.Series):
+        log.warning('converting y_pred to pd.Series')
+        y_pred = pd.Series(y_pred, index=y_true.index)
+
+    # drop NA from y_pred, match y_true index
+    y_pred = y_pred.dropna()
+    y_true = y_true.loc[y_pred.index]
 
     # slice full weights
     weights = weights.loc[y_true.index]
     return np.mean(np.where(y_true.astype(int) == y_pred.astype(int), 1, -1) * weights) * 100
+
+
+def accuracy_score(y_true: pd.Series, y_pred: pd.Series) -> float:
+    """Simple wrapper around sklearn accuracy_score to drop NAs"""
+    y_pred = y_pred.dropna()
+    y_true = y_true.loc[y_pred.index]
+    return sk_accuracy_score(y_true, y_pred)
 
 
 def smape(y_true, y_pred, h=1, **kw):

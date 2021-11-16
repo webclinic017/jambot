@@ -8,11 +8,12 @@ from jambot import getlog
 from jambot.tradesys.base import Observer
 from jambot.tradesys.broker import Broker
 from jambot.tradesys.trade import Trade
+from jambot.utils.mlflow import MLFlowLoggable
 
 log = getlog(__name__)
 
 
-class StrategyBase(Observer):
+class StrategyBase(Observer, MLFlowLoggable):
     def __init__(
             self,
             symbol: str,
@@ -53,6 +54,12 @@ class StrategyBase(Observer):
             m |= {k: m_fmt[k].format(v) if k in m_fmt else v for k, v in _m.items()}
 
         return m
+
+    @property
+    def log_items(self) -> Dict[str, Any]:
+        return dict(
+            symbol=self.symbol,
+            lev=self.lev)
 
     @property
     def df(self) -> pd.DataFrame:
