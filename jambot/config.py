@@ -19,6 +19,7 @@ p_sec = p_res / 'secrets'
 
 # set data dir for local vs azure
 p_data = p_root / 'data' if not AZURE_WEB else Path.home() / 'data'
+p_ftr = p_data / 'feather'
 
 config = dict(
     d_lower=dt(2017, 1, 1),
