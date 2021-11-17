@@ -44,12 +44,12 @@ if True:
     from jambot.tradesys import backtest as bt
     from jambot.tradesys.strategies import ml as ml
     from jambot.utils import styles as st
-    from jambot.utils.mlflow import MLFlowManager
+    from jambot.utils.mlflow import MlflowManager
     from jambot.weights import WeightsManager
 
     log = getlog(__name__)
 
-    mfm = MLFlowManager()
+    mfm = MlflowManager()
 
     plt.rcParams |= {'figure.figsize': (12, 5), 'font.size': 14, 'lines.linewidth': 1.0}
     plt.style.use('dark_background')
@@ -215,68 +215,61 @@ if False:
 
 # TODO test iter_predict maxhigh/minlow
 is_iter = True
+with mlflow.start_run(experiment_id='0'):
+    if not is_iter:
+        # if False:
+        #     df_bbit = db.get_df('bybit', 'BTCUSD', startdate=dt(2021,1,1))
+        #     df2 = df.pipe(live.replace_ohlc, df_bbit)
 
-mfm.check_end()
-mlflow.start_run(experiment_id='0')
-mlflow.log_param('is_iter', is_iter)
+        df_pred = mm \
+            .add_predict(
+                df=df,
+                weighted_fit=True,
+                filter_fit_quantile=0.6,
+                name=name,
+                proba=not regression)
+    else:
+        # retrain every x hours (24 ish) and predict for the test set
+        # NOTE limiting max train data to ~3yrs ish could be helpful
+        df_pred = mm \
+            .add_predict_iter(
+                df=df,
+                name=name,
+                batch_size=24 * 4 * 16,
+                split_date=split_date,
+                # min_size=mm.df_train.shape[0],
+                max_train_size=None,
+                # max_train_size=4*24*365*3,
+                filter_fit_quantile=0.9,
+                regression=regression)
 
-# TODO make LGBMClassifier mfloggable?
-model_keys = ['boosting_type', 'num_leaves', 'max_depth', 'learning_rate', 'n_estimators']
-mlflow.log_params({k: v for k, v in mm.models[name].__dict__.items() if k in model_keys})
+        df_pred_iter = df_pred.copy()
 
-if not is_iter:
-    # if False:
-    #     df_bbit = db.get_df('bybit', 'BTCUSD', startdate=dt(2021,1,1))
-    #     df2 = df.pipe(live.replace_ohlc, df_bbit)
+    df_pred = df_pred \
+        .pipe(md.add_proba_trade_signal, regression=regression)
 
-    df_pred = mm \
-        .add_predict(
-            df=df,
-            weighted_fit=True,
-            filter_fit_quantile=0.6,
-            name=name,
-            proba=not regression)
-else:
-    # retrain every x hours (24 ish) and predict for the test set
-    # NOTE limiting max train data to ~3yrs ish could be helpful
-    df_pred = mm \
-        .add_predict_iter(
-            df=df,
-            name=name,
-            batch_size=24 * 4 * 8,
-            split_date=split_date,
-            # min_size=mm.df_train.shape[0],
-            max_train_size=None,
-            # max_train_size=4*24*365*3,
-            filter_fit_quantile=0.6,
-            regression=regression)
+    strat = ml.make_strat(symbol='XBTUSD', exch_name='bitmex', order_offset=-0.0006).register(mfm)
 
-    df_pred_iter = df_pred.copy()
+    cols = ['open', 'high', 'low', 'close', 'target', 'y_pred', 'proba_long',
+            'rolling_proba', 'signal']
+    bm = bt.BacktestManager(
+        startdate=mm.df_test.index[0],
+        strat=strat,
+        df=df_pred.pipe(f.clean_cols, cols)).run(prnt=True).register(mfm)
 
-df_pred = df_pred \
-    .pipe(md.add_proba_trade_signal, regression=regression)
+    scores = dict(
+        acc=sk.accuracy_score(df_pred.target, df_pred.y_pred),
+        w_acc=sk.weighted_score(df_pred.target, df_pred.y_pred, wm.weights))
 
-strat = ml.make_strat(symbol='XBTUSD', exch_name='bitmex', order_offset=-0.0006)
+    mlflow.log_metrics(scores)
+    mlflow.log_param('interval', interval)
+    mlflow.log_param('is_iter', is_iter)
 
-cols = ['open', 'high', 'low', 'close', 'y_pred', 'proba_long',
-        'rolling_proba', 'signal']
-bm = bt.BacktestManager(
-    startdate=mm.df_test.index[0],
-    strat=strat,
-    df=df_pred.pipe(f.clean_cols, cols)).run(prnt=True).register(mfm)
+    # TODO make LGBMClassifier mfloggable?
+    model_keys = ['boosting_type', 'num_leaves', 'max_depth', 'learning_rate', 'n_estimators']
+    mlflow.log_params({k: v for k, v in mm.models[name].__dict__.items() if k in model_keys})
 
-scores = dict(
-    acc=sk.accuracy_score(df_pred.target, df_pred.y_pred),
-    w_acc=sk.weighted_score(df_pred.target, df_pred.y_pred, wm.weights),
-)
-mlflow.log_metrics(scores)
-
-mfm.log_all()
-
-log_cols = ['target', 'y_pred', 'proba_long', 'rolling_proba', 'signal']
-mfm.log_df(df_pred[log_cols].dropna(), name='df_pred')
-
-mlflow.end_run()
+    mfm.log_all()
 
 # %% - PLOT
 if True:

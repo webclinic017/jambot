@@ -8,12 +8,12 @@ from jambot import config as cf
 from jambot import functions as f
 from jambot import getlog
 from jambot.common import DictRepr
-from jambot.utils.mlflow import MLFlowLoggable
+from jambot.utils.mlflow import MlflowLoggable
 
 log = getlog(__name__)
 
 
-class WeightsManager(DictRepr, MLFlowLoggable):
+class WeightsManager(DictRepr, MlflowLoggable):
     """Class to manage creating weighted series and filtering by weights"""
 
     def __init__(self, df: pd.DataFrame, n_periods: int, weight_linear: bool = True):

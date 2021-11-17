@@ -29,7 +29,7 @@ from jambot import getlog
 from jambot import sklearn_utils as sk
 from jambot.config import AZURE_WEB
 from jambot.utils.azureblob import BlobStorage
-from jambot.utils.mlflow import MLFlowLoggable
+from jambot.utils.mlflow import MlflowLoggable
 
 log = getlog(__name__)
 
@@ -38,7 +38,7 @@ warnings.filterwarnings('ignore', message='invalid value encountered in double_s
 # TODO distance to bolinger bands!
 
 
-class SignalManager(MLFlowLoggable):
+class SignalManager(MlflowLoggable):
     def __init__(
             self,
             signals_list: list = None,
@@ -62,12 +62,11 @@ class SignalManager(MLFlowLoggable):
         """Merge all logable params from signal groups"""
         m = {}
         for sg in self.signal_groups.values():
-            if isinstance(sg, MLFlowLoggable):
+            if isinstance(sg, MlflowLoggable):
                 m |= sg.log_items
 
         return m
 
-    @property
     def log_artifact(self) -> Path:
         """Save sm used columns as artifact for mlflow"""
         p = f.save_pickle(self.final_feats, cf.p_data / 'feats', 'feats')
@@ -957,7 +956,7 @@ class CandlePatterns(SignalGroup):
         f.set_self(vars())
 
 
-class TargetClass(SignalGroup, MLFlowLoggable):
+class TargetClass(SignalGroup, MlflowLoggable):
     """
     target classification
     - 3 classes

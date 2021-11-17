@@ -395,12 +395,14 @@ class ModelManager(object):
             # min_size: int = 180 * 24,
             max_train_size: int = None,
             regression: bool = False,
-            filter_fit_quantile: float = None) -> pd.DataFrame:
+            filter_fit_quantile: float = None,
+            retrain_feats: bool = False) -> pd.DataFrame:
         """Retrain model every x periods and add predictions for next batch_size"""
         from lightgbm import LGBMClassifier
         df_orig = df.copy()  # to keep all original cols when returned
         mlflow.log_metric('batch_size', batch_size)
         mlflow.log_metric('filter_fit_quantile', filter_fit_quantile)
+        mlflow.log_metric('retrain_feats', retrain_feats)
 
         nrows = df.shape[0]
         min_size = df[df.index < split_date].shape[0]
@@ -447,17 +449,18 @@ class ModelManager(object):
                 df_train,
                 target=self.target)
 
+            x_test, _ = split(df.loc[idx_test], target=self.target)
+
             # use shap to get important cols at each iter
-            # imp_cols = _get_imp_feats(x_train, y_train)
-            # x_train = x_train[imp_cols]
+            if retrain_feats:
+                imp_cols = _get_imp_feats(x_train, y_train)
+                x_train = x_train[imp_cols]
+                x_test = x_test[imp_cols]
 
             model.fit(
                 x_train,
                 y_train,
                 **self.wm.fit_params(x_train))
-
-            x_test, _ = split(df.loc[idx_test], target=self.target)
-            # x_test = x_test[imp_cols]
 
             if len(idx_test) == 0:
                 return None

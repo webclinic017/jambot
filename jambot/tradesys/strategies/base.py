@@ -8,12 +8,12 @@ from jambot import getlog
 from jambot.tradesys.base import Observer
 from jambot.tradesys.broker import Broker
 from jambot.tradesys.trade import Trade
-from jambot.utils.mlflow import MLFlowLoggable
+from jambot.utils.mlflow import MlflowLoggable
 
 log = getlog(__name__)
 
 
-class StrategyBase(Observer, MLFlowLoggable):
+class StrategyBase(Observer, MlflowLoggable):
     def __init__(
             self,
             symbol: str,
@@ -60,6 +60,9 @@ class StrategyBase(Observer, MLFlowLoggable):
         return dict(
             symbol=self.symbol,
             lev=self.lev)
+
+    def log_dfs(self) -> dict:
+        return dict(df=self.df_trades(), name='df_trades', keep_index=False)
 
     @property
     def df(self) -> pd.DataFrame:
@@ -207,8 +210,12 @@ class StrategyBase(Observer, MLFlowLoggable):
 
         return pd.DataFrame \
             .from_dict(data=data) \
-            .assign(profitable=lambda x: x.pnl > 0) \
-            .drop_duplicates(subset=['t_num'], keep='first')
+            .assign(
+                profitable=lambda x: x.pnl > 0,
+                status=lambda x: x.status.astype(str)) \
+            .drop_duplicates(subset=['t_num'], keep='first') \
+            .rename(columns=dict(ts='timestamp')) \
+            .set_index('timestamp')
 
     def trade_dist(self) -> None:
         """Show trade % win/loss histogram"""
