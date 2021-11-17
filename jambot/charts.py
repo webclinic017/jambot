@@ -17,6 +17,7 @@ from jambot import SYMBOL
 from jambot import functions as f
 from jambot import getlog
 from jambot.config import colors
+from jambot.utils.mlflow import MlflowManager
 
 log = getlog(__name__)
 
@@ -648,3 +649,12 @@ def plot_strat_results(
         regression=regression)
 
     fig.show()
+
+
+def plot_runs_pnl():
+    mfm = MlflowManager()
+    df = mfm.compare_df_cols('df_trades', 'pnl') \
+        .melt(value_name='pnl', var_name='run', ignore_index=False) \
+        .reset_index(drop=False)
+
+    sns.scatterplot(x='ts', y='pnl', hue='run', data=df, alpha=0.4, size=0.5)
