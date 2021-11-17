@@ -350,6 +350,30 @@ class Wallet(Observer):
         df = pd.DataFrame(data=data, columns=cols)
         display(df)
 
+    def s_pnl_monthly(self, df: pd.DataFrame = None) -> pd.Series:
+        """Get series of monthly pnl
+
+        Parameters
+        ----------
+        df : pd.DataFrame, optional
+            df_balance (pass in to avoid recalc), by default None
+
+        Returns
+        -------
+        pd.Series
+            df with monthly timestamps index
+        """
+        if df is None:
+            df = self.df_balance
+
+        s = df.resample(rule='M').last()
+        s.loc[s.index.min() + delta(days=-31)] = 1
+        s.sort_index(inplace=True)
+
+        return s.pct_change() \
+            .set_index(s.index + delta(days=-15)) \
+            .dropna()['balance']
+
     @property
     def df_balance(self) -> pd.DataFrame:
         """df of balance at all transactions"""
@@ -400,13 +424,7 @@ class Wallet(Observer):
             gridspec_kw=dict(height_ratios=(3, 1)))
 
         # monthly pct change
-        s = df.resample(rule='M').last()
-        s.loc[s.index.min() + delta(days=-31)] = 1
-        s.sort_index(inplace=True)
-
-        s = s.pct_change() \
-            .set_index(s.index + delta(days=-15)) \
-            .dropna()['balance']
+        s = self.s_pnl_monthly(df=df)
 
         blue = rgb2hex(_cmap(0))
         red = rgb2hex(_cmap(_cmap.N))
