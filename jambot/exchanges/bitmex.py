@@ -74,21 +74,11 @@ class Bitmex(SwaggerExchange):
     api_host_test = 'https://testnet.bitmex.com'
     api_spec = '/api/explorer/swagger.json'
 
-    order_params = dict(
-        submit=dict(
-            func='Order_newBulk',
-            order_kw='orders',
-            keys=('symbol', 'ordType', 'orderQty', 'clOrdID', 'execInst', 'price', 'stopPx')),
-        amend=dict(
-            func='Order_amendBulk',
-            order_kw='orders',
-            keys=('orderID', 'symbol', 'orderQty', 'price', 'stopPx')),
-        cancel=dict(
-            func='Order_cancel',
-            order_kw=order_keys['order_id'],
-            keys=('orderID',)),
-        cancel_all=dict(
-            func='Order_cancelAll'))
+    order_endpoints = dict(
+        submit='Order.new',
+        amend='Order.amend',
+        cancel='Order.cancel',
+        cancel_all='Order.cancelAll')
 
     def __init__(self, user: str, test: bool = False, refresh: bool = False, **kw):
         super().__init__(user=user, test=test, **kw)
@@ -126,7 +116,9 @@ class Bitmex(SwaggerExchange):
         """
 
         # request submitted as str, split it and call on client
+        _request = str(request)
         request = self._make_request(request, **kw)
+        # log.warning(f'[{_request}] request data: {request.future.request.data}')
 
         # TODO possibly handle return data structure here?
 
@@ -212,36 +204,35 @@ class Bitmex(SwaggerExchange):
     def _get_total_balance(self) -> dict:
         return self.req('User.getMargin', currency='XBt')
 
-    def _route_order_request(self, action: str, order_specs: List[ExchOrder]):
+    def _route_order_request(self, action: str, order_specs: List[dict]):
+        """Route bitmex order request
 
+        Parameters
+        ----------
+        action : str
+            submit | amend | cancel | cancel_all
+        order_specs : List[dict]
+            list of order dicts with keys converted to Bitmex keys
+        """
         # could check/set exchange here
+        endpoint = self.order_endpoints[action]
 
-        # convert everything to list of dicts first?
-        params = self.order_params.get(action)
-        keys = params.get('keys', None)
-        order_kw = params.get('order_kw', None)
-        func = getattr(self.client.Order, params['func'])
+        if action == 'cancel':
+            # cancel can still use bulk, just needs list of orderIds
+            order_specs = [s['orderID'] for s in order_specs]
+            order_specs = {'orderID': json.dumps(order_specs)}
 
-        # filter correct keys for action
-        if keys:
-            order_specs = [
-                {k: v for k, v in s.items() if k in keys and not v is None}
-                for s in order_specs]
+        return_specs = []
+        for spec in f.as_list(order_specs):
 
-        if action == 'cancel_all':
-            # cancel_all just uses dict(symbol='XBTUSD')
-            if isinstance(order_specs, list):
-                order_kws = order_specs[0]
-            else:
-                order_kws = order_specs
-        else:
-            if action == 'cancel':
-                # cancel just needs list of orderIds
-                order_specs = f.flatten_list_list([list(s.values()) for s in order_specs])
+            # cant amend with clOrdID, otherwise thinks trying to change it
+            if action == 'amend':
+                spec.pop('clOrdID')
 
-            order_kws = {order_kw: json.dumps(order_specs)}
+            ret_spec = self.req(endpoint, **spec)
+            f.safe_append(return_specs, ret_spec)
 
-        return self.check_request(func(**order_kws))
+        return return_specs
 
     def get_partial(self, symbol):
         timediff = 0

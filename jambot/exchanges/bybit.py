@@ -113,12 +113,11 @@ class Bybit(SwaggerExchange):
     api_host_test = 'https://api-testnet.bybit.com'
     api_spec = '/doc/swagger/v_0_2_12.txt'
 
-    order_params = dict(
-        submit=dict(func='Order.new'),
-        amend=dict(func='Order.replace'),
-        cancel=dict(func='Order.cancel'),
-        cancel_all=dict(func='Order.cancelAll')
-    )
+    order_endpoints = dict(
+        submit='Order.new',
+        amend='Order.replace',
+        cancel='Order.cancel',
+        cancel_all='Order.cancelAll')
 
     def __init__(self, user: str, test: bool = False, refresh: bool = False, **kw):
         super().__init__(user=user, test=test, **kw)
@@ -340,9 +339,8 @@ class Bybit(SwaggerExchange):
 
         # inspect function to get allowed parameters
         # eg client.Order.Order_new.operation.params
-        params = self.order_params.get(action)
+        endpoint = self.order_endpoints[action].split('.')[1]
         cancel_all = action == 'cancel_all'
-        endpoint = params['func'].split('.')[1]
 
         # for canceling all, need to make two calls to close stops too...
         if cancel_all:

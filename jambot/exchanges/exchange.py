@@ -134,7 +134,7 @@ class SwaggerExchange(Exchange, metaclass=ABCMeta):
     api_host = abstractproperty()
     api_host_test = abstractproperty()
     api_spec = abstractproperty()
-    order_params = abstractproperty()
+    order_endpoints = abstractproperty()
     conv_symbol = {}
     other_keys = abstractproperty()
     m_emoji = dict(submit='✅ ', amend='🌀 ', cancel='❌ ')
