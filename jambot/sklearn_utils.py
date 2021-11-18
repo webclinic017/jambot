@@ -402,7 +402,7 @@ class ModelManager(object):
         df_orig = df.copy()  # to keep all original cols when returned
         mlflow.log_metric('batch_size', batch_size)
         mlflow.log_metric('filter_fit_quantile', filter_fit_quantile)
-        mlflow.log_metric('retrain_feats', retrain_feats)
+        mlflow.log_param('retrain_feats', retrain_feats)
 
         nrows = df.shape[0]
         min_size = df[df.index < split_date].shape[0]
