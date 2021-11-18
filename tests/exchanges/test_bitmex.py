@@ -146,8 +146,8 @@ def test_reconcile_orders(exch: SwaggerExchange, last_close: float, symbol: str)
         # assert correct orders submitted, cancelled, and amended
         if exch.exch_name == 'bybit':
             # bybit api seems to be too slow even with async orders (only sometimes)
-            log.info('Sleeping 1s for Bybit')
-            time.sleep(1)
+            log.warning('Sleeping 10s for Bybit')
+            time.sleep(10)
 
         final_orders = exch.get_orders(
             bot_only=True,
