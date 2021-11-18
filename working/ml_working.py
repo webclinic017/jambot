@@ -4,6 +4,7 @@
 if True:
     from datetime import datetime as dt
     from datetime import timedelta as delta
+    from itertools import product
     from pathlib import Path
 
     import lightgbm as lgb
@@ -30,7 +31,6 @@ if True:
     from sklearn.tree import (DecisionTreeClassifier, DecisionTreeRegressor,
                               export_graphviz)
 
-    # from xgboost import XGBClassifier, XGBRegressor
     from jambot import charts as ch
     from jambot import config as cf
     from jambot import data
@@ -215,61 +215,73 @@ if False:
 
 # TODO test iter_predict maxhigh/minlow
 is_iter = True
-with mlflow.start_run(experiment_id='0'):
-    if not is_iter:
-        # if False:
-        #     df_bbit = db.get_df('bybit', 'BTCUSD', startdate=dt(2021,1,1))
-        #     df2 = df.pipe(live.replace_ohlc, df_bbit)
 
-        df_pred = mm \
-            .add_predict(
-                df=df,
-                weighted_fit=True,
-                filter_fit_quantile=0.6,
-                name=name,
-                proba=not regression)
-    else:
-        # retrain every x hours (24 ish) and predict for the test set
-        # NOTE limiting max train data to ~3yrs ish could be helpful
-        df_pred = mm \
-            .add_predict_iter(
-                df=df,
-                name=name,
-                batch_size=24 * 4 * 16,
-                split_date=split_date,
-                # min_size=mm.df_train.shape[0],
-                max_train_size=None,
-                # max_train_size=4*24*365*3,
-                filter_fit_quantile=0.9,
-                regression=regression)
+# ns = (40, 50, 60, 70, 80, 90, 100)
+# ns = (5, 10, 15, 20, 25, 30, 35, 40)
+ns = (0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9)
 
-        df_pred_iter = df_pred.copy()
+max_depths = (5, 10, 15, 20, 25, 30, 35, 40)
+num_leaves = (40, 50, 60, 70, 80, 90, 100)
 
-    df_pred = df_pred \
-        .pipe(md.add_proba_trade_signal, regression=regression)
+# for n in ns:
+for max_depth, n_leaves in product(max_depths, num_leaves):
+    log.info(f'max_depth: {max_depth}, num_leaves: {n_leaves}')
 
-    strat = ml.make_strat(symbol='XBTUSD', exch_name='bitmex', order_offset=-0.0006).register(mfm)
+    with mlflow.start_run(experiment_id='0'):
+        model = LGBMClassifier(
+            num_leaves=n_leaves, n_estimators=50, max_depth=max_depth, boosting_type='dart', learning_rate=0.1)
 
-    cols = ['open', 'high', 'low', 'close', 'target', 'y_pred', 'proba_long',
-            'rolling_proba', 'signal']
-    bm = bt.BacktestManager(
-        startdate=mm.df_test.index[0],
-        strat=strat,
-        df=df_pred.pipe(f.clean_cols, cols)).run(prnt=True).register(mfm)
+        if not is_iter:
+            # if False:
+            #     df_bbit = db.get_df('bybit', 'BTCUSD', startdate=dt(2021,1,1))
+            #     df2 = df.pipe(live.replace_ohlc, df_bbit)
 
-    scores = dict(
-        acc=sk.accuracy_score(df_pred.target, df_pred.y_pred),
-        w_acc=sk.weighted_score(df_pred.target, df_pred.y_pred, wm.weights))
+            df_pred = mm \
+                .add_predict(
+                    df=df,
+                    weighted_fit=True,
+                    filter_fit_quantile=0.6,
+                    name=name,
+                    proba=not regression)
+        else:
+            # retrain every x hours (24 ish) and predict for the test set
+            # NOTE limiting max train data to ~3yrs ish could be helpful
+            df_pred = mm \
+                .add_predict_iter(
+                    df=df,
+                    name=name,
+                    model=model,
+                    batch_size=24 * 4 * 8,
+                    split_date=split_date,
+                    # min_size=mm.df_train.shape[0],
+                    max_train_size=None,
+                    # max_train_size=4*24*365*3,
+                    filter_fit_quantile=0.6,
+                    regression=regression)
 
-    mlflow.log_metrics(scores)
-    mlflow.log_param('interval', interval)
-    mlflow.log_param('is_iter', is_iter)
+        df_pred = df_pred \
+            .pipe(md.add_proba_trade_signal, regression=regression)
 
-    # TODO make LGBMClassifier mfloggable?
-    model_keys = ['boosting_type', 'num_leaves', 'max_depth', 'learning_rate', 'n_estimators']
-    mlflow.log_params({k: v for k, v in mm.models[name].__dict__.items() if k in model_keys})
+        strat = ml.make_strat(symbol='XBTUSD', exch_name='bitmex', order_offset=-0.0006).register(mfm)
 
-    mfm.log_all()
+        bm = bt.BacktestManager(
+            startdate=mm.df_test.index[0],
+            strat=strat,
+            df=df_pred).run(prnt=False).register(mfm)
+
+        scores = dict(
+            acc=sk.accuracy_score(df_pred.target, df_pred.y_pred),
+            w_acc=sk.weighted_score(df_pred.target, df_pred.y_pred, wm.weights))
+
+        mlflow.log_metrics(scores)
+        mlflow.log_param('interval', interval)
+        mlflow.log_param('is_iter', is_iter)
+
+        # TODO make LGBMClassifier mfloggable?
+        model_keys = ['boosting_type', 'num_leaves', 'max_depth', 'learning_rate', 'n_estimators']
+        mlflow.log_params({k: v for k, v in model.__dict__.items() if k in model_keys})
+
+        mfm.log_all()
 
 # %% - PLOT
 if True:
