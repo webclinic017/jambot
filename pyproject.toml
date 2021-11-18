@@ -66,7 +66,8 @@ filterwarnings = [
     "ignore:private variables, such as '_DataType__str'",
     "ignore:Use of .. or absolute path in a resource path",
     "ignore:Failed to parse headers",
-    "ignore:DataFrame is highly fragmented"
+    "ignore:DataFrame is highly fragmented",
+    "ignore:invalid value encountered in double_scalars"
 ]
 
 
