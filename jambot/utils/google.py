@@ -252,12 +252,13 @@ class TradeHistory(Bitmex):
 
     def set_df(self, strat, last: int = 20, **kw) -> None:
         """Set df of trade history to gs"""
-        cols = ['ts', 'side', 'dur', 'entry', 'exit', 'pnl', 'pnl_acct', 'profitable', 'status']
+        cols = ['side', 'dur', 'entry', 'exit', 'pnl', 'pnl_acct', 'profitable', 'status']
         df = strat.df_trades(last=last)[cols].copy() \
             .pipe(self.as_percent, cols=('pnl', 'pnl_acct')) \
             .pipe(f.remove_underscore) \
+            .reset_index(drop=False) \
             .pipe(self.add_blank_rows, last=last) \
-            .assign(ts=lambda x: x.ts.dt.strftime('%Y-%m-%d %H:%M'))
+            .assign(timestamp=lambda x: x.timestamp.dt.strftime('%Y-%m-%d %H:%M'))
 
         super().set_df(df=df, **kw)
 
