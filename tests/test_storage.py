@@ -1,14 +1,9 @@
 import logging
-import warnings
 
 from pytest import fixture
 
 from jambot.livetrading import ExchangeManager
 from jambot.ml.storage import ModelStorageManager
-
-# doesn't seem to work
-warnings.filterwarnings('ignore', message='.*Failed to parse headers.*')
-warnings.filterwarnings('ignore', message='.*DataFrame is highly fragmented')
 
 # azure storage logger logs everything to info by default
 logging.getLogger('azure.core.pipeline.policies.http_logging_policy').disabled = True
