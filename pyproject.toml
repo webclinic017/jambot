@@ -53,14 +53,22 @@ llvmlite = "^0.37.0"
 shap = "^0.40.0"
 pyarrow = "^6.0.0"
 mlflow = "^1.21.0"
+scikit-optimize = "^0.9.0"
 
 [tool.pytest.ini_options]
 testpaths = [
     "tests"]
 filterwarnings = [
     "ignore:`np.long` is a deprecated",
-    "ignore:.*format is not registered"
+    "ignore:`np.object` is a deprecated",
+    "ignore:.*format is not registered",
+    "ignore:Call to deprecated create function",
+    "ignore:private variables, such as '_DataType__str'",
+    "ignore:Use of .. or absolute path in a resource path",
+    "ignore:Failed to parse headers",
+    "ignore:DataFrame is highly fragmented"
 ]
+
 
 [tool.pyright]
 include = ["jambot", "tests"]
