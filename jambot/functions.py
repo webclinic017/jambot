@@ -687,3 +687,60 @@ def parse_datecols(df, format=None):
     df[datecols] = df[datecols].apply(
         pd.to_datetime, errors='coerce', format=format)
     return df
+
+
+def ci_rate(final: float, periods: int, initial: float = 1.0) -> float:
+    """Calc compount interest rate
+    - r = (A / P)^(1 / n) - 1
+
+    Parameters
+    ----------
+    final : float
+        final value
+    periods : int
+        num compounding periods
+    initial : float, optional
+        initial value, default 1.0
+
+    Returns
+    -------
+    float
+        interest rate
+    """
+    return (final / initial) ** (1 / periods) - 1
+
+
+def ci_final(periods: int, rate: float, initial: float = 1.0) -> float:
+    """Calc compounded future value
+    - FV = PV * (1 + r) ^ n
+
+    Parameters
+    ----------
+    periods : int
+    rate : float
+    initial : float, optional
+        default 1.0
+
+    Returns
+    -------
+    float
+        final value
+    """
+    return initial * (1 + rate) ** periods
+
+
+def ci_daily_monthly(final: float, days: int) -> float:
+    """Naive convert daily compound interest rate to monthly
+
+    Parameters
+    ----------
+    final : float
+    days : int
+
+    Returns
+    -------
+    float
+        estimated monthly ci rate
+    """
+    r_daily = ci_rate(final=final, periods=days)
+    return (1 + r_daily) ** (1 * 30)
