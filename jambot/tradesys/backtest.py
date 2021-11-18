@@ -1,5 +1,6 @@
 from typing import *
 
+import numpy as np
 import pandas as pd
 
 from jambot import display
@@ -31,7 +32,8 @@ class BacktestManager(Clock, MlflowLoggable):
         filled='{:,.0f}',
         total='{:,.0f}',
         gpct='{:.0%}',
-        gfpct='{:.0%}')
+        gfpct='{:.0%}',
+        ci_monthly='{:.2f}')
 
     # rename data cols for display
     m_conv = dict(
@@ -51,6 +53,10 @@ class BacktestManager(Clock, MlflowLoggable):
             **kw):
 
         super().__init__(df=df, **kw)
+
+        cols = ['open', 'high', 'low', 'close', 'target', 'y_pred', 'proba_long',
+                'rolling_proba', 'signal']
+        df = df.pipe(f.clean_cols, cols)
 
         self.end_session = SignalEvent()
 
@@ -150,4 +156,5 @@ class BacktestManager(Clock, MlflowLoggable):
             from_dict(data, orient='index').T \
             .assign(
                 pct_good_filled=lambda x: x.good / x.filled,
-                pct_good_total=lambda x: x.good / x.total)
+                pct_good_total=lambda x: x.good / x.total,
+                ci_monthly=lambda x: np.vectorize(f.ci_daily_monthly)(x.final, (x.end - x.start).dt.days))
