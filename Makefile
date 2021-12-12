@@ -48,7 +48,7 @@ reqs:  ## make requirements.txt for function app
 
 .PHONY : test
 test:  ## run tests
-	@poetry run pytest
+	@poetry run pytest --cov=jambot
 
 .PHONY : creds
 creds:  ## re-encrypt credentials
