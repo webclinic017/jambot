@@ -1,10 +1,9 @@
 from typing import *
 
 import pandas as pd
+from jgutils import functions as jf
 
-from jambot import display
-from jambot import functions as f
-from jambot import getlog
+from jambot import display, getlog
 from jambot.tradesys.base import Observer
 from jambot.tradesys.broker import Broker
 from jambot.tradesys.trade import Trade
@@ -30,7 +29,7 @@ class StrategyBase(Observer, MlflowLoggable):
         self.wallet = self._broker.get_wallet(symbol)
         self.wallet.lev = lev
 
-        f.set_self(vars())
+        jf.set_self()
 
     def on_attach(self):
         """Market close last trade at end of session (if not live trading)"""

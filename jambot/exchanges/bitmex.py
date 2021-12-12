@@ -11,6 +11,7 @@ import numpy as np
 import pandas as pd
 from bitmex import bitmex
 from BitMEXAPIKeyAuthenticator import APIKeyAuthenticator
+from jgutils import functions as jf
 
 from jambot import SYMBOL
 from jambot import functions as f
@@ -84,7 +85,7 @@ class Bitmex(SwaggerExchange):
         super().__init__(user=user, test=test, **kw)
         self.partialcandle = None
 
-        f.set_self(vars(), exclude=('refresh',))
+        jf.set_self(exclude=('refresh',))
 
         if refresh:
             self.refresh()
@@ -223,14 +224,14 @@ class Bitmex(SwaggerExchange):
             order_specs = {'orderID': json.dumps(order_specs)}
 
         return_specs = []
-        for spec in f.as_list(order_specs):
+        for spec in jf.as_list(order_specs):
 
             # cant amend with clOrdID, otherwise thinks trying to change it
             if action == 'amend':
                 spec.pop('clOrdID')
 
             ret_spec = self.req(endpoint, **spec)
-            f.safe_append(return_specs, ret_spec)
+            jf.safe_append(return_specs, ret_spec)
 
         return return_specs
 
@@ -472,7 +473,7 @@ class Bitmex(SwaggerExchange):
         data = self.paged_req(
             'Funding.get',
             page_max=500,
-            filter=json.dumps(dict(symbol=f.as_list(symbol))),
+            filter=json.dumps(dict(symbol=jf.as_list(symbol))),
             startTime=starttime,
             columns=json.dumps(cols))
 

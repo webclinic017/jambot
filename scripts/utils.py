@@ -1,11 +1,12 @@
 import argparse
 
+from jgutils.azureblob import BlobStorage
+from jgutils.secrets import SecretsManager
+
 from jambot import config as cf
 from jambot import getlog
 from jambot.livetrading import ExchangeManager
 from jambot.ml.storage import ModelStorageManager
-from jambot.utils.azureblob import BlobStorage
-from jambot.utils.secrets import SecretsManager
 
 log = getlog(__name__)
 cli = argparse.ArgumentParser()

@@ -25,8 +25,7 @@ def discord(msg: str, channel: str = 'jambot', log: Callable = None) -> None:
         log the message as well, default None
     """
     from discord import RequestsWebhookAdapter, Webhook
-
-    from jambot.utils.secrets import SecretsManager
+    from jgutils.secrets import SecretsManager
 
     if not log is None:
         log(msg)

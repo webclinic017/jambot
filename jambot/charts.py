@@ -9,17 +9,18 @@ import pandas as pd
 import plotly.graph_objs as go
 import seaborn as sns
 from icecream import ic
+from jgutils import pandas_utils as pu
 from matplotlib import pyplot
 from pandas import DataFrame
 from plotly.subplots import make_subplots
 
-from jambot import SYMBOL
-from jambot import functions as f
-from jambot import getlog
+from jambot import SYMBOL, getlog
 from jambot.config import colors
 from jambot.utils.mlflow import MlflowManager
 
 log = getlog(__name__)
+
+FMT_HRS = '%Y-%m-%d %H'
 
 ic.configureOutput(prefix='')
 
@@ -144,7 +145,7 @@ def chart_orders(t, pre=36, post=None, width=900, fast=50, slow=200):
                     range=[0, 0.4]))
     fig.update_xaxes(
         autorange=True,
-        tickformat=f.time_format(hrs=True),
+        tickformat=FMT_HRS,
         gridcolor='#e6e6e6',
         showgrid=False,
         gridwidth=1,
@@ -521,7 +522,7 @@ def chart(
     xaxis = dict(
         type='date',
         dtick='6h',
-        tickformat=f.time_format(hrs=True),
+        tickformat=FMT_HRS,
         tickangle=315,
         rangeslider=dict(
             bgcolor=bgcolor,
@@ -622,7 +623,7 @@ def plot_strat_results(
         traces.append(dict(name='balance', func=scatter, color='#91ffff', stepped=True))
 
         df = df \
-            .pipe(f.left_merge, df_balance) \
+            .pipe(pu.left_merge, df_balance) \
             .assign(balance=lambda x: x.balance.fillna(method='ffill'))
 
     # merge trades to show entry/exits as triangles in main chart
@@ -635,7 +636,7 @@ def plot_strat_results(
             entry='trade_entry',
             exit='trade_exit')
 
-        df = df.pipe(f.left_merge, df_trades.rename(columns=rename_cols).set_index('ts'))
+        df = df.pipe(pu.left_merge, df_trades.rename(columns=rename_cols).set_index('ts'))
 
     # create candlestick chart and show
     # candle chart is VERY slow/crashes if np.float16 dtype

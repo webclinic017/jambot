@@ -1,4 +1,5 @@
 import operator as opr
+from typing import *
 
 import numpy as np
 import pandas as pd
@@ -6,9 +7,12 @@ import pandas as pd
 from jambot import display
 from jambot import functions as f
 from jambot.tradesys.base import Observer, SignalEvent
-from jambot.tradesys.broker import Broker
 from jambot.tradesys.enums import TradeSide, TradeStatus
+from jambot.tradesys.exceptions import InvalidTradeOperationError
 from jambot.tradesys.orders import MarketOrder, Order
+
+if TYPE_CHECKING:
+    from jambot.tradesys.broker import Broker
 
 
 class Trade(Observer):
@@ -16,34 +20,27 @@ class Trade(Observer):
     - Must begin and end with 0 quantity
     """
 
-    def __init__(
-            self,
-            symbol: str,
-            broker: 'Broker',
-            **kw):
-
+    def __init__(self, symbol: str, broker: 'Broker', **kw):
         super().__init__(**kw)
+        self.opened = SignalEvent()
+        self.closed = SignalEvent()
 
-        opened = SignalEvent()
-        closed = SignalEvent()
-
-        orders = []
-        status = TradeStatus.PENDING
-        _side = TradeSide.NEUTRAL
-        qty_filled = 0
-
-        wallet = broker.get_wallet(symbol=symbol)
-        entry_balance = None
-        exit_balance = None
-
-        f.set_self(vars())
+        self.orders = []  # type: List[Order]
+        self.status = TradeStatus.PENDING
+        self._side = TradeSide.NEUTRAL
+        self.qty_filled = 0
+        self.wallet = broker.get_wallet(symbol=symbol)
+        self.entry_balance = None
+        self.exit_balance = None
+        self.symbol = symbol
+        self.broker = broker
 
     @property
-    def side(self):
+    def side(self) -> int:
         return self._side
 
     @side.setter
-    def side(self, val):
+    def side(self, val: int):
         """Set side as TradeSide"""
         self._side = TradeSide(val)
 
@@ -82,12 +79,14 @@ class Trade(Observer):
         """Balance % change of account"""
         if self.exit_balance and self.entry_balance:
             return (self.exit_balance - self.entry_balance) / self.entry_balance
+        else:
+            return 0
 
     @property
-    def is_good(self):
+    def is_good(self) -> bool:
         return self.pnl > 0
 
-    def _filter_orders(self, _type: str = 'entry'):
+    def _filter_orders(self, _type: str = 'entry') -> List[Order]:
         """Filter filled entry or exit orders
 
         Parameters
@@ -97,12 +96,12 @@ class Trade(Observer):
 
         Returns
         -------
-        list
+        List[Order]
             list of filtered orders
         """
         op = dict(
             entry=opr.eq,
-            exit=opr.ne).get(_type)
+            exit=opr.ne)[_type]
 
         return [o for o in self.orders if op(o.side, self.side) and o.is_filled]
 
@@ -163,7 +162,7 @@ class Trade(Observer):
         for order in orders:
             self.add_order(order)
 
-    def add_order(self, order: 'Order'):
+    def add_order(self, order: 'Order') -> None:
         """Add order and connect filled method
 
         Parameters
@@ -179,7 +178,7 @@ class Trade(Observer):
         order.filled.connect(self.on_fill)
         self.broker.submit(order)
 
-    def on_fill(self, qty: int, *args):
+    def on_fill(self, qty: int, *args) -> None:
         """Perform action when any orders filled"""
         self.qty_filled += qty
 
@@ -191,12 +190,12 @@ class Trade(Observer):
             if self.wallet.is_zero:
                 self.close()
 
-    def cancel_open_orders(self):
+    def cancel_open_orders(self) -> None:
         """Cancel all open orders"""
         for order in self.open_orders:
             self.broker.cancel_order(order)
 
-    def market_close(self):
+    def market_close(self) -> None:
         """Create order to market close all qty, submit to broker"""
 
         qty = self.wallet.qty_opp
@@ -218,8 +217,10 @@ class Trade(Observer):
 
         if not self.is_closed:
             if not self.qty_filled == 0:
-                raise ValueError(
-                    f'Cant close trade [{self.trade_num}] with [{self.qty_filled}] contracts open!\n{self.orders}')
+                raise InvalidTradeOperationError(
+                    qty_open=self.qty_filled,
+                    trade_num=self.trade_num,
+                    orders=self.orders)
 
             self.status = TradeStatus.CLOSED
             self.exit_balance = self.wallet.balance

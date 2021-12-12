@@ -8,6 +8,7 @@ from abc import ABCMeta
 from typing import *
 
 import numpy as np
+from jgutils import functions as jf
 
 from jambot import dt
 from jambot import functions as f
@@ -44,7 +45,7 @@ class BaseOrder(object, metaclass=ABCMeta):
         # if pd.isna(qty) or qty == 0:
         #     raise ValueError(f'Order quantity cannot be {qty}')
 
-        f.set_self(vars())
+        jf.set_self()
 
     @property
     def qty(self):
@@ -234,7 +235,7 @@ class BaseOrder(object, metaclass=ABCMeta):
         self.price = None
         self.order_type = OrderType('market')
 
-        f.set_self(kw)
+        jf.set_self(include=kw)
 
     @property
     def short_stats(self) -> str:
@@ -336,7 +337,7 @@ class ExchOrder(BaseOrder, DictRepr, Serializable):
         order_type = OrderType(order_type)
         status = OrderStatus(status or 'new')
 
-        f.set_self(vars(), exclude=('order_spec',))
+        jf.set_self(exclude=('order_spec',))
 
     @classmethod
     def from_dict(cls, order_spec: Union[dict, Order], exch_name: str = None) -> 'ExchOrder':
@@ -638,25 +639,27 @@ class Order(BaseOrder, Observer, metaclass=ABCMeta):
     def __init__(
             self,
             order_id: str = None,
-            timeout: int = float('inf'),
+            timeout: float = float('inf'),
             trail_close: float = None,
             **kw):
 
         super().__init__(**kw)
         Observer.__init__(self)
 
-        filled = SignalEvent(int)
-        cancelled = SignalEvent()
-        amended = SignalEvent()
-        timedout = SignalEvent(object)
+        # NOTE these MUST be instance attrs
+        self.filled = SignalEvent(int)
+        self.cancelled = SignalEvent()
+        self.amended = SignalEvent()
+        self.timedout = SignalEvent(object)
 
         # give order unique id
         if order_id is None:
             order_id = str(uuid.uuid1())
+        self.order_id = order_id
 
-        status = OrderStatus.PENDING
-
-        f.set_self(vars())
+        self.status = OrderStatus.PENDING
+        self.timeout = timeout
+        self.trail_close = trail_close
 
     @property
     def is_expired(self) -> bool:
@@ -779,7 +782,7 @@ def make_order(order_type: 'OrderType', **kw) -> Order:
     cls = dict(
         limit=LimitOrder,
         market=MarketOrder,
-        stop=StopOrder).get(str(order_type))
+        stop=StopOrder)[str(order_type)]
 
     return cls(**kw)
 
@@ -801,7 +804,7 @@ def make_orders(
     List[Order] | List[ExchOrder]
         list of initialized Order | ExchOrder objects
     """
-    order_specs = f.as_list(order_specs)
+    order_specs = jf.as_list(order_specs)
 
     if not as_exch_order:
         orders = [make_order(**order_spec, **kw) for order_spec in order_specs]
@@ -830,7 +833,7 @@ def make_exch_orders(order_specs: Union[List[dict], dict], exch_name: str) -> Li
     """
     return [
         ExchOrder.from_dict(spec, exch_name=exch_name) if not isinstance(spec, ExchOrder) else spec
-        for spec in f.as_list(order_specs)]
+        for spec in jf.as_list(order_specs)]
 
 
 def list_to_dict(

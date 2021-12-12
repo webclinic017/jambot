@@ -2,6 +2,9 @@ import warnings
 from typing import *
 
 import pandas as pd
+from jgutils import fileops as jfl
+from jgutils import functions as jf
+from jgutils import pandas_utils as pu
 from sklearn.base import BaseEstimator
 
 from jambot import config as cf
@@ -36,7 +39,7 @@ class Strategy(StrategyBase):
 
         use_stops = True if not stop_pct is None else False
 
-        f.set_self(vars())
+        jf.set_self()
 
     @property
     def log_items(self) -> Dict[str, Any]:
@@ -207,8 +210,8 @@ class StratScorer():
     def reset(self):
         self.m_train = dict(final=True, max=True)
         self.runs = {}
-        f.clean_dir(self.p_results)
-        f.clean_dir(self.p_strats)
+        jfl.clean_dir(self.p_results)
+        jfl.clean_dir(self.p_strats)
 
     def show_summary(self, dfs: List[pd.DataFrame], scores: dict = None) -> None:
         """Show summary df of all backtest runs
@@ -226,12 +229,12 @@ class StratScorer():
         # if bms:
         #     fmt = bms[0].summary_format
         # dfs = [bm.df_result for bm in bms]
-        # dfs = [f.load_pickle(p) for p in self.p_results.glob('*')]
+        # dfs = [jfl.load_pickle(p) for p in self.p_results.glob('*')]
 
         df = pd.concat(dfs) \
             .sort_values('start') \
             .reset_index(drop=True) \
-            .pipe(f.safe_drop, cols='lev')
+            .pipe(pu.safe_drop, cols='lev')
 
         # add in test/train weight scores per run
         if scores:
@@ -286,7 +289,6 @@ class StratScorer():
 
         if bm is None:
             df_pred = x.pipe(md.add_preds_probas, pipe=estimator, regression=regression)
-            # f.save_pickle(df_pred, p=self.p_results, name=f'df_pred_{startdate:%Y-%m-%d}')
 
             strat = make_strat(symbol='XBTUSD', exch_name='bitmex', order_offset=-0.0006, regression=regression)
 
@@ -296,7 +298,7 @@ class StratScorer():
 
             # save df result to disk so can be used with multithreading
             df_res = bm.df_result
-            f.save_pickle(df_res, p=self.p_results, name=id(df_res))
+            jfl.save_pickle(df_res, p=self.p_results, name=id(df_res))
 
             # save strat data to be returned from cross_val
             estimator.cv_data = dict(

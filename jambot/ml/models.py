@@ -1,6 +1,9 @@
 import copy
+from typing import Any, Dict
 
 import pandas as pd
+from jgutils import fileops as jfl
+from jgutils import pandas_utils as pu
 from lightgbm.sklearn import LGBMClassifier
 from sklearn.base import BaseEstimator
 from sklearn.decomposition import PCA  # noqa
@@ -9,18 +12,14 @@ from sklearn.multioutput import MultiOutputRegressor
 from sklearn.pipeline import Pipeline
 
 from jambot import config as cf
-from jambot import functions as f
 from jambot import getlog
 from jambot import signals as sg
 from jambot import sklearn_utils as sk
 
-# from sklearn.preprocessing import MinMaxScaler
-
-
 log = getlog(__name__)
 
 
-def model_cfg(name: str) -> dict:
+def model_cfg(name: str) -> Dict[str, Any]:
     """Config for models
 
     Parameters
@@ -57,7 +56,7 @@ def model_cfg(name: str) -> dict:
             model_kw=dict(estimator=Ridge(random_state=0)),
             model_cls=MultiOutputRegressor,
         )
-    ).get(name)
+    ).get(name, {})
 
 
 def add_signals(
@@ -98,7 +97,7 @@ def add_signals(
 
     return sg.SignalManager(**cf.config['signalmanager_kw']) \
         .add_signals(df=df, signals=signals, use_important=use_important) \
-        .pipe(f.safe_drop, cols=cf.config['drop_cols'], do=drop_ohlc)
+        .pipe(pu.safe_drop, cols=cf.config['drop_cols'], do=drop_ohlc)
 
 
 def make_model_manager(
@@ -128,7 +127,7 @@ def make_model_manager(
 
     # only use n most imporant features from shap_vals
     if use_important:
-        drop_cols += f.load_pickle(p=cf.p_data / 'feats/least_imp_cols.pkl')
+        drop_cols += jfl.load_pickle(p=cf.p_data / 'feats/least_imp_cols.pkl')
 
     # for azure training, drop cols will have been dropped first to save memory
     drop_cols = [c for c in drop_cols if c in df.columns]
@@ -207,7 +206,7 @@ def add_preds_probas(df: pd.DataFrame, pipe: BaseEstimator, **kw) -> pd.DataFram
     pd.DataFrame
         "df_pred" with y_pred and proba_ for each predicted class
     """
-    x = f.safe_drop(df, 'target')
+    x = pu.safe_drop(df, 'target')
 
     # NOTE y_pred only needed for scoring to get accuracy, not for strategy
     return df \

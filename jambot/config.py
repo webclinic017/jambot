@@ -12,10 +12,12 @@ if AZURE_LOCAL or AZURE_WEB:
     sys.modules['__main__'] = None  # this isn't set properly when run in azure and throws KeyError
 
 
-p_proj = Path(__file__).parent  # jambot python files
+p_proj = Path(__file__).parent  # jambot (python module)
 p_root = p_proj.parent  # root folter
 p_res = p_proj / '_res'
 p_sec = p_res / 'secrets'
+os.environ['p_secret'] = str(p_sec)
+os.environ['p_unencrypt'] = str(p_proj / '_unencrypted')
 
 # set data dir for local vs azure
 p_data = p_root / 'data' if not AZURE_WEB else Path.home() / 'data'

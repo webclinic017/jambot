@@ -5,11 +5,12 @@ from typing import *
 
 import mlflow
 import pandas as pd
+from jgutils import functions as jf
+from jgutils import pandas_utils as pu
 from mlflow.entities.run import Run
 from mlflow.tracking import MlflowClient
 
 from jambot import config as cf
-from jambot import functions as f
 from jambot import getlog
 
 log = getlog(__name__)
@@ -67,7 +68,7 @@ class MlflowLoggable(object, metaclass=ABCMeta):
             mlflow.log_artifact(self.log_artifact())
 
         if hasattr(self, 'log_dfs'):
-            for kw in f.as_list(self.log_dfs()):
+            for kw in jf.as_list(self.log_dfs()):
                 MlflowManager.log_df(**kw)
 
 
@@ -82,7 +83,7 @@ class MlflowManager():
 
     def register(self, objs: Union[MlflowLoggable, List[MlflowLoggable]]) -> None:
 
-        for obj in f.as_list(objs):
+        for obj in jf.as_list(objs):
             # if not MlflowLoggable in type(obj).__bases__:
             #     raise ValueError(f'object must be instance of {type(MlflowLoggable)}.')
 
@@ -173,7 +174,7 @@ class MlflowManager():
         for run in self.client.list_run_infos(experiment_id):
             try:
                 df = self.load_df(run=run.run_id, name=name, **kw) \
-                    .pipe(f.append_list, dfs)
+                    .pipe(pu.append_list, dfs)
             except FileNotFoundError:
                 pass
 

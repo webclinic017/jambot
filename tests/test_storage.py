@@ -1,6 +1,6 @@
 import logging
 
-from pytest import fixture
+from pytest import fixture, mark
 
 from jambot.livetrading import ExchangeManager
 from jambot.ml.storage import ModelStorageManager
@@ -17,3 +17,9 @@ def test_fit_save(em: ExchangeManager):
     # check files uploaded to blob successfully
     saved_models = [p.name for p in msm.saved_models]
     assert sorted(saved_models) == sorted(msm.bs.list_files()), 'Saved models do not match files in azure blob'
+
+
+@mark.usefixtures('test_fit_save')
+def _test_fit_save():
+    """Just call fixture"""
+    return

@@ -51,13 +51,13 @@ class Wallet(Observer):
     def __init__(self, symbol: str, exch_name: str = 'bitmex', **kw):
         super().__init__(**kw)
         self.reset()
-        _total_balance_margin = None  # live trading, comes from exch
-        precision = 8
+        self._total_balance_margin = None  # live trading, comes from exch
+        self.precision = 8
         self._lev = 3
+        self.symbol = symbol
+        self.exch_name = exch_name
 
-        maker_fee, taker_fee = self.exch_fees[exch_name]
-
-        f.set_self(vars())
+        self.maker_fee, self.taker_fee = self.exch_fees[exch_name]
 
     def reset(self):
         self._balance = 1  # base instrument, eg XBT
@@ -73,7 +73,7 @@ class Wallet(Observer):
         pass
 
     @property
-    def side(self):
+    def side(self) -> TradeSide:
         return TradeSide(np.sign(self.qty))
 
     @property
@@ -309,11 +309,12 @@ class Wallet(Observer):
                 txhigh = txmax_seen
 
         # create string showing max drawdown period
+        fmt = '%Y-%m-%d'
         drawdates = '{:.2f} ({}) - {:.2f} ({})'.format(
             txhigh.balance_pre,
-            dt.strftime(txhigh.timestamp, f.time_format()),
+            dt.strftime(txhigh.timestamp, fmt),
             txlow.balance_pre,
-            dt.strftime(txlow.timestamp, f.time_format()))
+            dt.strftime(txlow.timestamp, fmt))
 
         return drawdown * -1, drawdates
 

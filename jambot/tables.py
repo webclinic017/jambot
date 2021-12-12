@@ -7,6 +7,7 @@ from typing import *
 import numpy as np
 import pandas as pd
 import pypika as pk
+from jgutils import functions as jf
 from pypika import Query
 from pypika import functions as fn
 from pypika.terms import Criterion
@@ -18,6 +19,9 @@ from jambot import getlog
 from jambot.database import db
 from jambot.exchanges.exchange import SwaggerExchange
 
+if TYPE_CHECKING:
+    from pypika.queries import QueryBuilder
+
 log = getlog(__name__)
 
 
@@ -26,27 +30,28 @@ class Table(object, metaclass=ABCMeta):
     name = abstractproperty()
     cols = abstractproperty()
     dtypes = None
+    idx_cols = abstractproperty()  # type Union[List[str], str]
 
     # store exchange name as tinyint
     exch_keys = dict(
         bitmex=1,
         bybit=2)
-    exch_keys_inv = f.inverse(exch_keys)
+    exch_keys_inv = jf.inverse(exch_keys)
 
     def __init__(self):
         self.a = pk.Table(self.name)
 
     def get_query(
             self,
-            q: Query = None,
-            cols: Union[bool, list] = None,
+            q: Optional['QueryBuilder'] = None,
+            cols: Optional[Union[bool, list]] = None,
             conds: List[pk.Criterion] = None,
-            **kw) -> Query:
+            **kw) -> 'QueryBuilder':
         """Create pk.Query, add conditions etc
 
         Parameters
         ----------
-        q : Query, optional
+        q : QueryBuilder, optional
             default None
         cols : Union[bool, list], optional
             table cols to query, by default self.cols
@@ -55,10 +60,10 @@ class Table(object, metaclass=ABCMeta):
 
         Returns
         -------
-        Query
+        QueryBuilder
         """
 
-        q = q or Query.from_(self.a)
+        q = q or Query.from_(self.a)  # type: QueryBuilder
 
         if not cols is False:
             cols = cols or self.cols
@@ -130,10 +135,10 @@ class Table(object, metaclass=ABCMeta):
 
         conds = conds or []
         if not symbols is None:
-            conds.append(self.a.symbol.isin(f.as_list(symbols)))
+            conds.append(self.a.symbol.isin(jf.as_list(symbols)))
 
         if conds:
-            q = q.where(Criterion.all(f.as_list(conds)))
+            q = q.where(Criterion.all(jf.as_list(conds)))
 
         df = db.read_sql(sql=q)
 
@@ -161,7 +166,7 @@ class Table(object, metaclass=ABCMeta):
         """
 
         # use exch default symbols if not given
-        exchs = f.as_list(exchs)
+        exchs = jf.as_list(exchs)
         symbols = symbols or [exch.default_symbol for exch in exchs]
 
         # convert exchanges to dict for matching by num
@@ -227,7 +232,7 @@ class Tickers(Table):
             startdate = f.inter_now(interval=interval) + delta(hours=abs(period) * -1)
 
             # add extra offset for building signals (eg ema_200)
-            offset = {1: 16, 15: 4}.get(interval)
+            offset = {1: 16, 15: 4}[interval]
             startdate += delta(days=-offset)
 
         a = self.a

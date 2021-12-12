@@ -6,11 +6,11 @@ from urllib import parse
 import pandas as pd
 import pyodbc
 import sqlalchemy as sa
+from jgutils.secrets import SecretsManager
 from pypika.queries import QueryBuilder
 
 from jambot import getlog
 from jambot.exchanges.bitmex import Bitmex
-from jambot.utils.secrets import SecretsManager
 
 global db
 

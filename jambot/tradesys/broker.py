@@ -4,6 +4,7 @@ from typing import Union
 
 import numpy as np
 import pandas as pd
+from jgutils import functions as jf
 
 from jambot import SYMBOL, display
 from jambot import functions as f
@@ -32,7 +33,7 @@ class Broker(Observer):
         wallets[symbol] = Wallet(symbol=symbol, exch_name=exch_name)
         self.attach_listeners(wallets.values())
 
-        f.set_self(vars())
+        jf.set_self()
 
     def get_wallet(self, symbol: str) -> Wallet:
         """Get wallet for specific trade pair (symbol)
@@ -57,7 +58,7 @@ class Broker(Observer):
             order(s) to submit
         """
 
-        for order in f.as_list(orders):
+        for order in jf.as_list(orders):
             self._submit_single(order=order)
 
         # sort after all added

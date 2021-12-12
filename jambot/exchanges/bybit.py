@@ -8,6 +8,8 @@ import pandas as pd
 from bravado.http_future import HttpFuture
 from bybit import bybit
 from BybitAuthenticator import APIKeyAuthenticator
+from jgutils import functions as jf
+from jgutils import pandas_utils as pu
 
 from jambot import comm as cm
 from jambot import functions as f
@@ -395,7 +397,7 @@ class Bybit(SwaggerExchange):
                         symbol=spec['symbol'],
                         **{id_key: ret_spec[id_key]})
 
-                f.safe_append(return_specs, self.proc_raw_spec(ret_spec))
+                jf.safe_append(return_specs, self.proc_raw_spec(ret_spec))
 
         return return_specs
 
@@ -431,7 +433,7 @@ class Bybit(SwaggerExchange):
         data = []
         _interval = {1: '60', 15: '15'}.get(interval)
 
-        for symbol in f.as_list(symbol):
+        for symbol in jf.as_list(symbol):
             limit = 200
             starttime = _starttime.replace(tzinfo=tz.utc)
 
@@ -466,7 +468,7 @@ class Bybit(SwaggerExchange):
             return
 
         return pd.DataFrame(data) \
-            .pipe(f.safe_drop, 'turnover') \
+            .pipe(pu.safe_drop, 'turnover') \
             .rename(columns=dict(open_time='timestamp')) \
             .astype(dtypes) \
             .assign(timestamp=lambda x: pd.to_datetime(x.timestamp, unit='s')) \

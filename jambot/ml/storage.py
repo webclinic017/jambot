@@ -1,10 +1,12 @@
 from datetime import datetime as dt
 from datetime import timedelta as delta
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, List
 
 import numpy as np
 import pandas as pd
-from sklearn.base import BaseEstimator
+from jgutils import fileops as jfl
+from jgutils import pandas_utils as pu
+from jgutils.azureblob import BlobStorage
 
 from jambot import SYMBOL
 from jambot import config as cf
@@ -14,10 +16,13 @@ from jambot import sklearn_utils as sk
 from jambot.common import DictRepr
 from jambot.ml import models as md
 from jambot.tables import Tickers
-from jambot.utils.azureblob import BlobStorage
 from jambot.weights import WeightsManager
 
 if TYPE_CHECKING:
+    from pathlib import Path
+
+    from lightgbm import LGBMClassifier
+
     from jambot.livetrading import ExchangeManager
 
 log = getlog(__name__)
@@ -33,7 +38,9 @@ class ModelStorageManager(DictRepr):
             d_lower: dt = None,
             interval: int = 15,
             reset_hour: int = 18,
-            test: bool = False):
+            test: bool = False,
+            *args,
+            **kwargs):
         """
         Parameters
         ----------
@@ -48,35 +55,38 @@ class ModelStorageManager(DictRepr):
         reset_hour : int, optional
             filter training df to constant hour per day for consistency (11 pst = 18 utc)
         """
-        container = 'jambot-app'
-        saved_models = []
+        self.batch_size = batch_size
+        self.n_models = n_models
+        self.d_lower = d_lower
+        self.interval = interval
+        self.reset_hour = reset_hour
+        self.test = test
+        self.container = 'jambot-app'
+        self.saved_models = []  # type: List[Path]
 
-        if test:
-            container = f'{container}-test'
+        if self.test:
+            self.container = f'{self.container}-test'
 
         # init BlobStorage to mirror local data dir to azure blob storage
-        bs = BlobStorage(container=container)
+        self.bs = BlobStorage(container=self.container)
 
-        dt_format = '%Y-%m-%d %H'
-        dt_format_path = '%Y-%m-%d-%H'
-        batch_size_cdls = batch_size
+        self.dt_format = '%Y-%m-%d %H'
+        self.dt_format_path = '%Y-%m-%d-%H'
+        self.batch_size_cdls = self.batch_size
 
         if interval == 15:
-            batch_size_cdls = batch_size_cdls * 4
-            dt_format_path = f'{dt_format_path}-%M'
-            dt_format = f'{dt_format}:%M'
+            self.batch_size_cdls = self.batch_size_cdls * 4
+            self.dt_format_path = f'{self.dt_format_path}-%M'
+            self.dt_format = f'{self.dt_format}:%M'
 
-        p_model = cf.p_data / 'models'
-        f.check_path(p_model)
+        self.p_model = jfl.check_path(cf.p_data / 'models')
 
-        if d_lower is None:
-            d_lower = cf.config['d_lower']
-
-        f.set_self(vars())
+        if self.d_lower is None:
+            self.d_lower = cf.config['d_lower']
 
     def clean(self) -> None:
         """Clean all saved models in models dir"""
-        f.clean_dir(self.p_model)
+        jfl.clean_dir(self.p_model)
 
     def fit_save_models(
             self,
@@ -112,7 +122,7 @@ class ModelStorageManager(DictRepr):
             name=name,
             estimator=estimator)
 
-    def fit_save(self, df: pd.DataFrame, name: str, estimator: BaseEstimator) -> None:
+    def fit_save(self, df: pd.DataFrame, name: str, estimator: 'LGBMClassifier') -> None:
         """fit model and save for n_models
 
         - to be run every x hours
@@ -123,7 +133,7 @@ class ModelStorageManager(DictRepr):
         ----------
         df : pd.DataFrame
             df with signals/target initialized
-        estimator : BaseEstimator
+        estimator : LGBMClassifier
             estimator with fit/predict methods
         """
         cfg = md.model_cfg(name)
@@ -131,7 +141,7 @@ class ModelStorageManager(DictRepr):
         # max date where hour is greater or equal to 18:00
         # set back @cut hrs due to losing @n_periods for training preds
         # model is trained AT 1800, but only UP TO 1500
-        cut_hrs = {1: 10, 15: 3}.get(self.interval)
+        cut_hrs = {1: 10, 15: 3}[self.interval]
         reset_hour_offset = self.reset_hour - cut_hrs  # 15
 
         d_upper = f.date_to_dt(
@@ -144,7 +154,7 @@ class ModelStorageManager(DictRepr):
 
         index = df.loc[:d_upper].index
         df = df \
-            .pipe(f.safe_drop, cols=cf.config['drop_cols']) \
+            .pipe(pu.safe_drop, cols=cf.config['drop_cols']) \
             .loc[:d_upper] \
             .to_numpy(np.float32)
 
@@ -165,7 +175,7 @@ class ModelStorageManager(DictRepr):
             # d = date model was trained
             d = index[cut_rows - 1] + delta(hours=cut_hrs)  # + delta(days=1)
             fname = f'{name}_{d:{self.dt_format_path}}'
-            p_save = f.save_pickle(estimator, p=self.p_model, name=fname)
+            p_save = jfl.save_pickle(estimator, p=self.p_model, name=fname)
             self.saved_models.append(p_save)
             log.info(f'saved model: {fname}')
 
@@ -205,7 +215,7 @@ class ModelStorageManager(DictRepr):
             d = dt.strptime(p.stem.split('_')[-1], self.dt_format_path)
 
             # load estimator
-            estimator = f.load_pickle(p)
+            estimator = jfl.load_pickle(p)  # type: LGBMClassifier
 
             if not i == len(p_models) - 1:
                 max_date = d + delta(hours=self.batch_size) - f.inter_offset(self.interval)
@@ -220,7 +230,7 @@ class ModelStorageManager(DictRepr):
             if len(x) > 0:
                 # add y_pred and proba_ for slice of df
                 df_pred = sk.df_proba(
-                    x=x.pipe(f.safe_drop, cols=cf.config['drop_cols']),
+                    x=x.pipe(pu.safe_drop, cols=cf.config['drop_cols']),
                     model=estimator)
 
                 idx = df_pred.index
@@ -229,12 +239,8 @@ class ModelStorageManager(DictRepr):
 
                 pred_dfs.append(df_pred)
 
-        return df.pipe(f.left_merge, pd.concat(pred_dfs)) \
+        return df.pipe(pu.left_merge, pd.concat(pred_dfs)) \
             .pipe(md.add_proba_trade_signal)
 
     def to_dict(self):
         return ('d_lower', 'n_models', 'batch_size', 'batch_size_cdls')
-
-
-if __name__ == '__main__':
-    ModelStorageManager(test=True).fit_save_models()

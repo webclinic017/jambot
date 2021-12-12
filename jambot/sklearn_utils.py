@@ -7,6 +7,10 @@ from typing import *
 import mlflow
 import numpy as np
 import pandas as pd
+from jgutils import fileops as jfl
+from jgutils import functions as jf
+from jgutils import pandas_utils as pu
+from jgutils.azureblob import BlobStorage
 from joblib import delayed
 from sklearn.base import BaseEstimator
 from sklearn.compose import ColumnTransformer
@@ -24,12 +28,9 @@ from sklearn.pipeline import Pipeline
 from sklearn.utils.validation import check_is_fitted
 
 from jambot import config as cf
-from jambot import display
-from jambot import functions as f
-from jambot import getlog
+from jambot import display, getlog
 from jambot import signals as sg
 from jambot.common import ProgressParallel
-from jambot.utils.azureblob import BlobStorage
 from jambot.weights import WeightsManager
 
 # not needed when running on azure
@@ -49,27 +50,27 @@ log = getlog(__name__)
 class ModelManager(object):
     """Manager class to perform cross val etc on multiple models with same underlying column transformer + data
     """
+    ct: ColumnTransformer
 
     def __init__(
             self,
             ct=None,
             scoring=None,
-            cv_args=None,
+            cv_args: Optional[dict] = None,
             random_state=0,
             target: str = 'target',
             scorer=None,
             wm: WeightsManager = None,
             **kw):
-        cv_args = cv_args if not cv_args is None else {}
-        df_results = pd.DataFrame()
+        self.cv_args = cv_args if not cv_args is None else {}
+        self.df_results = pd.DataFrame()
         pipes = {}
         scores = {}
         models = {}
         grids = {}
         df_preds = {}
         cv_data = {}  # used to return estimator/strats for each cv fold
-        v = {**vars(), **kw}
-        f.set_self(v)
+        jf.set_self(include=kw)
 
         self.wm = wm
 
@@ -88,7 +89,7 @@ class ModelManager(object):
         scorer : [type], optional
             jambot.tradesys.strategies.StratScorer, by default None
         """
-        f.set_self(vars())
+        jf.set_self()
         return self
 
     def make_column_transformer(self, features: dict, encoders: dict, **kw) -> ColumnTransformer:
@@ -109,7 +110,7 @@ class ModelManager(object):
         ct = ColumnTransformer(
             transformers=[(name, encoder, features[name]) for name, encoder in encoders.items()])
 
-        f.set_self(vars())
+        jf.set_self()
         return ct
 
     def show_ct(self, x_train: pd.DataFrame = None):
@@ -206,7 +207,7 @@ class ModelManager(object):
 
         # insert extra steps in pipe, eg RFECV
         if not steps is None:
-            for step in f.as_list(steps):
+            for step in jf.as_list(steps):
                 pipe.steps.insert(step[0], step[1])
 
         self.pipes[name] = pipe
@@ -412,7 +413,7 @@ class ModelManager(object):
             model = self.pipes[name].named_steps[name]
 
         drop_cols = [c for c in cf.config['drop_cols'] if c in df.columns]
-        df = df.pipe(f.safe_drop, drop_cols)
+        df = df.pipe(pu.safe_drop, drop_cols)
 
         def _get_imp_feats(x, y):
             """Fit shap on history up to this point
@@ -478,7 +479,7 @@ class ModelManager(object):
 
         result = ProgressParallel(batch_size=2, n_jobs=-1, total=num_batches)(delayed(_fit)(i=i)
                                                                               for i in range(num_batches))
-        return df_orig.pipe(f.left_merge, pd.concat([df for df in result if not df is None]))
+        return df_orig.pipe(pu.left_merge, pd.concat([df for df in result if not df is None]))
 
     def add_predict(
             self,
@@ -576,8 +577,7 @@ class ModelManager(object):
                 param_name='param_distributions'),
             grid=dict(
                 cls=GridSearchCV,
-                param_name='param_grid')) \
-            .get(search_type)
+                param_name='param_grid'))[search_type]
 
         # grid/random have different kw for param grid/distribution
         kw[m['param_name']] = params
@@ -594,18 +594,18 @@ class ModelManager(object):
             'Best params': grid.best_params_,
             'Best score': f'{grid.best_score_:.3f}'}
 
-        f.pretty_dict(results)
+        jf.pretty_dict(results)
 
         return grid
 
     def save_model(self, name: str, **kw) -> None:
         model = self.get_model(name=name, **kw)
         p = cf.p_res / 'models'
-        f.save_pickle(model, p, name)
+        jfl.save_pickle(model, p, name)
 
     def load_model(self, name: str, **kw) -> Any:
         p = p = cf.p_res / f'models/{name}.pkl'
-        return f.load_pickle(p)
+        return jfl.load_pickle(p)
 
     def make_train_test(
             self,
@@ -637,7 +637,7 @@ class ModelManager(object):
         x_train, y_train = split(df_train, target=target)
         x_test, y_test = split(df_test, target=target)
 
-        f.set_self(vars(), exclude=('target',))
+        jf.set_self(exclude=('target',))
 
         return x_train, y_train, x_test, y_test
 
@@ -679,7 +679,9 @@ class ShapManager():
         self.wm = wm
 
         bs = BlobStorage(container=cf.p_data / 'feats')
-        f.set_self(vars())
+        self.df = df
+        self.model = model
+        self.n_sample = n_sample
         self._shap_values = None
 
     @property
@@ -710,7 +712,7 @@ class ShapManager():
         y = df.target
 
         # NOTE this doesn't normalize anything
-        x_enc = x.pipe(f.safe_drop, cf.config['drop_cols'])
+        x_enc = x.pipe(pu.safe_drop, cf.config['drop_cols'])
 
         self.model.fit(x_enc, y, **self.wm.fit_params(x=x_enc, name=None))
 
@@ -806,14 +808,14 @@ class ShapManager():
 
         # save least important (500 important)
         if save_least_all:
-            f.save_pickle(df.iloc[500:].index.tolist(), p=self.bs.p_local, name='least_imp_cols_500')
+            jfl.save_pickle(df.iloc[500:].index.tolist(), p=self.bs.p_local, name='least_imp_cols_500')
 
         if save:
             # for name, lst in m_imp.items():
             if not m_imp['least']:
                 log.warning('No least_imp_cols to save')
             else:
-                f.save_pickle(m_imp['least'], p=self.bs.p_local, name='least_imp_cols')
+                jfl.save_pickle(m_imp['least'], p=self.bs.p_local, name='least_imp_cols')
 
                 if upload:
                     self.bs.upload_dir()
@@ -847,7 +849,7 @@ def split(df: pd.DataFrame, target: Union[list, str]) -> Tuple[pd.DataFrame, pd.
     if isinstance(target, list) and len(target) == 1:
         target = target[0]
 
-    return df.pipe(f.safe_drop, cols=target), df[target]  # .to_numpy(np.float32)
+    return df.pipe(pu.safe_drop, cols=target), df[target]  # .to_numpy(np.float32)
 
 
 def show_scores(df: pd.DataFrame, higher_better: bool = False) -> None:
@@ -912,7 +914,7 @@ def append_mean_std_score(
         .rename(mean_cols) \
         .append(
             pd.DataFrame(scores)
-            .pipe(f.safe_drop, exclude_std)
+            .pipe(pu.safe_drop, exclude_std)
             .std()
             .rename(std_cols)) \
         .drop(exclude)  # only drop for non regression
@@ -1130,7 +1132,7 @@ def add_probas(df: pd.DataFrame, model: BaseEstimator, x: pd.DataFrame, do: bool
     if not do or 'proba_long' in df.columns:
         return df
 
-    return df.pipe(f.left_merge, df_right=df_proba(x=x, model=model))
+    return df.pipe(pu.left_merge, df_right=df_proba(x=x, model=model))
 
 
 def add_y_pred(df: pd.DataFrame, model: BaseEstimator, x: pd.DataFrame) -> pd.DataFrame:
@@ -1150,7 +1152,7 @@ def add_y_pred(df: pd.DataFrame, model: BaseEstimator, x: pd.DataFrame) -> pd.Da
     pd.DataFrame
         df with y_pred added
     """
-    return df.pipe(f.left_merge, df_right=df_y_pred(x=x, model=model))
+    return df.pipe(pu.left_merge, df_right=df_y_pred(x=x, model=model))
 
 
 def convert_proba_signal(
@@ -1341,7 +1343,7 @@ def add_preds_minmax(df, features: dict, encoders: dict, train_size: float) -> p
         index=x_test.index)
 
     # NOTE this might be some data leakage... idk probs not too severe
-    return df.pipe(f.left_merge, df_pred_multi) \
+    return df.pipe(pu.left_merge, df_pred_multi) \
         .fillna(0)
     # .pipe(lambda df: df.fillna(df.mean()))
 

@@ -14,6 +14,7 @@ if True:
     import numpy as np
     import pandas as pd
     import seaborn as sns
+    from jgutils import pandas_utils as pu
     from lightgbm.sklearn import LGBMClassifier, LGBMRegressor
     from sklearn.decomposition import PCA
     from sklearn.ensemble import (AdaBoostClassifier,
@@ -302,7 +303,7 @@ if True:
     # df_trades = m['df_trades']
 
     ch.plot_strat_results(
-        df=df_pred.pipe(f.clean_cols, cols + ['target']),
+        df=df_pred.pipe(pu.clean_cols, cols + ['target']),
         df_balance=df_balance,
         df_trades=df_trades,
         startdate=startdate,
@@ -339,7 +340,7 @@ data = mm.ct.fit_transform(x_train)
 expr = 'sfp'
 df_trans = sk.df_transformed(data=data, ct=mm.ct) \
     .assign(target=y_train) \
-    .pipe(f.select_cols, expr=expr, include='target')
+    .pipe(pu.select_cols, expr=expr, include='target')
 
 melt_cols = df_trans.columns[df_trans.columns != 'target']
 df_melted = df_trans \

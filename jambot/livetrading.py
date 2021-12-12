@@ -3,6 +3,8 @@ from datetime import timedelta as delta
 from typing import *
 
 import pandas as pd
+from jgutils import functions as jf
+from jgutils import pandas_utils as pu
 
 from jambot import comm as cm
 from jambot import config as cf
@@ -113,7 +115,7 @@ class ExchangeManager(DictRepr):
             self,
             refresh: bool = True,
             exch_name: Union[str, List[str]] = None,
-            test_exchs: bool = False) -> SwaggerExchange:
+            test_exchs: bool = False) -> Iterable[SwaggerExchange]:
         """Iterate exchange objs for all users where bot is enabled
 
         Parameters
@@ -127,7 +129,7 @@ class ExchangeManager(DictRepr):
 
         Yields
         ------
-        SwaggerExchange
+        Iterable[SwaggerExchange]
             initialized exch obj
         """
         if not test_exchs:
@@ -137,7 +139,7 @@ class ExchangeManager(DictRepr):
 
         # filter to single exchange
         if exch_name:
-            df_users = df_users.loc[f.as_list(exch_name)]
+            df_users = df_users.loc[jf.as_list(exch_name)]
 
         for (exch_name, user), m in df_users.to_dict(orient='index').items():
 
@@ -207,7 +209,7 @@ def check_filled_orders(minutes: int = 5, em: ExchangeManager = None) -> None:
             msg = '\n'.join([o.summary_msg(exch=exch, nearest=prec) for o in orders])
 
             exch.set_positions()
-            current_qty = f.pretty_dict(
+            current_qty = jf.pretty_dict(
                 m=dict(current_qty=f'{exch.current_qty(symbol=symbol):+,}'),
                 prnt=False,
                 bold_keys=True)
@@ -239,7 +241,7 @@ def write_balance_google(
     kw = dict(batcher=batcher)
 
     gg.OpenPositions(**kw).set_df(exchs=exchs)
-    gg.OpenOrders(**kw).set_df(exchs=[e for e in f.as_list(exchs) if e.user in ('jayme', 'testnet')])
+    gg.OpenOrders(**kw).set_df(exchs=[e for e in jf.as_list(exchs) if e.user in ('jayme', 'testnet')])
     gg.UserBalance(**kw).set_df(exchs=exchs)
     gg.TradeHistory(**kw).set_df(strat=strat)
 
@@ -287,7 +289,7 @@ def replace_ohlc(df: pd.DataFrame, df_new: pd.DataFrame) -> pd.DataFrame:
     pd.DataFrame
     """
     cols = ['open', 'high', 'low', 'close']
-    return df.drop(columns=cols).pipe(f.left_merge, df_new[cols])
+    return df.drop(columns=cols).pipe(pu.left_merge, df_new[cols])
 
 
 def get_df_raw(
@@ -311,7 +313,7 @@ def get_df_raw(
     pd.DataFrame
     """
 
-    offset = {1: 16, 15: 4}.get(interval)
+    offset = {1: 16, 15: 4}[interval]
     startdate = f.inter_now(interval) + delta(days=-offset)
 
     return Tickers().get_df(

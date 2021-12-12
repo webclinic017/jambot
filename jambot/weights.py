@@ -2,10 +2,10 @@ from typing import *
 
 import numpy as np
 import pandas as pd
+from jgutils import functions as jf
 from sklearn.preprocessing import minmax_scale
 
 from jambot import config as cf
-from jambot import functions as f
 from jambot import getlog
 from jambot.common import DictRepr
 from jambot.utils.mlflow import MlflowLoggable
@@ -46,11 +46,11 @@ class WeightsManager(DictRepr, MlflowLoggable):
     @property
     def weights(self) -> pd.Series:
         if self._weights is None:
-            self._set_weights()
+            self._weights = self._get_weights()
 
         return self._weights
 
-    def _set_weights(self) -> None:
+    def _get_weights(self) -> pd.Series:
         """Set base weights series
         """
         from jambot.signals import TargetMaxMin
@@ -66,13 +66,12 @@ class WeightsManager(DictRepr, MlflowLoggable):
                     X=x[target_cols].abs().max(axis=1).clip(upper=0.2) * self.linear(x),
                     feature_range=(0, 1)))
 
-        self._weights = self.df \
+        return self.df \
             .assign(**signals) \
             .assign(weight=lambda x: x.weight.fillna(x.weight.mean()).astype(np.float32))['weight']
 
     def get_weight(self, df: pd.DataFrame, filter_quantile: int = None) -> pd.Series:
         """return single array of weighted values to pass as fit_params
-        - NOTE not used
 
         Parameters
         ----------
@@ -91,17 +90,18 @@ class WeightsManager(DictRepr, MlflowLoggable):
 
         return s
 
-    def fit_params(self, x: pd.DataFrame, name: str = None) -> Dict[str, np.ndarray]:
+    def fit_params(self, x: pd.DataFrame, name: str = None) -> Dict[str, pd.Series]:
         """Create dict of weighted samples for fit params
 
         Parameters
         ----------
+        x : pd.DataFrame
         name : str, optional
             model name to prepend to dict key, by default None
 
         Returns
         -------
-        Dict[str, np.ndarray]
+        Dict[str, pd.Series]
             {lgbm__sample_weight: [0.5, ..., 1.0]}
         """
         name = f'{name}__' if not name is None else ''
@@ -127,7 +127,7 @@ class WeightsManager(DictRepr, MlflowLoggable):
         """
 
         out = []
-        datas = f.as_list(datas)
+        datas = jf.as_list(datas)
         for df in datas:
             # filter weights to only df.index before getting quantile
             weights = self.weights.loc[df.index]
@@ -138,7 +138,7 @@ class WeightsManager(DictRepr, MlflowLoggable):
             idx = weights[weights >= _quantile].index
             out.append(df.loc[idx])
 
-        nrows = df.shape[0]
+        nrows = datas[0].shape[0]
         msg = f'Filtered weights quantile [{quantile * 100:.0f}% = {_quantile:.3f}]' \
             + f', [{nrows:,.0f} -> {idx.shape[0]:,.0f}] rows.'
         log.info(msg)
@@ -148,17 +148,16 @@ class WeightsManager(DictRepr, MlflowLoggable):
         else:
             return out
 
-    def show_plot(self, weight: pd.Series = None, df: pd.DataFrame = None) -> None:
+    def show_plot(self, weight: pd.Series = None) -> None:
         """Show scatter plot of dist of weights
 
         Parameters
         ----------
         weight : pd.Series, optional
             from self.get_weight(), by default None
-        df : pd.DataFrame, optional
         """
         if weight is None:
-            weight = self.get_weight(df)
+            weight = self.weights
 
         weight.to_frame() \
             .reset_index(drop=False) \

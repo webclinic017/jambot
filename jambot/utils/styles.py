@@ -62,10 +62,10 @@ def background_grad_center(
         list of background colors for styler or df if multiple columns
     """
     from matplotlib.colors import TwoSlopeNorm, rgb2hex
-    cmap = _cmap.reversed() if higher_better else _cmap
+    cmap = _cmap.reversed() if higher_better else _cmap  # type: ignore
 
-    vmin = vmin or s.values.min()
-    vmax = vmax or s.values.max()
+    vmin = vmin or s.values.min()  # type: float
+    vmax = vmax or s.values.max()  # type: float
 
     # vmin/vmax have to be outside center
     if vmin >= center:

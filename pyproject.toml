@@ -27,6 +27,8 @@ azure-storage-blob = "^12.8.1"
 pygsheets = "^2.0.5"
 jsonschema = "<4.0"
 lightgbm = "^3.3.1"
+mlflow = "^1.21.0"
+jgutils = {path = "../jgutils", extras = ["azurestorage"], develop = true}
 
 [tool.poetry.group.dev.dependencies]
 jupyter = "^1.0.0"
@@ -52,8 +54,9 @@ seaborn = "^0.11.2"
 llvmlite = "^0.37.0"
 shap = "^0.40.0"
 pyarrow = "^6.0.0"
-mlflow = "^1.21.0"
 scikit-optimize = "^0.9.0"
+pytest-cov = "^3.0.0"
+jgutils = {path = "../jgutils", extras = ["colorlogging", "azurestorage"], develop = true}
 
 [tool.pytest.ini_options]
 testpaths = [
@@ -70,10 +73,34 @@ filterwarnings = [
     "ignore:invalid value encountered in double_scalars"
 ]
 
+[tool.coverage.run]
+branch = true
+dynamic_context = "test_function"
+
+[tool.coverage.report]
+precision = 2
+show_missing = false
+exclude_lines = [
+    "pragma: no cover",
+    "if TYPE_CHECKING",
+    "raise AssertionError",
+    "raise NotImplementedError"
+]
+
+[tool.coverage.html]
+show_contexts = true
+
 
 [tool.pyright]
 include = ["jambot", "tests"]
 ignore = ["working"]
+reportWildcardImportFromLibrary = "none"
+reportUnboundVariable = "information"
+reportMissingImports = "information"
+reportGeneralTypeIssues = "information"
+reportOptionalIterable = "none"
+reportOptionalMemberAccess = "information"
+reportOptionalSubscript = "information"
 
 [build-system]
 requires = ["poetry-core>=1.0.0"]

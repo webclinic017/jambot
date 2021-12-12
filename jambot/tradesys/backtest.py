@@ -1,7 +1,9 @@
+from datetime import datetime as dt
 from typing import *
 
 import numpy as np
 import pandas as pd
+from jgutils import pandas_utils as pu
 
 from jambot import display
 from jambot import functions as f
@@ -49,18 +51,16 @@ class BacktestManager(Clock, MlflowLoggable):
             self,
             strat: 'StrategyBase',
             df: pd.DataFrame,
-            startdate: str,
+            startdate: dt,
             **kw):
 
         super().__init__(df=df, **kw)
 
         cols = ['open', 'high', 'low', 'close', 'target', 'y_pred', 'proba_long',
                 'rolling_proba', 'signal']
-        df = df.pipe(f.clean_cols, cols)
+        df = df.pipe(pu.clean_cols, cols)
 
         self.end_session = SignalEvent()
-
-        startdate = f.check_date(startdate)
 
         # actual backtest, not just admin info
         if not startdate is None:
@@ -68,11 +68,15 @@ class BacktestManager(Clock, MlflowLoggable):
 
         self.attach_listener(strat)
         self.strat = strat
-        f.set_self(vars())
+        self.startdate = startdate
+        self.df = df
 
     def step(self):
         """Top level doesn't need to do anything"""
         pass
+
+    def to_dict(self) -> dict:
+        return dict(startdate=str(self.startdate))
 
     def run(self, prnt: bool = False, _log: bool = False) -> 'BacktestManager':
         """Top level step function

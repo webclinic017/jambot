@@ -5,6 +5,8 @@ import pandas as pd
 import pygsheets
 from google.auth.credentials import Credentials
 from google.oauth2 import service_account
+from jgutils import functions as jf
+from jgutils import pandas_utils as pu
 from pygsheets import Spreadsheet
 from pygsheets.client import Client
 
@@ -24,7 +26,7 @@ def get_creds(scopes: list = None) -> Credentials:
     -------
     Credentials
     """
-    from jambot.utils.secrets import SecretsManager
+    from jgutils.secrets import SecretsManager
     m = SecretsManager('google_creds.json').load
     return service_account.Credentials.from_service_account_info(m, scopes=scopes)
 
@@ -213,7 +215,7 @@ class UserSettings(GoogleSheet):
 
     def __init__(self, auth: bool = False, **kw):
         super().__init__(auth=auth, **kw)
-        f.set_self(vars())
+        jf.set_self()
 
     def process_df(self, df: pd.DataFrame, load_api: bool = False) -> pd.DataFrame:
 
@@ -233,7 +235,7 @@ class UserSettings(GoogleSheet):
 
         if load_api:
             from jambot.tables import ApiKeys
-            df = df.pipe(f.left_merge, ApiKeys().get_df())
+            df = df.pipe(pu.left_merge, ApiKeys().get_df())
 
         return df
 
@@ -270,11 +272,11 @@ class OpenOrders(Bitmex):
         """Set df of trade history to gs"""
         dfs = []
 
-        for exch in f.as_list(exchs):
+        for exch in jf.as_list(exchs):
             df = exch.df_orders(refresh=True, new_only=True) \
                 .rename(columns=dict(order_type='ord_type')) \
                 .pipe(f.remove_underscore) \
-                .pipe(f.append_list, dfs)
+                .pipe(pu.append_list, dfs)
 
         df = pd.concat(dfs) \
             .pipe(self.add_blank_rows, last=10)
@@ -294,7 +296,7 @@ class OpenPositions(Bitmex):
             u_pnl='pnl',
             entry_price='entry')
 
-        for exch in f.as_list(exchs):
+        for exch in jf.as_list(exchs):
             data = [dict(user=exch.user, exch=exch.exch_name)
                     | {k: p.get(k, None) for k in items} for p in exch.positions.values() if p['qty']]
 
@@ -302,7 +304,7 @@ class OpenPositions(Bitmex):
                 .pipe(self.as_percent, cols=('pnl_pct', 'roe_pct')) \
                 .rename(columns=m_rename) \
                 .pipe(f.remove_underscore) \
-                .pipe(f.append_list, dfs)
+                .pipe(pu.append_list, dfs)
 
         df = pd.concat(dfs) \
             .pipe(self.add_blank_rows, last=10)
@@ -316,7 +318,7 @@ class UserBalance(Bitmex):
     def set_df(self, exchs: Union[SwaggerExchange, List[SwaggerExchange]], **kw) -> None:
         dfs = []
 
-        for exch in f.as_list(exchs):
+        for exch in jf.as_list(exchs):
             data = dict(
                 user=exch.user,
                 exch=exch.exch_name,
@@ -324,7 +326,7 @@ class UserBalance(Bitmex):
                 balance=exch.total_balance_margin)
 
             df = pd.DataFrame(data, index=[0]) \
-                .pipe(f.append_list, dfs)
+                .pipe(pu.append_list, dfs)
 
         df = pd.concat(dfs) \
             .pipe(self.add_blank_rows, last=10)

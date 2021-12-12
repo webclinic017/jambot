@@ -12,20 +12,19 @@ import requests
 from bravado.client import CallableOperation, SwaggerClient
 from bravado.http_future import HttpFuture
 from bravado.requests_client import RequestsClient
+from jgutils import functions as jf
+from jgutils.secrets import SecretsManager
 from swagger_spec_validator.common import SwaggerValidationWarning
 
 from jambot import comm as cm
 from jambot import config as cf
-from jambot import display
-from jambot import functions as f
-from jambot import getlog
+from jambot import display, getlog
 from jambot.common import DictRepr
 from jambot.config import AZURE_WEB
 from jambot.tradesys import orders as ords
 from jambot.tradesys.enums import OrderStatus
 from jambot.tradesys.exceptions import PositionNotClosedError
 from jambot.tradesys.orders import ExchOrder, Order
-from jambot.utils.secrets import SecretsManager
 
 log = getlog(__name__)
 
@@ -58,7 +57,7 @@ class Exchange(DictRepr, metaclass=ABCMeta):
 
         self._client = self.init_client(test=test, from_local=from_local, swagger_spec=swagger_spec)
 
-        f.set_self(vars())
+        jf.set_self()
 
     @classmethod
     def default(cls, test: bool = True, refresh: bool = True, **kw) -> 'Exchange':
@@ -153,12 +152,12 @@ class SwaggerExchange(Exchange, metaclass=ABCMeta):
 
     @staticmethod
     @abstractstaticmethod
-    def client_cls():
+    def client_cls() -> Callable:  # type: ignore
         pass
 
     @staticmethod
     @abstractstaticmethod
-    def client_api_auth():
+    def client_api_auth() -> Callable:  # type: ignore
         """Bybit/bitmex have similar but slightly different api authenticators"""
         pass
 
@@ -378,7 +377,7 @@ class SwaggerExchange(Exchange, metaclass=ABCMeta):
             # need to deserialize inner items first
             if isinstance(data, dict):
                 m = {k: json.loads(v) if isinstance(v, str) else v for k, v in data.items()}
-                data = f.pretty_dict(m=m, prnt=False, bold_keys=True)
+                data = jf.pretty_dict(m=m, prnt=False, bold_keys=True)
 
             if AZURE_WEB:
                 msg = f'{e.status_code} {e.__class__.__name__}: {err_msg}\nretries: {retries}\n{data}'
@@ -571,7 +570,7 @@ class SwaggerExchange(Exchange, metaclass=ABCMeta):
             log.warning('No orders to add custom specs to.')
             return
 
-        for o in f.as_list(order_specs):
+        for o in jf.as_list(order_specs):
             if isinstance(o, list):
                 log.error(f'order is list: {o}')
                 return
@@ -749,7 +748,7 @@ class SwaggerExchange(Exchange, metaclass=ABCMeta):
         List[dict]
             list of converted order specs
         """
-        return [{self.order_keys.get(k, k): v for k, v in spec.items()} for spec in f.as_list(order_specs)]
+        return [{self.order_keys.get(k, k): v for k, v in spec.items()} for spec in jf.as_list(order_specs)]
 
     @abstractmethod
     def _route_order_request(self):
@@ -815,7 +814,7 @@ class SwaggerExchange(Exchange, metaclass=ABCMeta):
                     if 'ParticipateDoNotInitiate' in err_text:
                         m['last_price'] = self.last_price(symbol=o.symbol)
 
-                    msg += f'\n\n{err_text}\n{f.pretty_dict(m, prnt=False, bold_keys=True)}'
+                    msg += f'\n\n{err_text}\n{jf.pretty_dict(m, prnt=False, bold_keys=True)}'
 
                 cm.discord(msg, channel='err')
 
@@ -849,7 +848,7 @@ class SwaggerExchange(Exchange, metaclass=ABCMeta):
             list of orders placed
         """
         _orders = []
-        for o in f.as_list(orders):
+        for o in jf.as_list(orders):
             # convert dict specs to ExchOrder
             if not isinstance(o, ExchOrder):
                 o = ords.make_exch_orders(order_specs=o, exch_name=self.exch_name)[0]
@@ -933,7 +932,7 @@ class SwaggerExchange(Exchange, metaclass=ABCMeta):
         List[ExchOrder]
             list of cancelled orders
         """
-        # order_specs = [o.order_id for o in f.as_list(orders)]
+        # order_specs = [o.order_id for o in jf.as_list(orders)]
 
         if not orders:
             log.warning('No orders to cancel.')
@@ -996,7 +995,7 @@ class SwaggerExchange(Exchange, metaclass=ABCMeta):
             # add emoji actions
             m = {f'{self.m_emoji.get(k, "")}{k}': v for k, v in m.items()}
 
-            msg = f.pretty_dict(m, prnt=False, bold_keys=True)
+            msg = jf.pretty_dict(m, prnt=False, bold_keys=True)
             cm.discord(msg=f'{user}\n{msg}', channel='orders' if not test else 'test')
 
         s = ', '.join([f'{action}={len(orders)}' for action, orders in all_orders.items()])
