@@ -19,7 +19,6 @@ jambot/_unencrypted
 appsettings.json
 local.settings.json
 host.json
-.funcignore
 errlog.txt
 *.stats
 fil-result
@@ -40,5 +39,4 @@ Jambot.zip
 
 data/feather
 mlruns
-# coverage.xml
-# .coverage
+jgutils
