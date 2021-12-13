@@ -40,5 +40,5 @@ Jambot.zip
 
 data/feather
 mlruns
-coverage.xml
-.coverage
+# coverage.xml
+# .coverage
