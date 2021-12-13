@@ -15,6 +15,8 @@ SHELL := /bin/bash
 utils := @poetry run python -m scripts.utils
 code := jambot tests working az_*
 
+include .vscode/.env
+
 # Azure commands
 # func azure functionapp fetch-app-settings jambot-app
 
@@ -48,7 +50,12 @@ reqs:  ## make requirements.txt for function app
 
 .PHONY : test
 test:  ## run tests
-	@poetry run pytest --cov=jambot
+	@poetry run pytest --cov=jambot --cov-report=xml --cov-report=html
+	@~/codecov -f coverage.xml -t ${CODECOV_TOKEN}
+
+.PHONY : showcov
+showcov:  ## show coverage report
+	@poetry run coverage report
 
 .PHONY : creds
 creds:  ## re-encrypt credentials

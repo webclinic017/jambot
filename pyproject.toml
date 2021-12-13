@@ -76,6 +76,14 @@ filterwarnings = [
 [tool.coverage.run]
 branch = true
 dynamic_context = "test_function"
+omit = [
+    "jambot/charts.py",
+    "jambot/tradesys/strategies/chop.py",
+    "jambot/tradesys/strategies/sfp.py",
+    "jambot/tradesys/strategies/trend.py",
+    "jambot/tradesys/strategies/trendclose.py",
+    "jambot/tradesys/strategies/trendrev.py",
+    "jambot/utils/styles.py"]
 
 [tool.coverage.report]
 precision = 2

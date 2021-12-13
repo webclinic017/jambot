@@ -24,12 +24,8 @@ errlog.txt
 *.stats
 fil-result
 
-
 # Local python packages
 .python_packages/
-
-# Python Environments
-Pipfile.lock
 
 # Byte-compiled / optimized / DLL files
 Project/__pycache__/
@@ -44,3 +40,5 @@ Jambot.zip
 
 data/feather
 mlruns
+coverage.xml
+.coverage
