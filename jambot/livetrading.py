@@ -18,7 +18,7 @@ from jambot.ml import models as md
 from jambot.ml.storage import ModelStorageManager
 from jambot.tables import Tickers
 from jambot.tradesys import backtest as bt
-from jambot.tradesys.strategies import base, ml, sfp
+from jambot.tradesys.strategies import base, ml
 from jambot.utils import google as gg
 
 log = getlog(__name__)
@@ -144,43 +144,6 @@ class ExchangeManager(DictRepr):
         for (exch_name, user), m in df_users.to_dict(orient='index').items():
 
             yield self.get_exch(exch_name, user, refresh=refresh)
-
-
-def check_sfp(df):
-    """
-    NOTE not used
-
-    run every hour
-    get last 196 candles, price info only
-    create sfp object
-    check if current candle returns any sfp objects
-    send discord alert with the swing fails, and supporting info
-    'Swing High to xxxx', 'swung highs at xxxx', 'tail = xx%'
-    if one candle swings highs and lows, go with... direction of candle? bigger tail?
-    """
-
-    strat = sfp.Strategy()
-    strat.init(df=df)
-    sfps = strat.is_swingfail()
-    msg = ''
-    cdl = strat.cdl
-    stypes = dict(high=1, low=-1)
-
-    for k in stypes.keys():
-        lst = list(filter(lambda x: k in x['name'], sfps))
-        side = stypes[k]
-
-        if lst:
-            msg += 'Swing {} to {} | tail = {:.0%}\n'.format(
-                k.upper(),
-                cdl.getmax(side=side),
-                cdl.tailpct(side=side))
-
-            for s in lst:
-                msg += '    {} at: {}\n'.format(s['name'], s['price'])
-
-    if msg:
-        cm.discord(msg=msg, channel='sfp')
 
 
 def check_filled_orders(minutes: int = 5, em: ExchangeManager = None) -> None:
