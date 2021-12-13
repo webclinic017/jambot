@@ -13,7 +13,7 @@ from jambot import getlog
 from jambot.common import DictRepr
 from jambot.exchanges.bitmex import Bitmex
 from jambot.exchanges.bybit import Bybit
-from jambot.exchanges.exchange import SwaggerExchange
+from jambot.exchanges.exchange import SwaggerAPIException, SwaggerExchange
 from jambot.ml import models as md
 from jambot.ml.storage import ModelStorageManager
 from jambot.tables import Tickers
@@ -433,10 +433,13 @@ def run_strat_live(
         symbol = exch.default_symbol
 
         # TODO will need to test this with multiple symbols eventually
-        exch.reconcile_orders(
-            symbol=symbol,
-            expected_orders=strat.broker.expected_orders(symbol=symbol, exch=exch),
-            test=test)
+        try:
+            exch.reconcile_orders(
+                symbol=symbol,
+                expected_orders=strat.broker.expected_orders(symbol=symbol, exch=exch),
+                test=test)
+        except SwaggerAPIException as e:
+            e.send_error_discord()
 
     # write current strat trades/open positions to google
     write_balance_google(strat=strat, exchs=em.list_exchs, test=test)

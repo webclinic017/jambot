@@ -5,7 +5,6 @@ from datetime import timezone as tz
 from typing import *
 
 import pandas as pd
-from bravado.http_future import HttpFuture
 from bybit import bybit
 from BybitAuthenticator import APIKeyAuthenticator
 from jgutils import functions as jf
@@ -14,8 +13,11 @@ from jgutils import pandas_utils as pu
 from jambot import comm as cm
 from jambot import functions as f
 from jambot import getlog
-from jambot.exchanges.exchange import SwaggerExchange
+from jambot.exchanges.exchange import SwaggerAPIException, SwaggerExchange
 from jambot.tradesys.orders import ExchOrder
+
+if TYPE_CHECKING:
+    from bravado.http_future import HttpFuture
 
 SYMBOl = 'BTCUSD'
 
@@ -57,8 +59,13 @@ class BybitAuth(APIKeyAuthenticator):
         return r
 
 
-class BybitAPIException(Exception):
-    def __init__(self, request: HttpFuture, result: dict, fail_msg: str = None, request_kw: dict = None, *args) -> None:
+class BybitAPIException(SwaggerAPIException):
+    def __init__(
+            self,
+            request: 'HttpFuture',
+            result: dict,
+            fail_msg: str = None,
+            request_data: dict = None) -> None:
         """Raise exception on bybit invalid api request
 
         Parameters
@@ -69,22 +76,15 @@ class BybitAPIException(Exception):
             bybit api dict with error response data
         fail_msg : str, optional
             custom additional err info message, by default None
-        request_kw : dict, optional
+        request_data : dict, optional
             kws passed to request, by default None
         """
-        try:
-            operation = request.operation.op_spec['operationId']
-        except Exception:
-            # just in case
-            operation = '*Missing Operation*'
-
-        code = result['ret_code']
-        api_message = result['ret_msg']
-        fail_msg = f'\n\t{fail_msg}\n\t' if not fail_msg is None else ''
-
-        msg = f'{code} - {api_message}{fail_msg}\n\t{operation}: {request_kw}'
-
-        super().__init__(msg, *args)
+        super().__init__(
+            request=request,
+            code=result['ret_code'],
+            api_message=result['ret_msg'],
+            fail_msg=fail_msg,
+            request_data=request_data)
 
 
 class Bybit(SwaggerExchange):
@@ -110,7 +110,7 @@ class Bybit(SwaggerExchange):
         r_pnl='realised_pnl',
         value='position_value')
 
-    order_keys = ExchOrder._m_conv.get('bybit')
+    order_keys = ExchOrder._m_conv['bybit']
     api_host = 'https://api.bybit.com'
     api_host_test = 'https://api-testnet.bybit.com'
     api_spec = '/doc/swagger/v_0_2_12.txt'
@@ -140,10 +140,10 @@ class Bybit(SwaggerExchange):
 
     def req(
             self,
-            request: Union[HttpFuture, str],
+            request: Union['HttpFuture', str],
             code: bool = False,
             fail_msg: str = None,
-            **kw) -> Union[Any, Tuple[Any, int]]:
+            **kw) -> Union[Any, Tuple[Any, int], Dict[str, Any]]:
         """Wrapper to handle bybit request response/error code
         - pass through super().check_request for request retries
 
@@ -382,7 +382,8 @@ class Bybit(SwaggerExchange):
                 if key in spec.keys():
                     spec[key] = str(abs(int(spec[key])))
 
-            fail_msg = f'[{action}]:\n\t{spec}'
+            # fail_msg = f'[{action}]:\n\t{spec}'
+            fail_msg = None  # data returned through request data
             # log.info(fail_msg)
             ret_spec = self.req(endpoint_full, fail_msg=fail_msg, **spec)
 

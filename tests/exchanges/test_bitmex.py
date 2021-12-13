@@ -1,8 +1,10 @@
 import time
 from typing import List
 
+from pytest import raises
+
 from jambot import getlog
-from jambot.exchanges.exchange import SwaggerExchange
+from jambot.exchanges.exchange import SwaggerAPIException, SwaggerExchange
 from jambot.livetrading import ExchangeManager
 from jambot.tradesys import orders as ords
 from jambot.tradesys.enums import OrderStatus
@@ -29,7 +31,7 @@ def exch_name(exch) -> str:
     return exch.exch_name
 
 
-def test_exch_is_test(exch) -> bool:
+def test_exch_is_test(exch) -> None:
     """Make sure exch is in test mode"""
     assert exch.test is True
 
@@ -189,3 +191,18 @@ def test_cancel_warning(exch, last_close):
 
     # order_out = exch.submit_orders(order_in)
     return
+
+
+def test_api_exception(exch: SwaggerExchange, symbol: str):
+    """Test correct exception raised with invalid data to exchange"""
+
+    # orderID length too short
+    with raises(SwaggerAPIException):
+        kw = {exch.order_keys['order_id']: '1234', 'symbol': symbol}
+        exch.req('Order.cancel', **kw)
+
+    # invalid price
+    with raises(SwaggerAPIException):
+        spec = dict(order_type='limit', symbol=symbol, price=-5, qty=1000, name='test_excep')
+        orders = ords.make_exch_orders(order_specs=spec, exch_name=exch.exch_name)
+        exch.submit_orders(orders)

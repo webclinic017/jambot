@@ -11,13 +11,17 @@ import numpy as np
 import pandas as pd
 from bitmex import bitmex
 from BitMEXAPIKeyAuthenticator import APIKeyAuthenticator
+from bravado.exception import HTTPBadRequest
 from jgutils import functions as jf
 
 from jambot import SYMBOL
 from jambot import functions as f
 from jambot import getlog
-from jambot.exchanges.exchange import SwaggerExchange
+from jambot.exchanges.exchange import SwaggerAPIException, SwaggerExchange
 from jambot.tradesys.orders import ExchOrder
+
+if TYPE_CHECKING:
+    from bravado.http_future import HttpFuture
 
 log = getlog(__name__)
 warnings.filterwarnings('ignore', category=Warning, message='.*format is not registered')
@@ -39,6 +43,53 @@ class BitmexAuth(APIKeyAuthenticator):
         url = prepared.path_url
         r.headers['api-signature'] = self.generate_signature(self.api_secret, r.method, url, expires, body)
         return r
+
+
+class BitmexAPIException(SwaggerAPIException):
+    def __init__(
+            self,
+            e: HTTPBadRequest,
+            request: 'HttpFuture',
+            fail_msg: str = None,
+            request_data: dict = None) -> None:
+        """Raise exception on Bitmex invalid api request
+
+        Parameters
+        ----------
+        e: HTTPBadRequest
+            Exception raised by bitmex API
+        request : HttpFuture
+            original request to get operation name
+        fail_msg : str, optional
+            custom additional err info message, by default None
+        request_kw : dict, optional
+            kws passed to request, by default None
+        """
+        data = request.future.request.data  # request data
+        err_msg = e.swagger_result.get('error', {}).get('message', '')
+
+        # would need to pass in exch, seems unnecessary
+        # if 'balance' in err_msg.lower():
+        #     # convert eg 6559678800 sats to 65.597 btc for easier reading
+        #     n = re.search(r'(\d+)', err_msg)
+        #     if n:
+        #         n = n.group()
+        #         err_msg = err_msg.replace(n, str(round(int(n) / self.div, 3)))
+
+        #     m_bal = dict(
+        #         avail_margin=self.avail_margin,
+        #         total_balance_margin=self.total_balance_margin,
+        #         total_balance_wallet=self.total_balance_wallet,
+        #         unpl=self.unrealized_pnl)
+
+        #     data['avail_balance'] = {k: round(v, 3) for k, v in m_bal.items()}
+
+        super().__init__(
+            request=request,
+            code=e.status_code,
+            api_message=err_msg,
+            fail_msg=fail_msg,
+            request_data=request_data)
 
 
 class Bitmex(SwaggerExchange):
@@ -70,7 +121,7 @@ class Bitmex(SwaggerExchange):
         value='maintMargin'
     )
 
-    order_keys = ExchOrder._m_conv.get('bitmex')
+    order_keys = ExchOrder._m_conv['bitmex']
     api_host = 'https://www.bitmex.com'
     api_host_test = 'https://testnet.bitmex.com'
     api_spec = '/api/explorer/swagger.json'
@@ -101,6 +152,7 @@ class Bitmex(SwaggerExchange):
     def req(
             self,
             request: str,
+            fail_msg: str = None,
             **kw) -> Union[Any, Tuple[Any, int]]:
         """Build bitmex request
         - pass through super().check_request for request retries
@@ -110,6 +162,7 @@ class Bitmex(SwaggerExchange):
         ----------
         request : str
             Endpoint.function, eg 'Funding.get'
+
         Returns
         -------
         Union[Any, Tuple[Any, int]]
@@ -117,13 +170,12 @@ class Bitmex(SwaggerExchange):
         """
 
         # request submitted as str, split it and call on client
-        _request = str(request)
-        request = self._make_request(request, **kw)
-        # log.warning(f'[{_request}] request data: {request.future.request.data}')
+        _request = self._make_request(request, **kw)
 
-        # TODO possibly handle return data structure here?
-
-        return self.check_request(request)
+        try:
+            return self.check_request(_request)
+        except HTTPBadRequest as e:
+            raise BitmexAPIException(e, _request, fail_msg, kw) from None
 
     def _set_positions(self) -> List[dict]:
         positions = self.req('Position.get')
@@ -221,7 +273,7 @@ class Bitmex(SwaggerExchange):
         if action == 'cancel':
             # cancel can still use bulk, just needs list of orderIds
             order_specs = [s['orderID'] for s in order_specs]
-            order_specs = {'orderID': json.dumps(order_specs)}
+            order_specs = [{'orderID': json.dumps(order_specs)}]
 
         return_specs = []
         for spec in jf.as_list(order_specs):

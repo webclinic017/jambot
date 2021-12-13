@@ -10,7 +10,6 @@ from typing import *
 import pandas as pd
 import requests
 from bravado.client import CallableOperation, SwaggerClient
-from bravado.http_future import HttpFuture
 from bravado.requests_client import RequestsClient
 from jgutils import functions as jf
 from jgutils.secrets import SecretsManager
@@ -25,6 +24,9 @@ from jambot.tradesys import orders as ords
 from jambot.tradesys.enums import OrderStatus
 from jambot.tradesys.exceptions import PositionNotClosedError
 from jambot.tradesys.orders import ExchOrder, Order
+
+if TYPE_CHECKING:
+    from bravado.http_future import HttpFuture
 
 log = getlog(__name__)
 
@@ -124,10 +126,55 @@ class Exchange(DictRepr, metaclass=ABCMeta):
         return df.loc[user].to_dict()
 
 
+class SwaggerAPIException(Exception):
+    def __init__(
+            self,
+            request: 'HttpFuture',
+            code: int = 400,
+            api_message: str = None,
+            fail_msg: str = None,
+            request_data: dict = None) -> None:
+        """Raise exception on bybit invalid api request
+
+        Parameters
+        ----------
+        request : HttpFuture
+            original request to get operation name
+        code : int, optional
+            error code, default 400
+        api_message : str, optional
+            api failure message, default None
+        fail_msg : str, optional
+            custom additional err info message, default None
+        request_data : dict, optional
+            kw data submitted to api, default None
+        """
+        try:
+            operation = request.operation.op_spec['operationId']
+        except Exception:
+            # just in case
+            operation = '*Missing Operation*'
+
+        fail_msg = f'\n\t{fail_msg}\n\t' if not fail_msg is None else ''
+
+        msg = f'{code} - {api_message}{fail_msg}\n\t{operation}: {request_data}'
+
+        # TODO should probably pass request data as extra data
+        # TODO also just set up a global error handler
+
+        log.error(msg)
+        super().__init__(msg)
+        self.msg = msg
+
+    def send_error_discord(self) -> None:
+        """Send error info to discord"""
+        cm.send_error(self.msg, force=True)
+
+
 class SwaggerExchange(Exchange, metaclass=ABCMeta):
     """Class for exchanges using Swagger spec"""
     div = abstractproperty()
-    default_symbol = abstractproperty()
+    default_symbol: str = abstractproperty()
     wallet_keys = abstractproperty()
     order_keys = abstractproperty()
     api_host = abstractproperty()
@@ -254,6 +301,10 @@ class SwaggerExchange(Exchange, metaclass=ABCMeta):
         self.set_positions()
         self.set_orders()
 
+    @abstractmethod
+    def req(self, request: str, **kw) -> Any:
+        return
+
     def _get_endpoint(self, request: str) -> CallableOperation:
         """Convert simple "Endpoint.request" to actual request
         - eg self.client.Conditional.Conditional_getOrders(symbol=symbol)
@@ -280,7 +331,7 @@ class SwaggerExchange(Exchange, metaclass=ABCMeta):
         base, endpoint = request.split('.')
         return getattr(getattr(self.client, base), f'{base}_{endpoint}')
 
-    def _make_request(self, request: str, **kw) -> Union[Any, List[Any]]:
+    def _make_request(self, request: str, **kw) -> 'HttpFuture':
         """Build request from str request and request params (kws)
 
         Parameters
@@ -299,7 +350,7 @@ class SwaggerExchange(Exchange, metaclass=ABCMeta):
         kw = {k: v for k, v in kw.items() if k in func.operation.params.keys()}
         return func(**kw)
 
-    def _reapply_auth(self, request: HttpFuture) -> HttpFuture:
+    def _reapply_auth(self, request: 'HttpFuture') -> 'HttpFuture':
         """reapply authentication timeout/signature to HttpFuture request
         - bitmex auth = request.future.request.headers['api-expires']
         - bybit auth = request.future.request.params['timeout]
@@ -319,7 +370,7 @@ class SwaggerExchange(Exchange, metaclass=ABCMeta):
 
         return request
 
-    def check_request(self, request: HttpFuture, retries: int = 0):
+    def check_request(self, request: 'HttpFuture', retries: int = 0) -> Any:
         """
         Perform http request and retry with backoff if failed
         - bitmex raises 400 bravado.exception.HTTPBadRequest on invalid request
@@ -330,60 +381,27 @@ class SwaggerExchange(Exchange, metaclass=ABCMeta):
         - response = request.response(fallback_result=[400], exceptions_to_catch=bravado.exception.HTTPBadRequest)
         """
         backoff = 0.5
-        try:
-            # 400 HttpBadRequest raised at response()
-            response = request.response(fallback_result='')
-            status = response.metadata.status_code
+        response = request.response(fallback_result='')
+        status = response.metadata.status_code
 
-            if status < 300:
-                if self.exch_name == 'bitmex':
-                    ratelim_remaining = int(response.metadata.headers['x-ratelimit-remaining'])
-                    # "x-ratelimit-reset": "1635796268"  # could wait for this time
+        if status < 300:
+            if self.exch_name == 'bitmex':
+                ratelim_remaining = int(response.metadata.headers['x-ratelimit-remaining'])
+                # "x-ratelimit-reset": "1635796268"  # could wait for this time
 
-                    if ratelim_remaining <= 1:
-                        log.warning('Ratelimit reached. Sleeping 10 seconds.')
-                        time.sleep(10)
+                if ratelim_remaining <= 1:
+                    log.warning('Ratelimit reached. Sleeping 10 seconds.')
+                    time.sleep(10)
 
-                return response.result
-            elif status == 503 and retries < 7:
-                retries += 1
-                sleeptime = backoff * (2 ** retries - 1)
-                time.sleep(sleeptime)
+            return response.result
+        elif status == 503 and retries < 7:
+            retries += 1
+            sleeptime = backoff * (2 ** retries - 1)
+            time.sleep(sleeptime)
 
-                return self.check_request(request=self._reapply_auth(request), retries=retries)
-            else:
-                cm.send_error('{}: {}\n{}'.format(status, response.result, request.future.request.data))
-
-        except Exception as e:
-            data = request.future.request.data
-            err_msg = e.swagger_result.get('error', {}).get('message', '')
-
-            if 'balance' in err_msg.lower():
-                # convert eg 6559678800 sats to 65.597 btc for easier reading
-                n = re.search(r'(\d+)', err_msg)
-                if n:
-                    n = n.group()
-                    err_msg = err_msg.replace(n, str(round(int(n) / self.div, 3)))
-
-                m_bal = dict(
-                    avail_margin=self.avail_margin,
-                    total_balance_margin=self.total_balance_margin,
-                    total_balance_wallet=self.total_balance_wallet,
-                    unpl=self.unrealized_pnl)
-
-                data['avail_balance'] = {k: round(v, 3) for k, v in m_bal.items()}
-
-            # request data is dict of {key: str(list(dict))}
-            # need to deserialize inner items first
-            if isinstance(data, dict):
-                m = {k: json.loads(v) if isinstance(v, str) else v for k, v in data.items()}
-                data = jf.pretty_dict(m=m, prnt=False, bold_keys=True)
-
-            if AZURE_WEB:
-                msg = f'{e.status_code} {e.__class__.__name__}: {err_msg}\nretries: {retries}\n{data}'
-                cm.send_error(msg)
-            else:
-                raise e
+            return self.check_request(request=self._reapply_auth(request), retries=retries)
+        else:
+            cm.send_error('{}: {}\n{}'.format(status, response.result, request.future.request.data))
 
     @property
     def total_balance_margin(self) -> float:
@@ -883,6 +901,7 @@ class SwaggerExchange(Exchange, metaclass=ABCMeta):
     def close_position(self, symbol: str = None) -> None:
         """Market close current open position
         - only used in testing currently
+        - TODO make exch specific close position funcs
 
         Parameters
         ----------
@@ -892,8 +911,7 @@ class SwaggerExchange(Exchange, metaclass=ABCMeta):
         symbol = symbol or self.default_symbol
         try:
             if self.exch_name == 'bitmex':
-                self.check_request(
-                    self.client.Order.Order_new(symbol=symbol, execInst='Close'))
+                self.req('Order.new', symbol=symbol, execInst='Close')
 
             elif self.exch_name == 'bybit':
                 # NOTE ugh so messy hopefully a way to make this cleaner
