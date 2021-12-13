@@ -1,4 +1,4 @@
-[![codecov](https://codecov.io/gh/jaymegordo/jambot/branch/main/graph/badge.svg)](https://codecov.io/gh/jaymegordo/jambot)
+[![codecov](https://codecov.io/gh/jaymegordo/jambot/branch/main/graph/badge.svg?token=0UP511O2IZ)](https://codecov.io/gh/jaymegordo/jambot)
 
 # jambot
 *Code only as a portfolio example, not yet ready for public use.
