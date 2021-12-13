@@ -45,7 +45,12 @@ class BaseOrder(object, metaclass=ABCMeta):
         # if pd.isna(qty) or qty == 0:
         #     raise ValueError(f'Order quantity cannot be {qty}')
 
-        jf.set_self()
+        self.qty = qty
+        self.name = name
+        self.price = price
+        self.offset = offset
+        self.symbol = symbol
+        self.order_id = order_id
 
     @property
     def qty(self):
