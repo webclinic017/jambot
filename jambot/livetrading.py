@@ -173,14 +173,15 @@ def check_filled_orders(minutes: int = 5, em: ExchangeManager = None) -> None:
 
             exch.set_positions()
             current_qty = jf.pretty_dict(
-                m=dict(current_qty=f'{exch.current_qty(symbol=symbol):+,}'),
+                m=dict(current_qty=exch.current_pos_msg(symbol)),
                 prnt=False,
                 bold_keys=True)
 
-            msg = '{}\n{}{}'.format(
+            msg = '{}\n{}\n{}'.format(
                 em.df_users.loc[(exch.exch_name, exch.user)]['discord'],
-                cm.py_codeblock(msg),
-                current_qty)
+                current_qty,
+                cm.py_codeblock(msg))
+
             cm.discord(msg=msg, channel='orders')
 
 

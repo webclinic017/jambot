@@ -561,6 +561,21 @@ class SwaggerExchange(Exchange, metaclass=ABCMeta):
     def current_entry(self, symbol: str) -> float:
         return self.get_position(symbol)['entry_price']
 
+    def current_pos_msg(self, symbol: str) -> str:
+        """Summary msg for current qty/entry price
+
+        Parameters
+        ----------
+        symbol : str
+
+        Returns
+        -------
+        str
+        """
+        return '{:+,} @ ${:,.0f}'.format(
+            self.current_qty(symbol=symbol),
+            self.current_entry(symbol=symbol))
+
     def add_custom_specs(self, order_specs: List[dict]) -> List[dict]:
         """Preprocess orders from exchange to add custom markers
 
@@ -1038,7 +1053,6 @@ class SwaggerExchange(Exchange, metaclass=ABCMeta):
                   for k, orders in all_orders.items() if orders and not k == 'manual'}
 
         if m_ords:
-            # TODO add avg entry price
             m['current_qty'] = f'{self.current_qty(symbol=symbol):+,} @ ${self.current_entry(symbol):,.0f}'
             m |= m_ords
 
