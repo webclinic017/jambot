@@ -3,13 +3,13 @@ from typing import *
 
 import numpy as np
 import pandas as pd
-from jgutils import pandas_utils as pu
 
 from jambot import display
 from jambot import functions as f
 from jambot.tradesys.base import Clock, SignalEvent
 from jambot.tradesys.strategies.base import StrategyBase
 from jambot.utils.mlflow import MlflowLoggable
+from jgutils import pandas_utils as pu
 
 
 class BacktestManager(Clock, MlflowLoggable):

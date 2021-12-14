@@ -5,13 +5,13 @@ import pandas as pd
 import pygsheets
 from google.auth.credentials import Credentials
 from google.oauth2 import service_account
-from jgutils import functions as jf
-from jgutils import pandas_utils as pu
 from pygsheets import Spreadsheet
 from pygsheets.client import Client
 
 from jambot import functions as f
 from jambot.exchanges.exchange import SwaggerExchange
+from jgutils import functions as jf
+from jgutils import pandas_utils as pu
 
 
 def get_creds(scopes: list = None) -> Credentials:

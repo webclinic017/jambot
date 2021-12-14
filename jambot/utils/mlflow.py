@@ -5,13 +5,13 @@ from typing import *
 
 import mlflow
 import pandas as pd
-from jgutils import functions as jf
-from jgutils import pandas_utils as pu
 from mlflow.entities.run import Run
 from mlflow.tracking import MlflowClient
 
 from jambot import config as cf
 from jambot import getlog
+from jgutils import functions as jf
+from jgutils import pandas_utils as pu
 
 log = getlog(__name__)
 

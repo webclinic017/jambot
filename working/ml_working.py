@@ -1,6 +1,8 @@
 # TODO secondary model for "trade or no trade?"
 
 # %% - IMPORTS
+from jambot import database as dtb
+
 if True:
     from datetime import datetime as dt
     from datetime import timedelta as delta
@@ -14,7 +16,6 @@ if True:
     import numpy as np
     import pandas as pd
     import seaborn as sns
-    from jgutils import pandas_utils as pu
     from lightgbm.sklearn import LGBMClassifier, LGBMRegressor
     from sklearn.decomposition import PCA
     from sklearn.ensemble import (AdaBoostClassifier,
@@ -37,6 +38,7 @@ if True:
     from jambot import data
     from jambot import functions as f
     from jambot import getlog
+    from jambot import livetrading as live
     from jambot import signals as sg
     from jambot import sklearn_utils as sk
     from jambot.livetrading import ExchangeManager
@@ -47,6 +49,7 @@ if True:
     from jambot.utils import styles as st
     from jambot.utils.mlflow import MlflowManager
     from jambot.weights import WeightsManager
+    from jgutils import pandas_utils as pu
 
     log = getlog(__name__)
 
@@ -183,7 +186,7 @@ if True:
     LGBM = LGBMClassifier if not regression else LGBMRegressor
     models = dict(
         lgbm=LGBM(
-            num_leaves=100, n_estimators=100, max_depth=20, boosting_type='dart', learning_rate=0.1,
+            num_leaves=80, n_estimators=80, max_depth=20, boosting_type='dart', learning_rate=0.1,
             # device='gpu', max_bins=15
         ))
 
@@ -215,6 +218,11 @@ if False:
 # %% - RUN STRAT
 
 # TODO test iter_predict maxhigh/minlow
+mlflow.set_tracking_uri(dtb.str_conn())
+# TODO live/local tag
+# TODO track live retrain runs w prediction acc? ... would only predict for ~day?
+# save models to predict later?
+
 is_iter = True
 
 # ns = (40, 50, 60, 70, 80, 90, 100)
@@ -223,6 +231,9 @@ ns = (0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9)
 
 max_depths = (5, 10, 15, 20, 25, 30, 35, 40)
 num_leaves = (40, 50, 60, 70, 80, 90, 100)
+
+max_depths = (7,)
+num_leaves = (30,)
 
 # for n in ns:
 for max_depth, n_leaves in product(max_depths, num_leaves):

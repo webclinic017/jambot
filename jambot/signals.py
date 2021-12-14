@@ -10,10 +10,6 @@ from typing import *
 
 import numpy as np
 import pandas as pd
-from jgutils import fileops as jfl
-from jgutils import functions as jf
-from jgutils import pandas_utils as pu
-from jgutils.azureblob import BlobStorage
 from sklearn.preprocessing import MinMaxScaler
 from ta.momentum import (AwesomeOscillatorIndicator, KAMAIndicator,  # noqa
                          PercentageVolumeOscillator, ROCIndicator,
@@ -32,6 +28,10 @@ from jambot import getlog
 from jambot import sklearn_utils as sk
 from jambot.config import AZURE_WEB
 from jambot.utils.mlflow import MlflowLoggable
+from jgutils import fileops as jfl
+from jgutils import functions as jf
+from jgutils import pandas_utils as pu
+from jgutils.azureblob import BlobStorage
 
 log = getlog(__name__)
 

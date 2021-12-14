@@ -2,9 +2,6 @@ import warnings
 from typing import *
 
 import pandas as pd
-from jgutils import fileops as jfl
-from jgutils import functions as jf
-from jgutils import pandas_utils as pu
 from sklearn.base import BaseEstimator
 
 from jambot import config as cf
@@ -16,6 +13,9 @@ from jambot.tradesys.backtest import BacktestManager
 from jambot.tradesys.orders import LimitOrder, MarketOrder, Order, StopOrder
 from jambot.tradesys.strategies.base import StrategyBase
 from jambot.tradesys.trade import Trade
+from jgutils import fileops as jfl
+from jgutils import functions as jf
+from jgutils import pandas_utils as pu
 
 log = getlog(__name__)
 warnings.filterwarnings(action='ignore', category=FutureWarning)

@@ -9,7 +9,6 @@ import pandas as pd
 import plotly.graph_objs as go
 import seaborn as sns
 from icecream import ic
-from jgutils import pandas_utils as pu
 from matplotlib import pyplot
 from pandas import DataFrame
 from plotly.subplots import make_subplots
@@ -17,6 +16,7 @@ from plotly.subplots import make_subplots
 from jambot import SYMBOL, getlog
 from jambot.config import colors
 from jambot.utils.mlflow import MlflowManager
+from jgutils import pandas_utils as pu
 
 log = getlog(__name__)
 

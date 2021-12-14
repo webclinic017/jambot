@@ -8,7 +8,6 @@ from abc import ABCMeta
 from typing import *
 
 import numpy as np
-from jgutils import functions as jf
 
 from jambot import dt
 from jambot import functions as f
@@ -17,6 +16,7 @@ from jambot.common import DictRepr, Serializable
 from jambot.config import SYMBOL
 from jambot.tradesys.base import Observer, SignalEvent
 from jambot.tradesys.enums import OrderStatus, OrderType, TradeSide
+from jgutils import functions as jf
 
 if TYPE_CHECKING:
     from jambot.exchanges.exchange import SwaggerExchange

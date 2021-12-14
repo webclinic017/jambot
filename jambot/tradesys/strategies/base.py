@@ -1,13 +1,13 @@
 from typing import *
 
 import pandas as pd
-from jgutils import functions as jf
 
 from jambot import display, getlog
 from jambot.tradesys.base import Observer
 from jambot.tradesys.broker import Broker
 from jambot.tradesys.trade import Trade
 from jambot.utils.mlflow import MlflowLoggable
+from jgutils import functions as jf
 
 log = getlog(__name__)
 

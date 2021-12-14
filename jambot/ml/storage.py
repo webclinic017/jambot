@@ -4,9 +4,6 @@ from typing import TYPE_CHECKING, List
 
 import numpy as np
 import pandas as pd
-from jgutils import fileops as jfl
-from jgutils import pandas_utils as pu
-from jgutils.azureblob import BlobStorage
 
 from jambot import SYMBOL
 from jambot import config as cf
@@ -17,6 +14,9 @@ from jambot.common import DictRepr
 from jambot.ml import models as md
 from jambot.tables import Tickers
 from jambot.weights import WeightsManager
+from jgutils import fileops as jfl
+from jgutils import pandas_utils as pu
+from jgutils.azureblob import BlobStorage
 
 if TYPE_CHECKING:
     from pathlib import Path

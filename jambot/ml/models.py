@@ -2,8 +2,6 @@ import copy
 from typing import Any, Dict
 
 import pandas as pd
-from jgutils import fileops as jfl
-from jgutils import pandas_utils as pu
 from lightgbm.sklearn import LGBMClassifier
 from sklearn.base import BaseEstimator
 from sklearn.decomposition import PCA  # noqa
@@ -15,6 +13,8 @@ from jambot import config as cf
 from jambot import getlog
 from jambot import signals as sg
 from jambot import sklearn_utils as sk
+from jgutils import fileops as jfl
+from jgutils import pandas_utils as pu
 
 log = getlog(__name__)
 

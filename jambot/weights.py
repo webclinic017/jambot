@@ -2,13 +2,13 @@ from typing import *
 
 import numpy as np
 import pandas as pd
-from jgutils import functions as jf
 from sklearn.preprocessing import minmax_scale
 
 from jambot import config as cf
 from jambot import getlog
 from jambot.common import DictRepr
 from jambot.utils.mlflow import MlflowLoggable
+from jgutils import functions as jf
 
 log = getlog(__name__)
 

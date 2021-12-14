@@ -4,7 +4,6 @@ from typing import Union
 
 import numpy as np
 import pandas as pd
-from jgutils import functions as jf
 
 from jambot import SYMBOL, display
 from jambot import functions as f
@@ -14,6 +13,7 @@ from jambot.tradesys.base import Observer
 from jambot.tradesys.enums import OrderStatus
 from jambot.tradesys.orders import ExchOrder, Order
 from jambot.tradesys.wallet import Wallet
+from jgutils import functions as jf
 
 log = getlog(__name__)
 

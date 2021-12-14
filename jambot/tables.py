@@ -7,7 +7,6 @@ from typing import *
 import numpy as np
 import pandas as pd
 import pypika as pk
-from jgutils import functions as jf
 from pypika import Query
 from pypika import functions as fn
 from pypika.terms import Criterion
@@ -18,6 +17,7 @@ from jambot import functions as f
 from jambot import getlog
 from jambot.database import db
 from jambot.exchanges.exchange import SwaggerExchange
+from jgutils import functions as jf
 
 if TYPE_CHECKING:
     from pypika.queries import QueryBuilder

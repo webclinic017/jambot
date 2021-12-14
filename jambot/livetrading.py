@@ -3,8 +3,6 @@ from datetime import timedelta as delta
 from typing import *
 
 import pandas as pd
-from jgutils import functions as jf
-from jgutils import pandas_utils as pu
 
 from jambot import comm as cm
 from jambot import config as cf
@@ -20,6 +18,8 @@ from jambot.tables import Tickers
 from jambot.tradesys import backtest as bt
 from jambot.tradesys.strategies import base, ml
 from jambot.utils import google as gg
+from jgutils import functions as jf
+from jgutils import pandas_utils as pu
 
 log = getlog(__name__)
 
