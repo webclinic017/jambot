@@ -12,13 +12,13 @@ import pandas as pd
 from bitmex import bitmex
 from BitMEXAPIKeyAuthenticator import APIKeyAuthenticator
 from bravado.exception import HTTPBadRequest
-from jgutils import functions as jf
 
 from jambot import SYMBOL
 from jambot import functions as f
 from jambot import getlog
 from jambot.exchanges.exchange import SwaggerAPIException, SwaggerExchange
 from jambot.tradesys.orders import ExchOrder
+from jgutils import functions as jf
 
 if TYPE_CHECKING:
     from bravado.http_future import HttpFuture
@@ -50,8 +50,7 @@ class BitmexAPIException(SwaggerAPIException):
             self,
             e: HTTPBadRequest,
             request: 'HttpFuture',
-            fail_msg: str = None,
-            request_data: dict = None) -> None:
+            fail_msg: str = None) -> None:
         """Raise exception on Bitmex invalid api request
 
         Parameters
@@ -88,8 +87,7 @@ class BitmexAPIException(SwaggerAPIException):
             request=request,
             code=e.status_code,
             api_message=err_msg,
-            fail_msg=fail_msg,
-            request_data=request_data)
+            fail_msg=fail_msg)
 
 
 class Bitmex(SwaggerExchange):
@@ -175,7 +173,7 @@ class Bitmex(SwaggerExchange):
         try:
             return self.check_request(_request)
         except HTTPBadRequest as e:
-            raise BitmexAPIException(e, _request, fail_msg, kw) from None
+            raise BitmexAPIException(e, _request, fail_msg) from None
 
     def _set_positions(self) -> List[dict]:
         positions = self.req('Position.get')

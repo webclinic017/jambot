@@ -11,8 +11,6 @@ import pandas as pd
 import requests
 from bravado.client import CallableOperation, SwaggerClient
 from bravado.requests_client import RequestsClient
-from jgutils import functions as jf
-from jgutils.secrets import SecretsManager
 from swagger_spec_validator.common import SwaggerValidationWarning
 
 from jambot import comm as cm
@@ -24,6 +22,8 @@ from jambot.tradesys import orders as ords
 from jambot.tradesys.enums import OrderStatus
 from jambot.tradesys.exceptions import PositionNotClosedError
 from jambot.tradesys.orders import ExchOrder, Order
+from jgutils import functions as jf
+from jgutils.secrets import SecretsManager
 
 if TYPE_CHECKING:
     from bravado.http_future import HttpFuture
@@ -132,8 +132,7 @@ class SwaggerAPIException(Exception):
             request: 'HttpFuture',
             code: int = 400,
             api_message: str = None,
-            fail_msg: str = None,
-            request_data: dict = None) -> None:
+            fail_msg: str = None) -> None:
         """Raise exception on bybit invalid api request
 
         Parameters
@@ -146,8 +145,6 @@ class SwaggerAPIException(Exception):
             api failure message, default None
         fail_msg : str, optional
             custom additional err info message, default None
-        request_data : dict, optional
-            kw data submitted to api, default None
         """
         try:
             operation = request.operation.op_spec['operationId']
@@ -157,10 +154,9 @@ class SwaggerAPIException(Exception):
 
         fail_msg = f'\n\t{fail_msg}\n\t' if not fail_msg is None else ''
 
-        msg = f'{code} - {api_message}{fail_msg}\n\t{operation}: {request_data}'
+        request_data = request.future.request.data  # data submitted to api
 
-        # TODO should probably pass request data as extra data
-        # TODO also just set up a global error handler
+        msg = f'{code} - {api_message}{fail_msg}\n\t{operation}: {request_data}'
 
         log.error(msg)
         super().__init__(msg)
@@ -691,7 +687,12 @@ class SwaggerExchange(Exchange, metaclass=ABCMeta):
 
         return orders
 
-    def df_orders(self, symbol: str = None, new_only: bool = True, refresh: bool = False) -> pd.DataFrame:
+    def df_orders(
+            self,
+            symbol: str = None,
+            new_only: bool = True,
+            refresh: bool = False,
+            include_id: bool = False) -> pd.DataFrame:
         """Used to display orders in google sheet
         - TODO this is slightly inefficient, ~0.7s.. try speeding up raw spec
 
@@ -713,17 +714,32 @@ class SwaggerExchange(Exchange, metaclass=ABCMeta):
         orders = self.get_orders(symbol=symbol, new_only=new_only, refresh=refresh, as_exch_order=True)
         cols = ['order_type', 'name', 'qty', 'price', 'exec_inst', 'symbol']
 
+        if include_id:
+            # viewing locally
+            cols = ['timestamp', 'order_id'] + cols
+            sort_cols = ['timestamp']
+            ascending = [False]
+        else:
+            # google sheets
+            sort_cols = ['symbol', 'order_type', 'name']
+            ascending = [False, True, True]
+
         if not orders:
             df = pd.DataFrame(columns=cols, index=range(1))
         else:
             data = [{k: o.raw_spec(k) for k in cols} for o in orders]
             df = pd.DataFrame.from_dict(data) \
 
-        return df \
+        df = df \
             .reindex(columns=cols) \
             .sort_values(
-                by=['symbol', 'order_type', 'name'],
-                ascending=[False, True, True])
+                by=sort_cols,
+                ascending=ascending)
+
+        if include_id:
+            df = df.assign(timestamp=lambda x: x.timestamp.dt.tz_localize(None))
+
+        return df
 
     def exch_order_from_raw(self, order_specs: List[dict], process: bool = True) -> List[ExchOrder]:
         """Create exchange order objs from raw specs

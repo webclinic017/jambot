@@ -7,14 +7,14 @@ from typing import *
 import pandas as pd
 from bybit import bybit
 from BybitAuthenticator import APIKeyAuthenticator
-from jgutils import functions as jf
-from jgutils import pandas_utils as pu
 
 from jambot import comm as cm
 from jambot import functions as f
 from jambot import getlog
 from jambot.exchanges.exchange import SwaggerAPIException, SwaggerExchange
 from jambot.tradesys.orders import ExchOrder
+from jgutils import functions as jf
+from jgutils import pandas_utils as pu
 
 if TYPE_CHECKING:
     from bravado.http_future import HttpFuture
@@ -64,8 +64,7 @@ class BybitAPIException(SwaggerAPIException):
             self,
             request: 'HttpFuture',
             result: dict,
-            fail_msg: str = None,
-            request_data: dict = None) -> None:
+            fail_msg: str = None) -> None:
         """Raise exception on bybit invalid api request
 
         Parameters
@@ -76,15 +75,12 @@ class BybitAPIException(SwaggerAPIException):
             bybit api dict with error response data
         fail_msg : str, optional
             custom additional err info message, by default None
-        request_data : dict, optional
-            kws passed to request, by default None
         """
         super().__init__(
             request=request,
             code=result['ret_code'],
             api_message=result['ret_msg'],
-            fail_msg=fail_msg,
-            request_data=request_data)
+            fail_msg=fail_msg)
 
 
 class Bybit(SwaggerExchange):
@@ -178,7 +174,7 @@ class Bybit(SwaggerExchange):
         ret_code = full_result['ret_code']
 
         if not ret_code == 0:
-            raise BybitAPIException(request, full_result, fail_msg, kw)
+            raise BybitAPIException(request, full_result, fail_msg)
 
         result = full_result['result']
 
