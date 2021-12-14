@@ -316,7 +316,7 @@ class Bybit(SwaggerExchange):
     def _route_order_request(
             self,
             action: str,
-            order_specs: Union[List[ExchOrder], List[dict]],
+            order_specs: List[dict],
             *args, **kw) -> list[dict]:
         """Route order request to bybit
         - handle converting all keys before send + return values
@@ -326,7 +326,7 @@ class Bybit(SwaggerExchange):
         ----------
         action : str
             submit | amend | cancel | cancel_all
-        order_specs : Union[List[ExchOrder], List[dict]]
+        order_specs : List[dict]
             single or multiple order spec dicts
 
         Returns
@@ -346,7 +346,8 @@ class Bybit(SwaggerExchange):
 
         return_specs = []
         # order reduce_only orders first
-        for spec in sorted(order_specs, key=lambda x: not x.get('reduce_only', False)):
+        # for spec in sorted(order_specs, key=lambda x: not x.get('reduce_only', False)):
+        for spec in self.sort_close_orders(order_specs):
             # stupid stop orders have completely different endpoint
             is_stop = spec.get('order_type', '').lower() == 'stop'
 

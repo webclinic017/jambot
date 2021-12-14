@@ -274,7 +274,8 @@ class Bitmex(SwaggerExchange):
             order_specs = [{'orderID': json.dumps(order_specs)}]
 
         return_specs = []
-        for spec in jf.as_list(order_specs):
+        # for spec in jf.as_list(order_specs):
+        for spec in self.sort_close_orders(order_specs):
 
             # cant amend with clOrdID, otherwise thinks trying to change it
             if action == 'amend':

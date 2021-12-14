@@ -784,6 +784,22 @@ class SwaggerExchange(Exchange, metaclass=ABCMeta):
         """
         return [{self.order_keys.get(k, k): v for k, v in spec.items()} for spec in jf.as_list(order_specs)]
 
+    def sort_close_orders(self, order_specs: List[dict]) -> List[dict]:
+        """Sort orders to submit by close/reduce_only first
+        - to avoid api errors
+
+        Parameters
+        ----------
+        order_specs : List[dict]
+            list of orders specs to sort
+
+        Returns
+        -------
+        List[dict]
+            list of sorted order specs
+        """
+        return sorted(jf.as_list(order_specs), key=lambda x: not x.get('reduce_only', False))
+
     @abstractmethod
     def _route_order_request(self):
         """Bybit/Bitmex have to handle bulk orders differently"""
