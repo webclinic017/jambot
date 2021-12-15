@@ -28,6 +28,7 @@ pygsheets = "^2.0.5"
 jsonschema = "<4.0"
 lightgbm = "^3.3.1"
 mlflow = "^1.21.0"
+# mlflow = {git = "https://github.com/creinders/mlflow.git", branch = "master"}
 jgutils = {path = "../jgutils", extras = ["azurestorage"], develop = true}
 
 [tool.poetry.group.dev.dependencies]
