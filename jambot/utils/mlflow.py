@@ -1,15 +1,22 @@
+import copy
 import re
+import time
 from abc import ABCMeta, abstractproperty
+from collections import deque
 from pathlib import Path
 from typing import *
 
 import mlflow
 import pandas as pd
+from aenum import StrEnum
 from mlflow.entities.run import Run
+from mlflow.store.tracking.dbmodels.models import SqlMetric, SqlParam
 from mlflow.tracking import MlflowClient
+from mlflow.tracking.fluent import _get_or_start_run
 
 from jambot import config as cf
 from jambot import getlog
+from jambot.database import db
 from jgutils import functions as jf
 from jgutils import pandas_utils as pu
 
@@ -19,7 +26,7 @@ log = getlog(__name__)
 class MlflowLoggable(object, metaclass=ABCMeta):
     """Class to ensure object provides params/metrics for mlflow logging"""
 
-    def register(self, mfm: 'MlflowManager') -> None:
+    def register(self, mfm: 'MlflowManager') -> 'MlflowLoggable':
         """Attach self to mf manager
 
         Parameters
@@ -73,13 +80,81 @@ class MlflowLoggable(object, metaclass=ABCMeta):
 
 
 class MlflowManager():
+
     indexes = dict(
         df_pred='timestamp',
         df_trades='timestamp')
 
+    class ItemType(StrEnum):
+        METRIC: str = 'metric'
+        PARAM: str = 'param'
+
+    tables = dict(
+        metric=SqlMetric,
+        param=SqlParam)
+
     def __init__(self):
         self.listeners = {}  # type: Dict[str, MlflowLoggable]
         self.client = MlflowClient()
+        self._queues = {str(k): deque() for k in list(self.ItemType)}  # type: Dict[str, deque[Dict[str, Any]]]
+
+        # monkeypatch mlflow logging funcs
+        mlflow.log_metric = self._log_metric
+        mlflow.log_metrics = self._log_metrics
+        mlflow.log_param = self._log_param
+        mlflow.log_params = self._log_params
+
+    def flush(self) -> None:
+        """Flush metric/param queues to db"""
+        _backup = copy.deepcopy(self._queues)
+        session = db.session
+
+        try:
+            for item_type, q in self._queues.items():
+                while q:
+                    m = q.pop()
+                    row = self.tables[item_type](**m)
+                    session.add(row)
+                    # log.info(f'added {item_type} to db: {m}')
+
+            session.commit()
+        except:
+            session.rollback()
+            log.warning('failed load to db')
+            self._queues = _backup
+
+    def log_item(self, item_type: str, key: str, val: Any) -> None:
+
+        if not item_type in list(self.ItemType):
+            raise ValueError(f'Item must be in {list(self.ItemType)}')
+
+        # init dict record to log to db
+        m = dict(
+            run_uuid=_get_or_start_run().info.run_id,
+            key=key,
+            value=val
+        )  # type: Dict[str, Any]
+
+        if item_type == self.ItemType.METRIC:
+            m['timestamp'] = int(time.time() * 1000)
+            # is_nan, step?
+
+        # add record to queue
+        self._queues[item_type].append(m)
+
+    def _log_metric(self, key: str, val: Any) -> None:
+        self.log_item(self.ItemType.METRIC, key, val)
+
+    def _log_metrics(self, items: Dict[str, Any]) -> None:
+        for k, v in items.items():
+            self._log_metric(k, v)
+
+    def _log_param(self, key: str, val: Any) -> None:
+        self.log_item(self.ItemType.PARAM, key, val)
+
+    def _log_params(self, items: Dict[str, Any]) -> None:
+        for k, v in items.items():
+            self._log_param(k, v)
 
     def register(self, objs: Union[MlflowLoggable, List[MlflowLoggable]]) -> None:
 
@@ -89,10 +164,15 @@ class MlflowManager():
 
             self.listeners[obj.__class__.__name__.lower()] = obj
 
-    def log_all(self) -> None:
+    def log_all(self, flush: bool = True) -> None:
         """Log all registered listeners' items"""
+        # self.client.log_batch(run.info.run_id, metrics=metrics, params=params, tags=tags)
+
         for listener in self.listeners.values():
             listener.log_mlflow()
+
+        if flush:
+            self.flush()
 
     @staticmethod
     def log_df(df: pd.DataFrame, name: str = None, keep_index: bool = True) -> None:
