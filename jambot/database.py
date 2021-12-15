@@ -7,6 +7,7 @@ import pandas as pd
 import pyodbc
 import sqlalchemy as sa
 from pypika.queries import QueryBuilder
+from sqlalchemy.orm import Session, sessionmaker
 
 from jambot import getlog
 from jambot.exchanges.bitmex import Bitmex
@@ -89,12 +90,19 @@ class DB(object):
 
         return self._cursor
 
+    @property
+    def session(self) -> 'Session':
+        if self._session is None:
+            self._session = sessionmaker(bind=self.engine)()
+
+        return self._session
+
     def reset(self, warn=True):
         # set engine objects to none to force reset, not ideal
         if warn:
             log.warning('Resetting database.')
 
-        self._engine, self._cursor = None, None
+        self._engine, self._cursor, self._session = None, None, None
 
     def read_sql(self, sql: Union[str, QueryBuilder], **kw) -> pd.DataFrame:
         """Get sql query from db
