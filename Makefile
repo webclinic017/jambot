@@ -68,7 +68,7 @@ fit_models:  ## fit models for last 3 days, upload to azure
 .PHONY : mlflow
 mlflow: ## show mlflow UI in browser
 	@open http://127.0.0.1:5000
-	@poetry run mlflow ui
+	@poetry run mlflow ui --backend-store-uri ${MLFLOW_CONN}
 
 .PHONY : codecount
 codecount:  ## show lines of code
