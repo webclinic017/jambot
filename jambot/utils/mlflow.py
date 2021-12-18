@@ -2,21 +2,27 @@ import copy
 import re
 import time
 from abc import ABCMeta, abstractproperty
-from collections import deque
+from collections import Counter, deque
 from pathlib import Path
 from typing import *
 
 import mlflow
 import pandas as pd
+import sqlalchemy as sa
+import yaml
 from aenum import StrEnum
 from mlflow.entities.run import Run
-from mlflow.store.tracking.dbmodels.models import SqlMetric, SqlParam
+from mlflow.entities.run_status import RunStatus
+from mlflow.entities.source_type import SourceType
+from mlflow.store.tracking.dbmodels.models import (SqlLatestMetric, SqlParam,
+                                                   SqlRun, SqlTag)
 from mlflow.tracking import MlflowClient
 from mlflow.tracking.fluent import _get_or_start_run
+from sqlalchemy.orm import Session, sessionmaker
 
 from jambot import config as cf
 from jambot import getlog
-from jambot.database import db
+from jambot.common import DictRepr
 from jgutils import functions as jf
 from jgutils import pandas_utils as pu
 
@@ -79,7 +85,7 @@ class MlflowLoggable(object, metaclass=ABCMeta):
                 MlflowManager.log_df(**kw)
 
 
-class MlflowManager():
+class MlflowManager(DictRepr):
 
     indexes = dict(
         df_pred='timestamp',
@@ -88,15 +94,21 @@ class MlflowManager():
     class ItemType(StrEnum):
         METRIC: str = 'metric'
         PARAM: str = 'param'
+        TAG: str = 'tag'
+        RUN: str = 'run'
 
     tables = dict(
-        metric=SqlMetric,
-        param=SqlParam)
+        metric=SqlLatestMetric,
+        param=SqlParam,
+        tag=SqlTag,
+        run=SqlRun)
 
     def __init__(self):
         self.listeners = {}  # type: Dict[str, MlflowLoggable]
         self.client = MlflowClient()
-        self._queues = {str(k): deque() for k in list(self.ItemType)}  # type: Dict[str, deque[Dict[str, Any]]]
+        self._engine = None
+        self._session = None
+        self.db_path = 'sqlite:///mlruns.db'
 
         # monkeypatch mlflow logging funcs
         mlflow.log_metric = self._log_metric
@@ -104,10 +116,37 @@ class MlflowManager():
         mlflow.log_param = self._log_param
         mlflow.log_params = self._log_params
 
+        self.reset()
+
+    def reset(self) -> None:
+        self._queues = {str(k): deque() for k in list(self.ItemType)}  # type: Dict[str, deque[Dict[str, Any]]]
+
+    def to_dict(self) -> dict:
+        return self.num_records
+
+    @property
+    def engine(self):
+        if self._engine is None:
+            self._engine = sa.create_engine(self.db_path)
+
+        return self._engine
+
+    @property
+    def session(self) -> 'Session':
+        if self._session is None:
+            self._session = sessionmaker(bind=self.engine)()
+
+        return self._session
+
+    @property
+    def num_records(self) -> Dict[str, int]:
+        return {k: len(self._queues[k]) for k in self._queues}
+
     def flush(self) -> None:
         """Flush metric/param queues to db"""
         _backup = copy.deepcopy(self._queues)
-        session = db.session
+        session = self.session
+        added = Counter()
 
         try:
             for item_type, q in self._queues.items():
@@ -115,28 +154,37 @@ class MlflowManager():
                     m = q.pop()
                     row = self.tables[item_type](**m)
                     session.add(row)
-                    # log.info(f'added {item_type} to db: {m}')
+                    added[item_type] += 1
 
             session.commit()
-        except:
+            log.info(f'Added rows to db: {dict(added)}')
+
+        except Exception as e:
             session.rollback()
             log.warning('failed load to db')
             self._queues = _backup
+            raise e
 
-    def log_item(self, item_type: str, key: str, val: Any) -> None:
+    def log_item(
+            self,
+            item_type: str,
+            key: str,
+            val: Any,
+            run_uuid: str = None,
+            timestamp: int = None) -> None:
 
         if not item_type in list(self.ItemType):
             raise ValueError(f'Item must be in {list(self.ItemType)}')
 
         # init dict record to log to db
         m = dict(
-            run_uuid=_get_or_start_run().info.run_id,
+            run_uuid=run_uuid or _get_or_start_run().info.run_id,
             key=key,
             value=val
         )  # type: Dict[str, Any]
 
         if item_type == self.ItemType.METRIC:
-            m['timestamp'] = int(time.time() * 1000)
+            m['timestamp'] = timestamp or int(time.time() * 1000)
             # is_nan, step?
 
         # add record to queue
@@ -296,3 +344,64 @@ class MlflowManager():
             .pipe(lambda df: df[[c for c in df.columns if re.match(r'metr|para', c)]]) \
             .pipe(lambda df: df.rename(columns={c: c.split('.')[1] for c in df.columns})) \
             .drop(columns=['start', 'end'])  # temp for displaying
+
+
+def import_local(mfm: MlflowManager, kill: bool = False) -> None:
+
+    _p = Path('mlruns/0')
+    runs = 0
+    mfm.reset()
+
+    for p in _p.iterdir():
+
+        if not p.is_dir():
+            continue
+
+        run_uuid = p.name
+        p_meta = p / 'meta.yaml'
+        if not p_meta.exists():
+            log.warning(f'Skipping: {p_meta}')
+            continue
+
+        mfm._queues[mfm.ItemType.RUN].append(load_meta(p_meta))
+
+        if kill:
+            p_meta.unlink()
+
+        # metrics, params, tags
+        for item_type in ('metric', 'param', 'tag'):
+
+            for p_item in (p / f'{item_type}s').iterdir():
+
+                with open(p_item, 'r') as file:
+                    _val = file.readline().rstrip()
+
+                if item_type == 'metric':
+                    timestamp, val, is_nan = _val.split()
+                else:
+                    timestamp = 0
+                    val = _val
+
+                mfm.log_item(item_type, p_item.name, val, run_uuid=run_uuid, timestamp=int(timestamp))
+
+                if kill:
+                    p_item.unlink()
+
+        runs += 1
+
+    log.info(f'processed [{runs}] runs')
+
+
+def load_meta(p: Path) -> Dict[str, Any]:
+
+    with open(p, 'r') as file:
+        m = yaml.full_load(file)
+
+    m['source_type'] = SourceType.to_string(m['source_type'])
+    m['status'] = RunStatus.to_string(m['status'])
+
+    exclude = ('run_id', 'tags')
+    for k in exclude:
+        del m[k]
+
+    return m
