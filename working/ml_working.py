@@ -1,7 +1,6 @@
 # TODO secondary model for "trade or no trade?"
 
 # %% - IMPORTS
-from jambot import database as dtb
 
 if True:
     from datetime import datetime as dt
@@ -36,6 +35,7 @@ if True:
     from jambot import charts as ch
     from jambot import config as cf
     from jambot import data
+    from jambot import database as dtb
     from jambot import functions as f
     from jambot import getlog
     from jambot import livetrading as live
@@ -43,9 +43,11 @@ if True:
     from jambot import sklearn_utils as sk
     from jambot.livetrading import ExchangeManager
     from jambot.ml import models as md
+    from jambot.ml.classifiers import LGBMClsLog
     from jambot.tables import Tickers
     from jambot.tradesys import backtest as bt
     from jambot.tradesys.strategies import ml as ml
+    from jambot.utils import skopt as sko
     from jambot.utils import styles as st
     from jambot.utils.mlflow import MlflowManager
     from jambot.weights import WeightsManager
@@ -84,26 +86,22 @@ if True:
     else:
         df = data.default_df()
 
+    df_ohlc = df.copy()
     log.info(f'Loaded df: [{df.shape[0]:,.0f}] {df.index.min()} - {df.index.max()}')
 
 # %% - ADD SIGNALS
 # --%%prun -s cumulative -l 40
 # --%%time
-use_important = True
+use_important = False
 
 if True:
     name = 'lgbm'
     cfg = md.model_cfg(name)
     regression = False
-
-    # slope = [1, 4, 8, 16, 32, 64]
-    # _sum = [12, 24, 96]
-    slope = cf.config['signalmanager_kw']['slope']
-    _sum = cf.config['signalmanager_kw']['sum']
-    sm = sg.SignalManager(slope=slope, sum=_sum).register(mfm)
+    sm = sg.SignalManager.default().register(mfm)
 
     n_periods = cfg['target_kw']['n_periods']
-    # n_periods = 2
+    # n_periods = 10
     p_ema = None  # 6
     # Target = sg.TargetMeanEMA
     # Target = sg.TargetMean
@@ -111,34 +109,18 @@ if True:
         Target = sg.TargetUpsideDownside
     else:
         Target = sg.TargetRatio
-    # pct_min = 0.01
-    # pct_min = 0.000000005 # long or short, no neutral
-    pct_min = 0
+
     target_signal = Target(
-        p_ema=p_ema,
         n_periods=n_periods,
-        pct_min=pct_min,
         regression=regression)
 
-    signals = [
-        'EMA',
-        'Momentum',
-        'Trend',
-        'Candle',
-        'Volatility',
-        'Volume',
-        # 'DateTime',
-        # 'MACD',
-        # 'SFP',
-        # 'CandlePatterns',
-        target_signal
-    ]
+    signals = md.DEFAULT_SIGNALS + [target_signal]  # type: List[Any]
 
     # drop last rows which we cant set proper target
     # don't need to drop last n_periods rows if positive we aren't fitting on them
 
-    df = sm.add_signals(df=df, signals=signals, use_important=use_important) \
-        # .iloc[:-1 * n_periods, :]
+    df = sm.add_signals(df=df, signals=signals, use_important=use_important)
+
     if not use_important:
         df_all = df.copy()
 
@@ -148,7 +130,7 @@ if True:
 # %% - FEATURES, MODELMANAGER
 # df = df_all.copy()
 # use_important = False
-split_date = dt(2021, 2, 1)
+split_date = cf.D_SPLIT
 if True:
     n_splits = 5
     train_size = 0.9
@@ -186,7 +168,7 @@ if True:
     LGBM = LGBMClassifier if not regression else LGBMRegressor
     models = dict(
         lgbm=LGBM(
-            num_leaves=80, n_estimators=80, max_depth=20, boosting_type='dart', learning_rate=0.1,
+            num_leaves=40, n_estimators=80, max_depth=10, boosting_type='dart', learning_rate=0.1,
             # device='gpu', max_bins=15
         ))
 
@@ -218,82 +200,66 @@ if False:
 # %% - RUN STRAT
 
 # TODO test iter_predict maxhigh/minlow
-mlflow.set_tracking_uri(dtb.str_conn())
-# TODO live/local tag
 # TODO track live retrain runs w prediction acc? ... would only predict for ~day?
 # save models to predict later?
 
 is_iter = True
 
-# ns = (40, 50, 60, 70, 80, 90, 100)
-# ns = (5, 10, 15, 20, 25, 30, 35, 40)
-ns = (0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9)
+target_signal = Target(n_periods=20)
+df = sm.add_signals(df=df_all, signals=target_signal, force_overwrite=True)
+df = sm.filter_n_feats(df=df, n=34)
 
-max_depths = (5, 10, 15, 20, 25, 30, 35, 40)
-num_leaves = (40, 50, 60, 70, 80, 90, 100)
+# with mlflow.start_run(experiment_id='0'):
+model = LGBMClsLog(
+    num_leaves=34,
+    n_estimators=97,
+    max_depth=36,
+    boosting_type='dart',
+    learning_rate=0.1)
 
-max_depths = (7,)
-num_leaves = (30,)
+if not is_iter:
+    # if False:
+    #     df_bbit = db.get_df('bybit', 'BTCUSD', startdate=dt(2021,1,1))
+    #     df2 = df.pipe(live.replace_ohlc, df_bbit)
 
-# for n in ns:
-for max_depth, n_leaves in product(max_depths, num_leaves):
-    log.info(f'max_depth: {max_depth}, num_leaves: {n_leaves}')
+    df_pred = mm \
+        .add_predict(
+            df=df,
+            weighted_fit=True,
+            filter_fit_quantile=0.6,
+            name=name,
+            proba=not regression)
+else:
+    # retrain every x hours (24 ish) and predict for the test set
+    # NOTE limiting max train data to ~3yrs ish could be helpful
+    batch_size = 24 * 4 * 8
+    filter_fit_quantile = 0.55
+    retrain_feats = False
 
-    with mlflow.start_run(experiment_id='0'):
-        model = LGBMClassifier(
-            num_leaves=n_leaves, n_estimators=50, max_depth=max_depth, boosting_type='dart', learning_rate=0.1)
+    df_pred = sk.add_predict_iter(
+        df=df,
+        # name=name,
+        wm=wm,
+        model=model,
+        batch_size=batch_size,
+        split_date=cf.D_SPLIT,
+        # min_size=mm.df_train.shape[0],
+        max_train_size=None,
+        # max_train_size=4*24*365*3,
+        filter_fit_quantile=filter_fit_quantile)
 
-        if not is_iter:
-            # if False:
-            #     df_bbit = db.get_df('bybit', 'BTCUSD', startdate=dt(2021,1,1))
-            #     df2 = df.pipe(live.replace_ohlc, df_bbit)
+df_pred = df_pred \
+    .pipe(md.add_proba_trade_signal, regression=regression, n_smooth=4)
 
-            df_pred = mm \
-                .add_predict(
-                    df=df,
-                    weighted_fit=True,
-                    filter_fit_quantile=0.6,
-                    name=name,
-                    proba=not regression)
-        else:
-            # retrain every x hours (24 ish) and predict for the test set
-            # NOTE limiting max train data to ~3yrs ish could be helpful
-            df_pred = mm \
-                .add_predict_iter(
-                    df=df,
-                    name=name,
-                    model=model,
-                    batch_size=24 * 4 * 8,
-                    split_date=split_date,
-                    # min_size=mm.df_train.shape[0],
-                    max_train_size=None,
-                    # max_train_size=4*24*365*3,
-                    filter_fit_quantile=0.6,
-                    regression=regression)
+strat = ml.make_strat(symbol=cf.SYMBOL, order_offset=-0.0006).register(mfm)
 
-        df_pred = df_pred \
-            .pipe(md.add_proba_trade_signal, regression=regression)
+bm = bt.BacktestManager(
+    startdate=cf.D_SPLIT,
+    strat=strat,
+    df=df_pred) \
+    .run(prnt=True, plot_balance=True) \
+    .register(mfm)
 
-        strat = ml.make_strat(symbol='XBTUSD', exch_name='bitmex', order_offset=-0.0006).register(mfm)
-
-        bm = bt.BacktestManager(
-            startdate=mm.df_test.index[0],
-            strat=strat,
-            df=df_pred).run(prnt=False).register(mfm)
-
-        scores = dict(
-            acc=sk.accuracy_score(df_pred.target, df_pred.y_pred),
-            w_acc=sk.weighted_score(df_pred.target, df_pred.y_pred, wm.weights))
-
-        mlflow.log_metrics(scores)
-        mlflow.log_param('interval', interval)
-        mlflow.log_param('is_iter', is_iter)
-
-        # TODO make LGBMClassifier mfloggable?
-        model_keys = ['boosting_type', 'num_leaves', 'max_depth', 'learning_rate', 'n_estimators']
-        mlflow.log_params({k: v for k, v in model.__dict__.items() if k in model_keys})
-
-        mfm.log_all()
 
 # %% - PLOT
 if True:
@@ -323,10 +289,10 @@ if True:
 # %% - INIT SHAP MANAGER
 # x_shap = x_shap.loc['2021-08-01':]
 # y_shap = y_shap.loc['2021-08-01':]
-spm = sk.ShapManager(df=df, model=mm.models['lgbm'], n_sample=10_000)
+spm = sk.ShapManager(df=df_all, model=mm.models['lgbm'], n_sample=10_000)
 
 # %%
-res = spm.shap_n_important(n=70, save=True, upload=False, as_list=True)
+res = spm.shap_n_important(n=45, save=True, upload=False, as_list=True)
 cols = res['most']
 cols
 
