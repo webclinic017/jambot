@@ -4,11 +4,9 @@ import time
 from datetime import datetime as dt
 from typing import *
 
-import mlflow
 import numpy as np
 import pandas as pd
 from joblib import delayed
-from sklearn.base import BaseEstimator
 from sklearn.compose import ColumnTransformer
 from sklearn.decomposition import PCA
 from sklearn.exceptions import NotFittedError
@@ -44,6 +42,9 @@ try:
 except (ImportError, ModuleNotFoundError) as e:
     pass
 
+if TYPE_CHECKING:
+    from sklearn.base import BaseEstimator
+
 log = getlog(__name__)
 
 
@@ -54,10 +55,10 @@ class ModelManager(object):
 
     def __init__(
             self,
-            ct=None,
+            ct: ColumnTransformer = None,
             scoring=None,
             cv_args: Optional[dict] = None,
-            random_state=0,
+            random_state: int = 0,
             target: str = 'target',
             scorer=None,
             wm: WeightsManager = None,
@@ -214,7 +215,7 @@ class ModelManager(object):
 
         return pipe
 
-    def init_models(self, models: Dict[str, BaseEstimator], **kw) -> None:
+    def init_models(self, models: Dict[str, 'BaseEstimator'], **kw) -> None:
         """Convenience func to init dict of models
 
         Parameters
@@ -227,7 +228,7 @@ class ModelManager(object):
     def init_model(
             self,
             name: str,
-            model: BaseEstimator,
+            model: 'BaseEstimator',
             steps: List[Tuple[int, tuple]] = None) -> Pipeline:
         """Init single model
 
@@ -322,13 +323,13 @@ class ModelManager(object):
 
     def fit(
             self,
-            model: BaseEstimator,
+            model: 'BaseEstimator',
             weighted_fit: bool = True,
             filter_fit_quantile: float = None,
             name: str = None,
             # fit_params: dict = None,
             force: bool = False,
-    ) -> BaseEstimator:
+    ) -> 'BaseEstimator':
         """Fit model to self.x_train with self.y_train (if not fit already)
 
         Parameters
@@ -386,101 +387,6 @@ class ModelManager(object):
         df = pd.DataFrame(m).T
         display(df)
 
-    def add_predict_iter(
-            self,
-            df: pd.DataFrame,
-            name: str,
-            split_date: dt,
-            model: BaseEstimator = None,
-            batch_size: int = 96,
-            # min_size: int = 180 * 24,
-            max_train_size: int = None,
-            regression: bool = False,
-            filter_fit_quantile: float = None,
-            retrain_feats: bool = False) -> pd.DataFrame:
-        """Retrain model every x periods and add predictions for next batch_size"""
-        from lightgbm import LGBMClassifier
-        df_orig = df.copy()  # to keep all original cols when returned
-        mlflow.log_metric('batch_size', batch_size)
-        mlflow.log_metric('filter_fit_quantile', filter_fit_quantile)
-        mlflow.log_param('retrain_feats', retrain_feats)
-
-        nrows = df.shape[0]
-        min_size = df[df.index < split_date].shape[0]
-        num_batches = ((nrows - min_size) // batch_size) + 1
-
-        if model is None:
-            model = self.pipes[name].named_steps[name]
-
-        drop_cols = [c for c in cf.config['drop_cols'] if c in df.columns]
-        df = df.pipe(pu.safe_drop, drop_cols)
-
-        def _get_imp_feats(x, y):
-            """Fit shap on history up to this point
-            - use n most important cols going forward
-            - NOTE could limit fitting important cols up to eg last year?
-            """
-            # need to pass in x/y for history till now
-            # need to know if we need ct for column names or not
-            spm = ShapManager(
-                x=x,
-                y=y,
-                ct=None,
-                model=LGBMClassifier(num_leaves=50, n_estimators=50, max_depth=30,
-                                     boosting_type='dart', learning_rate=0.1),
-                n_sample=10_000)
-
-            return spm.shap_n_important(n=60, save=False, upload=False, as_list=True)['most']
-
-        def _fit(i: int) -> pd.DataFrame:
-            i_lower = min_size + i * batch_size  # "test" lower
-            i_upper = min(i_lower + batch_size, nrows + 1)
-            idx_test = df.index[i_lower: i_upper]
-
-            # train model from 0 up to current position
-            # NOTE max_train_size eg 2 yrs seems to be much worse
-            i_train_lower = 0 if not max_train_size else max(0, i_lower - max_train_size)
-
-            df_train = df.iloc[i_train_lower: i_lower]
-
-            if filter_fit_quantile:
-                df_train = self.wm.filter_highest(df_train, quantile=filter_fit_quantile)
-
-            x_train, y_train = split(
-                df_train,
-                target=self.target)
-
-            x_test, _ = split(df.loc[idx_test], target=self.target)
-
-            # use shap to get important cols at each iter
-            if retrain_feats:
-                imp_cols = _get_imp_feats(x_train, y_train)
-                x_train = x_train[imp_cols]
-                x_test = x_test[imp_cols]
-
-            model.fit(
-                x_train,
-                y_train,
-                **self.wm.fit_params(x_train))
-
-            if len(idx_test) == 0:
-                return None
-            else:
-                if not regression:
-                    proba_long = df_proba(x=x_test, model=model)['proba_long']
-                else:
-                    proba_long = df_y_pred(x=x_test, model=model)['y_pred']
-
-                return pd.DataFrame(
-                    index=idx_test,
-                    data=dict(
-                        y_pred=model.predict(x_test),
-                        proba_long=proba_long))
-
-        result = ProgressParallel(batch_size=2, n_jobs=-1, total=num_batches)(delayed(_fit)(i=i)
-                                                                              for i in range(num_batches))
-        return df_orig.pipe(pu.left_merge, pd.concat([df for df in result if not df is None]))
-
     def add_predict(
             self,
             df: pd.DataFrame,
@@ -489,7 +395,7 @@ class ModelManager(object):
             x_train: pd.DataFrame = None,
             x_test: pd.DataFrame = None,
             proba: bool = True,
-            model: BaseEstimator = None,
+            model: 'BaseEstimator' = None,
             name: str = None,
             **kw) -> pd.DataFrame:
         """Add predicted vals to df
@@ -659,7 +565,7 @@ class ShapManager():
     def __init__(
             self,
             df: pd.DataFrame,
-            model: BaseEstimator,
+            model: 'BaseEstimator',
             n_sample: int = 10_000,
             wm: WeightsManager = None):
         """
@@ -677,8 +583,7 @@ class ShapManager():
             wm = WeightsManager.from_config(df)
 
         self.wm = wm
-
-        bs = BlobStorage(container=cf.p_data / 'feats')
+        self.bs = BlobStorage(container=cf.p_data / 'feats')
         self.df = df
         self.model = model
         self.n_sample = n_sample
@@ -706,13 +611,13 @@ class ShapManager():
         Tuple[shap.TreeExplainer, List[np.array], pd.DataFrame, pd.DataFrame]
         """
         df = self.df
-        df = self.wm.filter_highest(df, quantile=0.6)
+        df = self.wm.filter_highest(df, quantile=cf.FILTER_FIT_QUANTILE)
 
         x = df.drop(columns=['target'])
         y = df.target
 
         # NOTE this doesn't normalize anything
-        x_enc = x.pipe(pu.safe_drop, cf.config['drop_cols'])
+        x_enc = x.pipe(pu.safe_drop, cf.DROP_COLS)
 
         self.model.fit(x_enc, y, **self.wm.fit_params(x=x_enc, name=None))
 
@@ -761,7 +666,7 @@ class ShapManager():
             as_list: bool = True,
             save: bool = True,
             save_least_all: bool = False,
-            upload: bool = False) -> Union[list, pd.DataFrame]:
+            upload: bool = False) -> Union[Dict[str, List[str]], pd.DataFrame]:
         """Get list of n most important shap values
 
         Parameters
@@ -815,7 +720,8 @@ class ShapManager():
             if not m_imp['least']:
                 log.warning('No least_imp_cols to save')
             else:
-                jfl.save_pickle(m_imp['least'], p=self.bs.p_local, name='least_imp_cols')
+                p = jfl.save_pickle(m_imp['least'], p=self.bs.p_local, name='least_imp_cols')
+                log.info(f'saved: {p}')
 
                 if upload:
                     self.bs.upload_dir()
@@ -844,12 +750,12 @@ def show_prop(df, target_col='target'):
             prop='{:.2%}'))
 
 
-def split(df: pd.DataFrame, target: Union[list, str]) -> Tuple[pd.DataFrame, pd.Series]:
+def split(df: pd.DataFrame, target: Union[List[str], str] = 'target') -> Tuple[pd.DataFrame, pd.Series]:
     """Split off target col to make X and y"""
     if isinstance(target, list) and len(target) == 1:
         target = target[0]
 
-    return df.pipe(pu.safe_drop, cols=target), df[target]  # .to_numpy(np.float32)
+    return df.pipe(pu.safe_drop, cols=target), df[target]
 
 
 def show_scores(df: pd.DataFrame, higher_better: bool = False) -> None:
@@ -1066,14 +972,14 @@ def all_except(df, exclude: list):
     return [col for col in df.columns if not any(col in lst for lst in exclude)]
 
 
-def df_proba(x: pd.DataFrame, model: BaseEstimator, **kw) -> pd.DataFrame:
+def df_proba(x: pd.DataFrame, model: 'BaseEstimator', **kw) -> pd.DataFrame:
     """Return df of predict_proba, with timestamp index
 
     Parameters
     ----------
     df : pd.DataFrame
         df with signals
-    model : BaseEstimator
+    model : 'BaseEstimator'
         fitted model/pipeline
 
     Returns
@@ -1087,14 +993,14 @@ def df_proba(x: pd.DataFrame, model: BaseEstimator, **kw) -> pd.DataFrame:
     return pd.DataFrame(data=arr, columns=cols, index=x.index)
 
 
-def df_y_pred(x: pd.DataFrame, model: BaseEstimator) -> pd.DataFrame:
+def df_y_pred(x: pd.DataFrame, model: 'BaseEstimator') -> pd.DataFrame:
     """Return df with y_pred added
 
     Parameters
     ----------
     df : pd.DataFrame
         df with signals
-    model : BaseEstimator
+    model : 'BaseEstimator'
         model/pipe
 
     Returns
@@ -1108,14 +1014,14 @@ def df_y_pred(x: pd.DataFrame, model: BaseEstimator) -> pd.DataFrame:
         index=x.index)
 
 
-def add_probas(df: pd.DataFrame, model: BaseEstimator, x: pd.DataFrame, do: bool = True, **kw) -> pd.DataFrame:
+def add_probas(df: pd.DataFrame, model: 'BaseEstimator', x: pd.DataFrame, do: bool = True, **kw) -> pd.DataFrame:
     """Convenience func to add probas if don't exist
 
     Parameters
     ----------
     df : pd.DataFrame
         df with signals
-    model : BaseEstimator
+    model : 'BaseEstimator'
         model/pipe
     x : pd.DataFrame
         section of df to predict on
@@ -1135,14 +1041,14 @@ def add_probas(df: pd.DataFrame, model: BaseEstimator, x: pd.DataFrame, do: bool
     return df.pipe(pu.left_merge, df_right=df_proba(x=x, model=model))
 
 
-def add_y_pred(df: pd.DataFrame, model: BaseEstimator, x: pd.DataFrame) -> pd.DataFrame:
+def add_y_pred(df: pd.DataFrame, model: 'BaseEstimator', x: pd.DataFrame) -> pd.DataFrame:
     """Add y_pred col to df with model.predict
 
     Parameters
     ----------
     df : pd.DataFrame
         df with signals
-    model : BaseEstimator
+    model : 'BaseEstimator'
         model/pipe
     x : pd.DataFrame
         section of df to predict on
@@ -1378,12 +1284,12 @@ def plot_cols(df: pd.DataFrame, expr: str = '.', cols: List[str] = None) -> None
         df[col].plot(title=col, ax=ax)
 
 
-def is_fitted(estimator: BaseEstimator) -> bool:
+def is_fitted(estimator: 'BaseEstimator') -> bool:
     """Check if model is fitted yet
 
     Parameters
     ----------
-    estimator : BaseEstimator
+    estimator : 'BaseEstimator'
 
     Returns
     -------
@@ -1395,3 +1301,104 @@ def is_fitted(estimator: BaseEstimator) -> bool:
         return True
     except NotFittedError:
         return False
+
+
+def _get_imp_feats(
+        x: pd.DataFrame,
+        y: pd.Series,
+        df: pd.DataFrame) -> List[str]:
+    """Fit shap on history up to this point
+    - NOTE not used currently
+    - use n most important cols going forward
+    - NOTE could limit fitting important cols up to eg last year?
+    """
+    # need to pass in x/y for history till now
+    # need to know if we need ct for column names or not
+    from lightgbm import LGBMClassifier
+
+    model = LGBMClassifier(
+        num_leaves=50,
+        n_estimators=50,
+        max_depth=30,
+        boosting_type='dart',
+        learning_rate=0.1)
+
+    spm = ShapManager(
+        df=df,
+        model=model,
+        n_sample=10_000)
+
+    return spm.shap_n_important(n=60, save=False, upload=False, as_list=True)['most']
+
+
+def add_predict_iter(
+        df: pd.DataFrame,
+        wm: WeightsManager,
+        model: 'BaseEstimator',
+        split_date: dt,
+        batch_size: int = 96,
+        max_train_size: int = None,
+        regression: bool = False,
+        filter_fit_quantile: float = None,
+        retrain_feats: bool = False) -> pd.DataFrame:
+    """Retrain model every x periods and add predictions for next batch_size"""
+
+    df_orig = df.copy()  # to keep all original cols when returned
+
+    nrows = df.shape[0]
+    index = df.index  # type: pd.DatetimeIndex
+    min_size = df[index < split_date].shape[0]  # type: int
+    num_batches = ((nrows - min_size) // batch_size) + 1
+
+    # if model is None:
+    #     model = self.pipes[name].named_steps[name]
+
+    df = df.pipe(pu.safe_drop, cf.DROP_COLS)
+
+    def _fit(i: int) -> Union[pd.DataFrame, None]:
+        i_lower = min_size + i * batch_size  # "test" lower
+        i_upper = min(i_lower + batch_size, nrows + 1)
+        idx_test = df.index[i_lower: i_upper]
+
+        # train model from 0 up to current position
+        # NOTE max_train_size eg 2 yrs seems to be much worse
+        i_train_lower = 0 if not max_train_size else max(0, i_lower - max_train_size)
+
+        df_train = df.iloc[i_train_lower: i_lower]  # type: pd.DataFrame
+
+        if filter_fit_quantile:
+            df_train = wm.filter_highest(df_train, quantile=filter_fit_quantile)
+
+        x_train, y_train = split(df_train)
+
+        x_test, _ = split(df.loc[idx_test])
+
+        # use shap to get important cols at each iter
+        # if retrain_feats:
+        #     imp_cols = _get_imp_feats(x_train, y_train, df)
+        #     x_train = x_train[imp_cols]
+        #     x_test = x_test[imp_cols]
+
+        model.fit(
+            x_train,
+            y_train,
+            **wm.fit_params(x_train))
+
+        if len(idx_test) == 0:
+            return None
+        else:
+            if not regression:
+                proba_long = df_proba(x=x_test, model=model)['proba_long']
+            else:
+                proba_long = df_y_pred(x=x_test, model=model)['y_pred']
+
+            return pd.DataFrame(
+                index=idx_test,
+                data=dict(
+                    y_pred=model.predict(x_test),
+                    proba_long=proba_long))
+
+    par = ProgressParallel(batch_size=2, n_jobs=-1, total=num_batches)
+    result = par(delayed(_fit)(i=i) for i in range(num_batches))
+
+    return df_orig.pipe(pu.left_merge, pd.concat([df for df in result if not df is None]))
