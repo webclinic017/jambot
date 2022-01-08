@@ -7,7 +7,7 @@ import pandas as pd
 from jambot import config as cf
 
 
-def default_df():
+def default_df() -> pd.DataFrame:
     """Get simple default df for testing"""
     p = cf.p_data / 'feather/df.ftr'
     return pd.read_feather(p) \
