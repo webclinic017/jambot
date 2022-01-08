@@ -1,5 +1,7 @@
 import copy
 import re
+import sqlite3
+import struct
 import time
 from abc import ABCMeta, abstractproperty
 from collections import Counter, deque
@@ -18,6 +20,7 @@ from mlflow.store.tracking.dbmodels.models import (SqlLatestMetric, SqlParam,
                                                    SqlRun, SqlTag)
 from mlflow.tracking import MlflowClient
 from mlflow.tracking.fluent import _get_or_start_run
+from pandas.api.types import is_numeric_dtype
 from sqlalchemy.orm import Session, sessionmaker
 
 from jambot import config as cf
@@ -32,7 +35,7 @@ log = getlog(__name__)
 class MlflowLoggable(object, metaclass=ABCMeta):
     """Class to ensure object provides params/metrics for mlflow logging"""
 
-    def register(self, mfm: 'MlflowManager') -> 'MlflowLoggable':
+    def register(self, mfm: 'MlflowManager'):
         """Attach self to mf manager
 
         Parameters
@@ -62,7 +65,7 @@ class MlflowLoggable(object, metaclass=ABCMeta):
         metrics, params = {}, {}
 
         for k, v in self.log_items.items():
-            if isinstance(v, (float, int)) and not isinstance(v, bool):
+            if is_numeric_dtype(type(v)) and not isinstance(v, bool):
                 metrics[k] = v
             else:
                 params[k] = str(v)
@@ -77,12 +80,12 @@ class MlflowLoggable(object, metaclass=ABCMeta):
         mlflow.log_params(params)
 
         # NOTE probably need to make this handle multi artifacts
-        if hasattr(self, 'log_artifact'):
-            mlflow.log_artifact(self.log_artifact())
+        # if hasattr(self, 'log_artifact'):
+        #     mlflow.log_artifact(self.log_artifact())
 
-        if hasattr(self, 'log_dfs'):
-            for kw in jf.as_list(self.log_dfs()):
-                MlflowManager.log_df(**kw)
+        # if hasattr(self, 'log_dfs'):
+        #     for kw in jf.as_list(self.log_dfs()):
+        #         MlflowManager.log_df(**kw)
 
 
 class MlflowManager(DictRepr):
@@ -108,7 +111,9 @@ class MlflowManager(DictRepr):
         self.client = MlflowClient()
         self._engine = None
         self._session = None
+        self._conn = None  # for sqlite3 cursor
         self.db_path = 'sqlite:///mlruns.db'
+        mlflow.set_tracking_uri(self.db_path)
 
         # monkeypatch mlflow logging funcs
         mlflow.log_metric = self._log_metric
@@ -139,6 +144,18 @@ class MlflowManager(DictRepr):
         return self._session
 
     @property
+    def conn(self):
+        if self._conn is None:
+            self._conn = sqlite3.connect('mlruns.db')
+
+        return self._conn
+
+    @property
+    def cursor(self):
+        """Raw cursor used for db operations other than refreshing main tables"""
+        return self.conn.cursor()
+
+    @property
     def num_records(self) -> Dict[str, int]:
         return {k: len(self._queues[k]) for k in self._queues}
 
@@ -152,6 +169,10 @@ class MlflowManager(DictRepr):
             for item_type, q in self._queues.items():
                 while q:
                     m = q.pop()
+                    for k, v in m.items():
+                        if v is None:
+                            log.warning(f'Value for "{k}"={v}')
+
                     row = self.tables[item_type](**m)
                     session.add(row)
                     added[item_type] += 1
@@ -336,14 +357,90 @@ class MlflowManager(DictRepr):
             except:
                 log.warning('Failed to delete run')
 
+    def add_prev_item(self, key: str, val: Any, table: str = 'metric') -> None:
+        """Add metric for all runs which wasn't previously logged
+        - NOTE could also add paramas
+
+        Parameters
+        ----------
+        key : str
+            metric key
+        val : Any
+            value to add
+        """
+        name = dict(
+            metric='latest_metrics',
+            param='params')[table]
+
+        df = self.df_results() \
+            .reset_index(drop=False)[['run_id']] \
+            .rename(columns=dict(run_id='run_uuid'))
+
+        data = dict(key=key, value=val)
+
+        if table == 'metric':
+            data |= dict(step=0, is_nan=0)
+
+        df \
+            .assign(**data) \
+            .to_sql(name=name, con=self.engine, if_exists='append', index=False)
+
+        log.info(f'Added {table} "{key}={val}" for {len(df)} runs to table "{name}".')
+
     def df_results(self, experiment_ids: Union[str, List[str]] = '0') -> pd.DataFrame:
 
         return mlflow.search_runs(experiment_ids) \
             .set_index(['experiment_id', 'run_id']) \
             .sort_values('start_time') \
             .pipe(lambda df: df[[c for c in df.columns if re.match(r'metr|para', c)]]) \
-            .pipe(lambda df: df.rename(columns={c: c.split('.')[1] for c in df.columns})) \
-            .drop(columns=['start', 'end'])  # temp for displaying
+            .pipe(lambda df: df.rename(columns={c: c.split('.')[1] for c in df.columns}))
+
+    def pairplot(self, df: pd.DataFrame = None, latest: bool = False, experiment_ids: str = '0', **kw) -> None:
+        import matplotlib.pyplot as plt
+        import seaborn as sns
+
+        if df is None:
+            df = self.df_results(experiment_ids=experiment_ids)
+
+        if latest:
+            df = df.loc[df.end == df.end.max()]
+            print(len(df))
+
+        df = df.assign(end=lambda df: df.end.astype(str).astype(pd.CategoricalDtype()))
+
+        x_vars = [
+            'target_n_periods',
+            'n_periods_smooth',
+            'filter_fit_quantile',
+            'tpd',
+            'n_estimators',
+            'max_depth',
+            'num_leaves',
+            'num_feats'
+        ]
+
+        y_vars = ['w_acc', 'ci_monthly']
+
+        fig, axs = plt.subplots(
+            nrows=len(x_vars),
+            ncols=len(y_vars),
+            figsize=(3 * len(x_vars), 2.5 * 6 * len(y_vars))
+        )
+
+        for xi, xcol in enumerate(x_vars):
+            for yi, ycol in enumerate(y_vars):
+
+                sns.scatterplot(
+                    y=df[ycol],
+                    x=df[xcol],
+                    hue=df.end,
+                    ax=axs[xi, yi],
+                    legend=False,
+                    alpha=0.4,
+                    linewidth=0)
+
+        plt.autoscale(True)
+        plt.tight_layout(pad=0.4)
 
 
 def import_local(mfm: MlflowManager, kill: bool = False) -> None:
@@ -405,3 +502,39 @@ def load_meta(p: Path) -> Dict[str, Any]:
         del m[k]
 
     return m
+
+
+def convert_bytes(val) -> int:
+    if isinstance(val, bytes):
+        return struct.unpack('ii', val)[0]
+    elif isinstance(val, str):
+        try:
+            return int(val)
+        except:
+            try:
+                return float(val)
+            except:
+                return val
+    else:
+        return val
+
+
+def param_to_metric(df: pd.DataFrame, mfm: MlflowManager, cols: List[str] = None):
+    cols = cols or ['n_periods_smooth']
+    # .assign(n_periods_smooth=lambda df: df['n_periods_smooth'].apply(convert_bytes)) \
+
+    df2 = df[cols].reset_index(drop=False) \
+        .drop(columns=['experiment_id']) \
+        .rename(columns=dict(run_id='run_uuid')) \
+        .melt(id_vars=['run_uuid'], var_name='key') \
+        .assign(step=0, timestamp=0, is_nan=0)
+
+    df2.to_sql(name='latest_metrics', con=mfm.conn, if_exists='append', index=False)
+
+    sql = f"""
+    delete from params where key in {tuple(cols)}
+    """
+    mfm.cursor.execute(sql)
+    mfm.conn.commit()
+
+    return df2
