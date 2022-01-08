@@ -43,31 +43,52 @@ warnings.filterwarnings('ignore', message='invalid value encountered in double_s
 class SignalManager(MlflowLoggable):
     def __init__(
             self,
-            signals_list: list = None,
+            signals_list: List[Union[str, 'SignalGroup']] = None,
             target: str = None,
             slope: int = 0,
             sum: int = 0,
             cut_periods: int = 200):
 
-        self.signal_groups = {}
-        self.final_feats = None
-        features = {}  # map of {feature_name: signal_group}
-        scaler = MinMaxScaler()
+        self.signal_groups = {}  # type: Dict[str, SignalGroup]
+        self.final_feats = []  # type: List[str]
+
+        self.signals_list = signals_list
+        self.slope = slope
+        self.sum = sum
+        self.cut_periods = cut_periods
 
         # cant add any new cols, but CAN exclude cols without pushing new code
         self.bs = BlobStorage(container=cf.p_data / 'feats')
 
-        jf.set_self()
+    @classmethod
+    def default(cls, **kw) -> 'SignalManager':
+        """Load signalmanager with global default vals"""
+        return cls(**cf.SIGNALMANAGER_KW, **kw)
 
     @property
     def log_items(self) -> dict:
         """Merge all logable params from signal groups"""
         m = {}
         for sg in self.signal_groups.values():
-            if isinstance(sg, MlflowLoggable):
+            # if isinstance(sg, MlflowLoggable):
+            if hasattr(sg, 'log_items'):
                 m |= sg.log_items
 
-        return m
+        return m | dict(
+            num_feats=len(self.final_feats),
+            feats_hash=self.feats_hash)
+
+    @property
+    def feats_hash(self) -> str:
+        import hashlib
+        import uuid
+
+        seed = ''.join(self.final_feats)
+
+        m = hashlib.md5()
+        m.update(seed.encode('utf-8'))
+        uid = uuid.UUID(m.hexdigest())
+        return f'{len(self.final_feats)}_{uid}'
 
     def log_artifact(self) -> Path:
         """Save sm used columns as artifact for mlflow"""
@@ -98,12 +119,36 @@ class SignalManager(MlflowLoggable):
         log.info('get_feature_names')
         return self.cols
 
+    @property
+    def lst_imp(self) -> List[str]:
+        """NOTE bit messy, unfinished func"""
+        if not hasattr(self, '_lst_imp'):
+            self._lst_imp = jfl.load_pickle(p=cf.p_data / 'feats/most_imp_cols.pkl')
+
+        return self._lst_imp
+
+    def filter_n_feats(self, df: pd.DataFrame, n: int, lst_imp: List[str] = None) -> pd.DataFrame:
+
+        if lst_imp is None:
+            lst_imp = self.lst_imp
+
+        # filter df to n most important feats
+        cols = lst_imp[:n]
+
+        # set final feats
+        self.final_feats = cols
+
+        default_cols = [c for c in cf.DROP_COLS if c in df.columns]
+        return df[default_cols + cols + ['target']]
+
     def add_signals(
             self,
             df: pd.DataFrame,
-            signals: list = None,
+            signals: List[Union[str, Any]] = None,
             signal_params: dict = None,
             use_important: bool = False,
+            exclude_cols: List[str] = None,
+            drop_ohlc: bool = False,
             **kw) -> pd.DataFrame:
         """Add multiple initialized signals to dataframe"""
         if signals is None:
@@ -124,7 +169,7 @@ class SignalManager(MlflowLoggable):
 
             # if str, init obj with defauls args
             if isinstance(signal_group, str):
-                signal_group = getattr(sys.modules[__name__], signal_group)()
+                signal_group = getattr(sys.modules[__name__], signal_group)()  # type: SignalGroup
 
             # save to dict of self.signal_groups
             self.signal_groups[signal_group.class_name] = signal_group
@@ -132,8 +177,10 @@ class SignalManager(MlflowLoggable):
             signal_group.df = df  # NOTE kinda sketch
             signal_group.slope = self.slope  # sketch too
             signal_group.sum = self.sum
+
+            # force_overwrite=False
             final_signals |= signal_group.make_signals(df=df, **kw)
-            signal_group.df = None
+            del signal_group.df
             drop_cols += signal_group.drop_cols
             require_cols |= signal_group.require_cols
 
@@ -141,10 +188,14 @@ class SignalManager(MlflowLoggable):
         if use_important:
             processed, dep_only = [], []
             # TODO THIS NEEDS TO STAY IN SYNC WITH LIVE DATA
-            if AZURE_WEB or True:
+            # if AZURE_WEB or True:
+            if AZURE_WEB:
                 self.bs.download_file(p='least_imp_cols.pkl')
 
-            exclude_cols = jfl.load_pickle(p=self.bs.p_local / 'least_imp_cols.pkl')
+            if exclude_cols is None:
+                exclude_cols = jfl.load_pickle(p=self.bs.p_local / 'least_imp_cols.pkl')  # type: List[str]
+
+            # print('len(exclude_cols)', len(exclude_cols))
 
             if not exclude_cols:
                 raise RuntimeError('No cols in exclude_cols')
@@ -172,19 +223,19 @@ class SignalManager(MlflowLoggable):
             final_signals = {k: v for k, v in final_signals.items() if k in processed}
             drop_cols.extend(dep_only)
 
-        # always keep max 500 important
-        # p = self.bs.p_local / 'least_imp_cols_500.pkl'
-        # if p.exists():
-        #     drop_cols.extend(jfl.load_pickle(p))
-
         # save for logging
-        self.final_feats = sorted(list(set(final_signals.keys()) - set(drop_cols)))
+        self.final_feats = sorted(list(
+            set(list(final_signals.keys()) + self.final_feats) - set(drop_cols)))
+
+        # print('len final_feats:', len(self.final_feats))
+        # print('len final_signals:', len(final_signals))
 
         # remove first rows that can't be set with 200ema accurately
         return df.assign(**final_signals) \
             .pipe(pu.safe_drop, cols=drop_cols) \
             .iloc[self.cut_periods:, :] \
-            .fillna(0)
+            .fillna(0) \
+            .pipe(pu.safe_drop, cols=cf.DROP_COLS, do=drop_ohlc)
 
     def show_signals(self):
         m = dd(dict)
@@ -198,7 +249,11 @@ class SignalManager(MlflowLoggable):
 
         sk.pretty_dict(m)
 
-    def replace_single_feature(self, df, feature_params: dict, **kw) -> pd.DataFrame:
+    def replace_single_feature(
+            self,
+            df: pd.DataFrame,
+            feature_params: dict,
+            **kw) -> Iterable[Tuple[pd.DataFrame, str]]:
         """Generator to replace single feature at a time with new values from params dict"""
 
         for feature_name, m in feature_params.items():
@@ -251,14 +306,21 @@ class SignalGroup():
             fillna: bool = True,
             prefix: str = None,
             **kw):
-        drop_cols, no_slope_cols, no_sum_cols, not_normal_cols = [], [], [], []
-        force_slope_cols = []
-        require_cols = {}
-        signals = self.init_signals(signals)
-        slope = 0
-        sum = 0
-        class_name = self.__class__.__name__.lower()
-        jf.set_self()
+
+        self.drop_cols = []
+        self.no_slope_cols = []
+        self.no_sum_cols = []
+        self.not_normal_cols = []
+        self.force_slope_cols = []
+        self.require_cols = {}
+
+        self.df = df
+        self.prefix = prefix
+        self.fillna = fillna
+        self.signals = self.init_signals(signals)
+        self.slope = 0
+        self.sum = 0
+        self.class_name = self.__class__.__name__.lower()
 
     def init_signals(self, signals):
         """Extra default processing to signals, eg add plot func"""
@@ -978,6 +1040,8 @@ class TargetClass(SignalGroup, MlflowLoggable):
         super().__init__(**kw)
         ema_col = f'ema{p_ema}'  # named so can drop later
         pct_min = pct_min / 2
+
+        print('TargetClass n_periods:', n_periods)
 
         jf.set_self()
 
