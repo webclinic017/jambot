@@ -5,7 +5,6 @@ from typing import TYPE_CHECKING, List
 import numpy as np
 import pandas as pd
 
-from jambot import SYMBOL
 from jambot import config as cf
 from jambot import functions as f
 from jambot import getlog
@@ -111,7 +110,7 @@ class ModelStorageManager(DictRepr):
 
         self.fit_save(
             df=Tickers().get_df(
-                symbol=SYMBOL,
+                symbol=cf.SYMBOL,
                 startdate=self.d_lower,
                 interval=interval,
                 funding=True,
