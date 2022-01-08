@@ -78,7 +78,7 @@ class BacktestManager(Clock, MlflowLoggable):
     def to_dict(self) -> dict:
         return dict(startdate=str(self.startdate))
 
-    def run(self, prnt: bool = False, _log: bool = False) -> 'BacktestManager':
+    def run(self, prnt: bool = False, _log: bool = False, plot_balance: bool = False) -> 'BacktestManager':
         """Top level step function
 
         Parameters
@@ -99,6 +99,8 @@ class BacktestManager(Clock, MlflowLoggable):
 
         if prnt:
             self.print_final()
+
+        if plot_balance:
             self.strat.wallet.plot_balance(logy=True)
 
         if _log:
