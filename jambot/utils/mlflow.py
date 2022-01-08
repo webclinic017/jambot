@@ -389,11 +389,14 @@ class MlflowManager(DictRepr):
 
     def df_results(self, experiment_ids: Union[str, List[str]] = '0') -> pd.DataFrame:
 
+        cols = ['n_estimators', 'num_leaves', 'max_depth', 'target_n_periods', 'n_periods_smooth', 'num_feats']
+
         return mlflow.search_runs(experiment_ids) \
             .set_index(['experiment_id', 'run_id']) \
             .sort_values('start_time') \
             .pipe(lambda df: df[[c for c in df.columns if re.match(r'metr|para', c)]]) \
-            .pipe(lambda df: df.rename(columns={c: c.split('.')[1] for c in df.columns}))
+            .pipe(lambda df: df.rename(columns={c: c.split('.')[1] for c in df.columns})) \
+            .pipe(pu.convert_dtypes, cols=cols, _type=int)
 
     def pairplot(self, df: pd.DataFrame = None, latest: bool = False, experiment_ids: str = '0', **kw) -> None:
         import matplotlib.pyplot as plt

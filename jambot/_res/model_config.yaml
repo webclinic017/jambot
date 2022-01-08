@@ -1,13 +1,13 @@
 ETHUSD:
   thing: 5
 XBTUSD:
-  filter_fit_quantile: 0.7
-  max_depth: 40.0
-  n_estimators: 100.0
-  n_periods_smooth: 5.0
-  num_feats: 36.0
-  num_leaves: 100.0
-  target_n_periods: 26.0
   boosting_type: dart
-  random_state: 0
+  filter_fit_quantile: 0.7
   learning_rate: 0.1
+  max_depth: 40
+  n_estimators: 100
+  n_periods_smooth: 5
+  num_feats: 36
+  num_leaves: 100
+  random_state: 0
+  target_n_periods: 26

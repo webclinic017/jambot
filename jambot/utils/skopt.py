@@ -19,6 +19,7 @@ from jambot.tradesys.backtest import BacktestManager
 from jambot.tradesys.strategies.ml import make_strat
 from jambot.utils.mlflow import MlflowManager
 from jambot.weights import WeightsManager
+from jgutils import pandas_utils as pu
 from jgutils.functions import nested_dict_update
 
 if TYPE_CHECKING:
@@ -189,7 +190,7 @@ def plot_conv():
     plots.plot_convergence(res)
 
 
-def get_best_results(df: pd.DataFrame = None, top_n: int = 50) -> dict[str, float]:
+def get_best_results(df: pd.DataFrame = None, top_n: int = 50, exp_id: str = '3') -> dict[str, float]:
     """Get dict of median of best params to save to static config file
 
     Parameters
@@ -212,13 +213,13 @@ def get_best_results(df: pd.DataFrame = None, top_n: int = 50) -> dict[str, floa
     """
     if df is None:
         mfm = MlflowManager()
-        df = mfm.df_results(experiment_ids='3')  # TODO pass this in
+        df = mfm.df_results(experiment_ids=exp_id)
 
     # TODO put this in config somewhere? idk
     cols = ['max_depth', 'n_estimators', 'num_leaves', 'num_feats',
             'n_periods_smooth', 'target_n_periods', 'filter_fit_quantile']
 
-    # TODO round results to int etc... get types from SPACE
+    int_cols = df.select_dtypes(int).columns.tolist()
 
     return df \
         .reset_index() \
@@ -226,11 +227,14 @@ def get_best_results(df: pd.DataFrame = None, top_n: int = 50) -> dict[str, floa
         .sort_values('ci_monthly', ascending=False) \
         .head(top_n) \
         .groupby('symbol')[cols] \
-        .median().to_dict(orient='index')
+        .median() \
+        .pipe(pu.convert_dtypes, cols=int_cols, _type=int) \
+        .to_dict(orient='index')
 
 
 def write_best_results(m_res: Dict[str, float] = None, **kw) -> None:
     """Write best opt results to model_config.yaml
+    - TODO also upload this to azure?
 
     Parameters
     ----------
