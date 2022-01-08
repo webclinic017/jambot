@@ -1191,14 +1191,14 @@ def add_emas(df, emas: list = None):
     return df
 
 
-def add_ema(df, p, c='close', col=None, overwrite=True):
+def add_ema(df: pd.DataFrame, p: int, c='close', col=None, overwrite=True):
     """Add ema from close price to df if column doesn't already exist (more than one signal may add an ema"""
     if col is None:
         col = f'ema{p}'
 
     if not col in df.columns or overwrite:
         # df[col] = df[c].ewm(span=p, min_periods=p).mean()
-        df[col] = EMAIndicator(close=df[c], window=p, fillna=True).ema_indicator()
+        df[col] = EMAIndicator(close=df[c], window=int(p), fillna=True).ema_indicator()
 
     return df
 
