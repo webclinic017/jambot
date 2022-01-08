@@ -1,8 +1,7 @@
 import copy
-from typing import Any, Dict
+from typing import *
 
 import pandas as pd
-from lightgbm.sklearn import LGBMClassifier
 from sklearn.base import BaseEstimator
 from sklearn.decomposition import PCA  # noqa
 from sklearn.linear_model import Ridge
@@ -13,6 +12,7 @@ from jambot import config as cf
 from jambot import getlog
 from jambot import signals as sg
 from jambot import sklearn_utils as sk
+from jambot.ml.classifiers import LGBMClsLog
 from jgutils import fileops as jfl
 from jgutils import pandas_utils as pu
 
@@ -44,7 +44,7 @@ def model_cfg(name: str) -> Dict[str, Any]:
     return dict(
         lgbm=dict(
             target=['target'],
-            target_kw=dict(n_periods=10, regression=False),
+            # target_kw=dict(n_periods=10, regression=False),
             target_cls=sg.TargetUpsideDownside,
             # drop_cols=['target_max', 'target_min'],
             model_kw=dict(
@@ -53,7 +53,7 @@ def model_cfg(name: str) -> Dict[str, Any]:
                 max_depth=10,
                 boosting_type='dart',
                 random_state=0),
-            model_cls=LGBMClassifier,
+            model_cls=LGBMClsLog,
             n_smooth_proba=3,
         ),
         ridge=dict(
@@ -70,6 +70,7 @@ def model_cfg(name: str) -> Dict[str, Any]:
 def add_signals(
         df: pd.DataFrame,
         name: str,
+        symbol: str = cf.SYMBOL,
         drop_ohlc: bool = False,
         use_important: bool = True) -> pd.DataFrame:
     """Add signal cols to df
@@ -80,6 +81,7 @@ def add_signals(
         raw df with no features
     name : str
         model name
+    symbol : str
     drop_ohlc : bool
         drop ohlcv columns from raw df, default False
     use_important : bool
@@ -91,8 +93,7 @@ def add_signals(
         df with features added
     """
     cfg = model_cfg(name)
-
-    target_signal = cfg['target_cls'](**cfg['target_kw'])
+    target_signal = cfg['target_cls'].from_config(symbol=symbol)
 
     signals = DEFAULT_SIGNALS + [target_signal]
 
@@ -149,13 +150,22 @@ def make_model_manager(
         encoders=encoders, **kw)
 
 
-def make_model(name: str) -> BaseEstimator:
-    cfg = model_cfg(name)
+def make_model(name: str, symbol: str = cf.SYMBOL) -> BaseEstimator:
+    """Create instance of LGBMClassifier
 
-    # init model with kws
-    cls = cfg['model_cls']
-    model = cls(**cfg['model_kw'])
-    return model
+    Parameters
+    ----------
+    name : str
+
+    symbol : str, optional
+        default cf.SYMBOL
+
+    Returns
+    -------
+    LGBMClassifier
+    """
+    cfg = model_cfg(name)
+    return cfg['model_cls'].from_config(symbol=symbol)
 
 
 def make_pipeline(name: str, df: pd.DataFrame) -> Pipeline:
@@ -174,18 +184,9 @@ def make_pipeline(name: str, df: pd.DataFrame) -> Pipeline:
         pipeline with ColumnTransformer, PCA, Model
     """
     mm = make_model_manager(name=name, df=df)
+    model = make_model(name=name)
 
-    cfg = model_cfg(name)
-
-    # init model with kws
-    cls = cfg['model_cls']
-    model = cls(**cfg['model_kw'])
-
-    # steps = [
-    #     (1, ('pca', PCA(n_components=30, random_state=0)))]
-    steps = None
-
-    return mm.make_pipe(name=name, model=model, steps=steps)
+    return mm.make_pipe(name=name, model=model, steps=None)
 
 
 def add_preds_probas(df: pd.DataFrame, pipe: BaseEstimator, **kw) -> pd.DataFrame:
@@ -231,11 +232,10 @@ def add_proba_trade_signal(
     pd.DataFrame
         df with trade signal
     """
-    cfg = model_cfg('lgbm')
 
     # NOTE not implemented yet, need to make func dynamic for regression
     rolling_col = 'proba_long' if not regression else 'y_pred'
-    n_smooth = n_smooth or cfg['n_smooth_proba']
+    n_smooth = n_smooth or cf.dynamic_cfg()['n_periods_smooth']  # get dynamic config value
 
     return df \
         .pipe(sg.add_ema, p=n_smooth, c=rolling_col, col='rolling_proba') \

@@ -103,8 +103,7 @@ class ModelStorageManager(DictRepr):
         """
         log.info('running fit_save_models')
         name = 'lgbm'
-        cfg = md.model_cfg(name)
-        n_periods = cfg['target_kw']['n_periods']
+        n_periods = cf.dynamic_cfg()['target_n_periods']
 
         self.clean()
 
@@ -136,7 +135,6 @@ class ModelStorageManager(DictRepr):
         estimator : LGBMClassifier
             estimator with fit/predict methods
         """
-        cfg = md.model_cfg(name)
 
         # max date where hour is greater or equal to 18:00
         # set back @cut hrs due to losing @n_periods for training preds
@@ -157,6 +155,8 @@ class ModelStorageManager(DictRepr):
             .pipe(pu.safe_drop, cols=cf.DROP_COLS) \
             .loc[:d_upper] \
             .to_numpy(np.float32)
+
+        # TODO filter_fit_quantile... need to work how integer indexes working here FUGGGG
 
         # trim df to older dates by cutting off progressively larger slices
         for i in range(self.n_models):

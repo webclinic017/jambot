@@ -26,6 +26,7 @@ from ta.volume import ChaikinMoneyFlowIndicator
 from jambot import config as cf
 from jambot import getlog
 from jambot import sklearn_utils as sk
+from jambot.common import DictRepr
 from jambot.config import AZURE_WEB
 from jambot.utils.mlflow import MlflowLoggable
 from jgutils import fileops as jfl
@@ -289,7 +290,7 @@ class SignalManager(MlflowLoggable):
         fig.show()
 
 
-class SignalGroup():
+class SignalGroup(DictRepr):
     """Base class for ta indicators"""
     # Default OHLCV cols for df, used to pass to ta signals during init
     m_default = dict(
@@ -1036,18 +1037,24 @@ class TargetClass(SignalGroup, MlflowLoggable):
     # NOTE doesn't work currently need to redo with kw['signals]
     """
 
-    def __init__(self, p_ema=10, n_periods=10, pct_min=0.02, **kw):
+    def __init__(self, n_periods: int = 10, **kw):
         super().__init__(**kw)
-        ema_col = f'ema{p_ema}'  # named so can drop later
-        pct_min = pct_min / 2
+        # ema_col = f'ema{p_ema}'  # named so can drop later
+        # pct_min = pct_min / 2
 
-        print('TargetClass n_periods:', n_periods)
-
-        jf.set_self()
+        self.n_periods = n_periods
 
     @property
     def log_items(self) -> Dict[str, Any]:
         return dict(target_n_periods=self.n_periods)
+
+    @classmethod
+    def from_config(cls, symbol: str = cf.SYMBOL, **kw) -> 'TargetClass':
+        dkw = cf.dynamic_cfg(symbol)
+        return cls(n_periods=dkw['target_n_periods'])
+
+    def to_dict(self) -> dict:
+        return dict(n_periods=self.n_periods)
 
 
 class TargetMeanEMA(TargetClass):
