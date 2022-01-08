@@ -3,6 +3,7 @@ from typing import *
 import mlflow
 import pandas as pd
 import skopt
+import yaml
 from skopt import plots
 from skopt.callbacks import CheckpointSaver
 from skopt.space import Integer, Real
@@ -18,12 +19,17 @@ from jambot.tradesys.backtest import BacktestManager
 from jambot.tradesys.strategies.ml import make_strat
 from jambot.utils.mlflow import MlflowManager
 from jambot.weights import WeightsManager
+from jgutils.functions import nested_dict_update
 
 if TYPE_CHECKING:
     from scipy.optimize import OptimizeResult
     from skopt.space import Dimension
 
 log = getlog(__name__)
+
+ACTIVE_RESULT = 8
+p_skopt = cf.p_data / 'skopt'
+p_res = p_skopt / f'results{ACTIVE_RESULT}.pkl'
 
 
 def get_space() -> List['Dimension']:
@@ -34,7 +40,7 @@ def get_space() -> List['Dimension']:
         Integer(1, 20, name='n_smooth'),
         Integer(2, 40, name='n_target'),
         Integer(20, 50, name='num_feats'),
-        Real(0.2, 0.7, name='filter_fit_quantile', prior='uniform')
+        Real(0.2, 0.9, name='filter_fit_quantile', prior='uniform')
     ]  # type: List[Dimension]
 
     return space
@@ -78,7 +84,7 @@ def objective(
         df_pred = sk.add_predict_iter(
             df=df, wm=wm, model=model, **iter_kw)
 
-    with mlflow.start_run(experiment_id='2'):
+    with mlflow.start_run(experiment_id='3'):
         df_pred = df_pred \
             .pipe(md.add_proba_trade_signal, n_smooth=n_smooth)
 
@@ -114,8 +120,6 @@ def objective(
 
 def run_opt(n_calls: int = 10, df: pd.DataFrame = None, mfm: MlflowManager = None) -> 'OptimizeResult':
 
-    p_skopt = cf.p_data / 'skopt'
-    p_res = p_skopt / 'results7.pkl'
     p_check = p_skopt / 'checkpoint.pkl'
 
     if mfm is None:
@@ -172,7 +176,7 @@ def run_opt(n_calls: int = 10, df: pd.DataFrame = None, mfm: MlflowManager = Non
 
 
 def load_res() -> 'OptimizeResult':
-    return skopt.load('./data/skopt/results7.pkl')
+    return skopt.load(p_res)
 
 
 def plot_eval():
@@ -183,3 +187,69 @@ def plot_eval():
 def plot_conv():
     res = load_res()
     plots.plot_convergence(res)
+
+
+def get_best_results(df: pd.DataFrame = None, top_n: int = 50) -> dict[str, float]:
+    """Get dict of median of best params to save to static config file
+
+    Parameters
+    ----------
+    df : pd.DataFrame, optional
+        df of mlflow results, default None
+    top_n : int, optional
+        top n results to use, default 50
+
+    Returns
+    -------
+    dict[str, float]
+    >>> {'max_depth': 34.5,
+        'n_estimators': 91.0,
+        'num_leaves': 60.0,
+        'num_feats': 32.0,
+        'n_periods_smooth': 3.0,
+        'target_n_periods': 20.0,
+        'filter_fit_quantile': 0.5154932627849301}
+    """
+    if df is None:
+        mfm = MlflowManager()
+        df = mfm.df_results(experiment_ids='3')  # TODO pass this in
+
+    # TODO put this in config somewhere? idk
+    cols = ['max_depth', 'n_estimators', 'num_leaves', 'num_feats',
+            'n_periods_smooth', 'target_n_periods', 'filter_fit_quantile']
+
+    # TODO round results to int etc... get types from SPACE
+
+    return df \
+        .reset_index() \
+        .drop_duplicates('ci_monthly') \
+        .sort_values('ci_monthly', ascending=False) \
+        .head(top_n) \
+        .groupby('symbol')[cols] \
+        .median().to_dict(orient='index')
+
+
+def write_best_results(m_res: Dict[str, float] = None, **kw) -> None:
+    """Write best opt results to model_config.yaml
+
+    Parameters
+    ----------
+    m_res : Dict[str, float], optional
+        new results to merge to existing model_config, default None
+    """
+    p = cf.p_res / 'model_config.yaml'
+
+    # get results if none passed in
+    if m_res is None:
+        m_res = get_best_results(**kw)
+
+    # get existing vals
+    with open(p, 'r') as file:
+        m_in = yaml.full_load(file)
+
+    # update existing with new
+    m_out = nested_dict_update(m_in, m_res)
+
+    # write updated dict back to file
+    with open(p, 'w') as file:
+        yaml.dump(m_out, file)
