@@ -321,5 +321,5 @@ def make_strat(**kw) -> Strategy:
     -------
     Strategy
     """
-    m = dict(lev=3, market_on_timeout=True) | kw
+    m = dict(lev=3, market_on_timeout=True, exch_name='bitmex') | kw
     return Strategy(**m)
