@@ -82,7 +82,7 @@ class ModelStorageManager(DictRepr):
         self.p_model = jfl.check_path(cf.p_data / 'models')
 
         if self.d_lower is None:
-            self.d_lower = cf.config['d_lower']
+            self.d_lower = cf.D_LOWER
 
     def clean(self) -> None:
         """Clean all saved models in models dir"""
@@ -154,7 +154,7 @@ class ModelStorageManager(DictRepr):
 
         index = df.loc[:d_upper].index
         df = df \
-            .pipe(pu.safe_drop, cols=cf.config['drop_cols']) \
+            .pipe(pu.safe_drop, cols=cf.DROP_COLS) \
             .loc[:d_upper] \
             .to_numpy(np.float32)
 
@@ -230,7 +230,7 @@ class ModelStorageManager(DictRepr):
             if len(x) > 0:
                 # add y_pred and proba_ for slice of df
                 df_pred = sk.df_proba(
-                    x=x.pipe(pu.safe_drop, cols=cf.config['drop_cols']),
+                    x=x.pipe(pu.safe_drop, cols=cf.DROP_COLS),
                     model=estimator)
 
                 idx = df_pred.index

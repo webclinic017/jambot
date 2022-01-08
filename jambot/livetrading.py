@@ -228,8 +228,8 @@ def show_current_status(exch_name: str, symbol: str, n: int = 30, **kw) -> None:
 
     # set colors to highlight signal column
     m_color = {
-        1: (cf.colors['lightblue'], 'black'),
-        -1: (cf.colors['lightred'], 'white')}
+        1: (cf.COLORS['lightblue'], 'black'),
+        -1: (cf.COLORS['lightred'], 'white')}
 
     # show last n rows of current active strategy df_pred
     return get_df_pred(exch_name=exch_name, symbol=symbol, **kw)[list(m_fmt.keys())] \

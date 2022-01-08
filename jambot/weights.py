@@ -29,7 +29,7 @@ class WeightsManager(DictRepr, MlflowLoggable):
 
     @classmethod
     def from_config(cls, df: pd.DataFrame) -> 'WeightsManager':
-        return cls(df=df, **cf.config['weightsmanager_kw'])
+        return cls(df=df, **cf.WEIGHTSMANAGER_KW)
 
     def to_dict(self) -> dict:
         return dict(

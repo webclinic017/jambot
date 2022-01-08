@@ -18,6 +18,14 @@ from jgutils import pandas_utils as pu
 
 log = getlog(__name__)
 
+DEFAULT_SIGNALS = [
+    'EMA',
+    'Momentum',
+    'Trend',
+    'Candle',
+    'Volatility',
+    'Volume']
+
 
 def model_cfg(name: str) -> Dict[str, Any]:
     """Config for models
@@ -40,9 +48,9 @@ def model_cfg(name: str) -> Dict[str, Any]:
             target_cls=sg.TargetUpsideDownside,
             # drop_cols=['target_max', 'target_min'],
             model_kw=dict(
-                num_leaves=100,
-                n_estimators=100,
-                max_depth=20,
+                num_leaves=40,
+                n_estimators=80,
+                max_depth=10,
                 boosting_type='dart',
                 random_state=0),
             model_cls=LGBMClassifier,
@@ -86,18 +94,10 @@ def add_signals(
 
     target_signal = cfg['target_cls'](**cfg['target_kw'])
 
-    signals = [
-        'EMA',
-        'Momentum',
-        'Trend',
-        'Candle',
-        'Volatility',
-        'Volume',
-        target_signal]
+    signals = DEFAULT_SIGNALS + [target_signal]
 
-    return sg.SignalManager(**cf.config['signalmanager_kw']) \
-        .add_signals(df=df, signals=signals, use_important=use_important) \
-        .pipe(pu.safe_drop, cols=cf.config['drop_cols'], do=drop_ohlc)
+    return sg.SignalManager.default() \
+        .add_signals(df=df, signals=signals, use_important=use_important, drop_ohlc=drop_ohlc)
 
 
 def make_model_manager(
@@ -123,7 +123,7 @@ def make_model_manager(
     cfg = model_cfg(name)
     target = cfg.get('target')
 
-    drop_cols = copy.copy(cf.config['drop_cols'])
+    drop_cols = copy.copy(cf.DROP_COLS)
 
     # only use n most imporant features from shap_vals
     if use_important:

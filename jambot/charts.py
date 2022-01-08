@@ -14,7 +14,7 @@ from pandas import DataFrame
 from plotly.subplots import make_subplots
 
 from jambot import SYMBOL, getlog
-from jambot.config import colors
+from jambot.config import COLORS as colors
 from jambot.utils.mlflow import MlflowManager
 from jgutils import pandas_utils as pu
 
