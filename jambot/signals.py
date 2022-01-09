@@ -42,21 +42,18 @@ warnings.filterwarnings('ignore', message='invalid value encountered in double_s
 
 
 class SignalManager(MlflowLoggable):
+    cut_periods = 200
+
     def __init__(
             self,
-            signals_list: List[Union[str, 'SignalGroup']] = None,
             target: str = None,
             slope: int = 0,
-            sum: int = 0,
-            cut_periods: int = 200):
+            sum: int = 0):
 
         self.signal_groups = {}  # type: Dict[str, SignalGroup]
         self.final_feats = []  # type: List[str]
-
-        self.signals_list = signals_list
         self.slope = slope
         self.sum = sum
-        self.cut_periods = cut_periods
 
         # cant add any new cols, but CAN exclude cols without pushing new code
         self.bs = BlobStorage(container=cf.p_data / 'feats')
@@ -145,28 +142,23 @@ class SignalManager(MlflowLoggable):
     def add_signals(
             self,
             df: pd.DataFrame,
-            signals: List[Union[str, Any]] = None,
+            signals: List[Union[str, Any]],
             signal_params: dict = None,
             use_important: bool = False,
             exclude_cols: List[str] = None,
+            n_most_imp: int = None,
+            use_important_dynamic: bool = False,
             drop_ohlc: bool = False,
+            symbol: str = cf.SYMBOL,
             **kw) -> pd.DataFrame:
         """Add multiple initialized signals to dataframe"""
-        if signals is None:
-            signals = self.signals_list
-
-        # convert input dict/single str to list
-        if isinstance(signals, dict):
-            signals = list(signals.values())
-
-        signals = jf.as_list(signals)
         signal_params = signal_params or {}
         final_signals = {}
         drop_cols = []
         require_cols = {}  # from signal_group, dict of all cols w their requirements
 
         # Loop SignalGroup objs (not single columns)
-        for signal_group in signals or []:
+        for signal_group in jf.as_list(signals):
 
             # if str, init obj with defauls args
             if isinstance(signal_group, str):
@@ -185,23 +177,32 @@ class SignalManager(MlflowLoggable):
             drop_cols += signal_group.drop_cols
             require_cols |= signal_group.require_cols
 
+        if use_important_dynamic:
+            n_most_imp = cf.dynamic_cfg(symbol=symbol)['num_feats']
+
         # filter only most imporant cols before adding all
-        if use_important:
+        if use_important or n_most_imp:
             processed, dep_only = [], []
-            # TODO THIS NEEDS TO STAY IN SYNC WITH LIVE DATA
+            # TODO THIS NEEDS TO STAY IN SYNC WITH LIVE DATA IF LIVE TRADING
             # if AZURE_WEB or True:
             if AZURE_WEB:
-                self.bs.download_file(p='least_imp_cols.pkl')
+                prefix = 'most' if n_most_imp else 'least'
+                self.bs.download_file(p=f'{prefix}_imp_cols.pkl')
 
-            if exclude_cols is None:
-                exclude_cols = jfl.load_pickle(p=self.bs.p_local / 'least_imp_cols.pkl')  # type: List[str]
+            if not n_most_imp:
+                # EXCLUDE least_imp_cols
+                if exclude_cols is None:
+                    exclude_cols = jfl.load_pickle(p=self.bs.p_local / 'least_imp_cols.pkl')  # type: List[str]
 
-            # print('len(exclude_cols)', len(exclude_cols))
+                if not exclude_cols:
+                    raise RuntimeError('No cols in exclude_cols')
 
-            if not exclude_cols:
-                raise RuntimeError('No cols in exclude_cols')
+                include_cols = [c for c in final_signals.keys() if not c in exclude_cols]
+            else:
+                # INCLUDE most_imp_cols
+                # NOTE adding target this way messy
+                include_cols = jfl.load_pickle(p=self.bs.p_local / 'most_imp_cols.pkl')[:n_most_imp] + ['target']
 
-            include_cols = [c for c in final_signals.keys() if not c in exclude_cols]
             q = deque(include_cols)
 
             # recursively handle identify cols which important cols are dependent on

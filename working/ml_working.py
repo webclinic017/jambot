@@ -92,7 +92,7 @@ if True:
 # %% - ADD SIGNALS
 # --%%prun -s cumulative -l 40
 # --%%time
-use_important = False
+use_important = True
 
 if True:
     name = 'lgbm'
@@ -100,7 +100,7 @@ if True:
     regression = False
     sm = sg.SignalManager.default().register(mfm)
 
-    n_periods = cfg['target_kw']['n_periods']
+    n_periods = cf.dynamic_cfg()['target_n_periods']
     # n_periods = 10
     p_ema = None  # 6
     # Target = sg.TargetMeanEMA
@@ -119,7 +119,7 @@ if True:
     # drop last rows which we cant set proper target
     # don't need to drop last n_periods rows if positive we aren't fitting on them
 
-    df = sm.add_signals(df=df, signals=signals, use_important=use_important)
+    df = sm.add_signals(df=df, signals=signals, use_important_dynamic=use_important)
 
     if not use_important:
         df_all = df.copy()

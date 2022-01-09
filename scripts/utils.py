@@ -38,4 +38,5 @@ if __name__ == '__main__':
 
         # also upload current "least_important_cols"
         p = cf.p_data / 'feats'
-        BlobStorage(container=p).upload_file(p=p / 'least_imp_cols.pkl')
+        for prefix in ('most', 'least'):
+            BlobStorage(container=p).upload_file(p=p / f'{prefix}_imp_cols.pkl')

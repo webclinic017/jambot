@@ -98,7 +98,12 @@ def add_signals(
     signals = DEFAULT_SIGNALS + [target_signal]
 
     return sg.SignalManager.default() \
-        .add_signals(df=df, signals=signals, use_important=use_important, drop_ohlc=drop_ohlc)
+        .add_signals(
+            df=df,
+            signals=signals,
+            # use_important=use_important,
+            use_important_dynamic=True,
+            drop_ohlc=drop_ohlc)
 
 
 def make_model_manager(
