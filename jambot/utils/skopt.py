@@ -190,7 +190,10 @@ def plot_conv():
     plots.plot_convergence(res)
 
 
-def get_best_results(df: pd.DataFrame = None, top_n: int = 50, exp_id: str = '3') -> dict[str, float]:
+def get_best_results(
+        df: pd.DataFrame = None,
+        top_n: int = 50,
+        exp_id: str = '3') -> Dict[str, dict[str, float]]:
     """Get dict of median of best params to save to static config file
 
     Parameters
@@ -203,13 +206,14 @@ def get_best_results(df: pd.DataFrame = None, top_n: int = 50, exp_id: str = '3'
     Returns
     -------
     dict[str, float]
-    >>> {'max_depth': 34.5,
-        'n_estimators': 91.0,
-        'num_leaves': 60.0,
-        'num_feats': 32.0,
-        'n_periods_smooth': 3.0,
-        'target_n_periods': 20.0,
-        'filter_fit_quantile': 0.5154932627849301}
+    >>> {'XBTUSD':
+            {'max_depth': 34,
+            'n_estimators': 91,
+            'num_leaves': 60,
+            'num_feats': 32,
+            'n_periods_smooth': 3,
+            'target_n_periods': 20,
+            'filter_fit_quantile': 0.5154932627849301}}
     """
     if df is None:
         mfm = MlflowManager()
