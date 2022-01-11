@@ -72,7 +72,9 @@ def add_signals(
         name: str,
         symbol: str = cf.SYMBOL,
         drop_ohlc: bool = False,
-        use_important: bool = True) -> pd.DataFrame:
+        use_important_dynamic: bool = True,
+        # use_important: bool = False,
+) -> pd.DataFrame:
     """Add signal cols to df
 
     Parameters
@@ -84,6 +86,8 @@ def add_signals(
     symbol : str
     drop_ohlc : bool
         drop ohlcv columns from raw df, default False
+    use_important_dynamic : bool
+        use up to n most important feats, from dynamic config file
     use_important : bool
         exclude least important columns from model, default True
 
@@ -102,7 +106,7 @@ def add_signals(
             df=df,
             signals=signals,
             # use_important=use_important,
-            use_important_dynamic=True,
+            use_important_dynamic=use_important_dynamic,
             drop_ohlc=drop_ohlc)
 
 
@@ -155,7 +159,7 @@ def make_model_manager(
         encoders=encoders, **kw)
 
 
-def make_model(name: str, symbol: str = cf.SYMBOL) -> BaseEstimator:
+def make_model(name: str, symbol: str = cf.SYMBOL) -> LGBMClsLog:
     """Create instance of LGBMClassifier
 
     Parameters
@@ -170,7 +174,8 @@ def make_model(name: str, symbol: str = cf.SYMBOL) -> BaseEstimator:
     LGBMClassifier
     """
     cfg = model_cfg(name)
-    return cfg['model_cls'].from_config(symbol=symbol)
+    model = cfg['model_cls']  # type: LGBMClsLog
+    return model.from_config(symbol=symbol)
 
 
 def make_pipeline(name: str, df: pd.DataFrame) -> Pipeline:
@@ -241,6 +246,7 @@ def add_proba_trade_signal(
     # NOTE not implemented yet, need to make func dynamic for regression
     rolling_col = 'proba_long' if not regression else 'y_pred'
     n_smooth = n_smooth or cf.dynamic_cfg()['n_periods_smooth']  # get dynamic config value
+    log.info(f'Adding n_smooth: {n_smooth}')
 
     return df \
         .pipe(sg.add_ema, p=n_smooth, c=rolling_col, col='rolling_proba') \
