@@ -314,7 +314,7 @@ def get_df_pred(
 
     # add signals
     df = get_df_raw(exch_name=exch_name, symbol=symbol, **kw) \
-        .pipe(md.add_signals, name=name)
+        .pipe(md.add_signals, name=name, symbol=symbol, use_important_dynamic=True)
 
     # load saved/trained models from blob storage and add pred signals
     return ModelStorageManager(test=test) \
@@ -326,7 +326,7 @@ def run_strat(
         df_pred: pd.DataFrame = None,
         order_offset: float = -0.0006,
         exch_name: str = 'bitmex',
-        symbol: str = 'XBTUSD',
+        symbol: str = cf.SYMBOL,
         **kw) -> ml.Strategy:
 
     # allow passing in to replace OHLC cols and run again
