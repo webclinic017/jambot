@@ -112,6 +112,7 @@ class WeightsManager(DictRepr, MlflowLoggable):
             datas: Union[pd.DataFrame, pd.Series, list],
             quantile: float = 0.5) -> Union[pd.DataFrame, pd.Series, list]:
         """Filter df or series to highest qualtile based on index of weights
+        - IMPORTANT: higher number = more rows filtered out, less remain
 
         Parameters
         ----------
