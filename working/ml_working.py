@@ -205,17 +205,20 @@ if False:
 
 is_iter = True
 
-target_signal = Target(n_periods=20)
-df = sm.add_signals(df=df_all, signals=target_signal, force_overwrite=True)
-df = sm.filter_n_feats(df=df, n=34)
+# target_signal = Target.from_config()
+# df = sm.add_signals(df=df_all, signals=target_signal, force_overwrite=True)
+# df = sm.filter_n_feats(df=df, n=36)
 
 # with mlflow.start_run(experiment_id='0'):
-model = LGBMClsLog(
-    num_leaves=34,
-    n_estimators=97,
-    max_depth=36,
-    boosting_type='dart',
-    learning_rate=0.1)
+# model = LGBMClsLog(
+#     num_leaves=34,
+#     n_estimators=97,
+#     max_depth=36,
+#     boosting_type='dart',
+#     learning_rate=0.1)
+
+model = LGBMClsLog.from_config()
+display(model)
 
 if not is_iter:
     # if False:
@@ -233,7 +236,7 @@ else:
     # retrain every x hours (24 ish) and predict for the test set
     # NOTE limiting max train data to ~3yrs ish could be helpful
     batch_size = 24 * 4 * 8
-    filter_fit_quantile = 0.55
+    filter_fit_quantile = cf.dynamic_cfg()['filter_fit_quantile']
     retrain_feats = False
 
     df_pred = sk.add_predict_iter(
@@ -249,7 +252,7 @@ else:
         filter_fit_quantile=filter_fit_quantile)
 
 df_pred = df_pred \
-    .pipe(md.add_proba_trade_signal, regression=regression, n_smooth=4)
+    .pipe(md.add_proba_trade_signal, regression=regression, n_smooth=None)
 
 strat = ml.make_strat(symbol=cf.SYMBOL, order_offset=-0.0006).register(mfm)
 
@@ -257,8 +260,8 @@ bm = bt.BacktestManager(
     startdate=cf.D_SPLIT,
     strat=strat,
     df=df_pred) \
-    .run(prnt=True, plot_balance=True) \
-    .register(mfm)
+    .run(prnt=True, plot_balance=True)
+# .register(mfm)
 
 
 # %% - PLOT
