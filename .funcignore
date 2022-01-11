@@ -24,3 +24,4 @@ coverage.xml
 codecov.yml
 *.code-workspace
 .pytest_cache
+*.db
