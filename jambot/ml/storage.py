@@ -106,7 +106,7 @@ class ModelStorageManager(DictRepr):
 
         self.clean()
 
-        estimator = md.make_model(name)
+        model = md.make_model(name)
 
         self.fit_save(
             df=Tickers().get_df(
@@ -115,12 +115,74 @@ class ModelStorageManager(DictRepr):
                 interval=interval,
                 funding=True,
                 funding_exch=em.default('bitmex'))
-            .pipe(md.add_signals, name=name, drop_ohlc=False, use_important=True)
+            .pipe(md.add_signals, name=name, drop_ohlc=False, use_important_dynamic=True)
             .iloc[:-1 * n_periods, :],
             name=name,
-            estimator=estimator)
+            model=model)
 
-    def fit_save(self, df: pd.DataFrame, name: str, estimator: 'LGBMClassifier') -> None:
+    def fit_save(self, df: pd.DataFrame, name: str, model: 'LGBMClassifier') -> None:
+        """fit model and save for n_models
+
+        - to be run every x hours
+        - all models start fit from same d_lower
+        - new versions created for each new saved ver
+
+        Parameters
+        ----------
+        df : pd.DataFrame
+            df with signals/target initialized
+        model : LGBMClassifier
+            estimator with fit/predict methods
+        """
+
+        # max date where hour is greater or equal to 18:00
+        # set back @cut_hrs due to losing @n_periods for training preds
+        # model is trained AT 1800, but only UP TO 1500 - not anymore, could add this back
+        cut_mins = {1: 60, 15: 15}[self.interval]
+        reset_hour_offset = self.reset_hour - 0  # 18
+        # print('reset_hour_offset:', reset_hour_offset)
+
+        d_upper = f.date_to_dt(
+            df.query('timestamp.dt.hour >= @reset_hour_offset').index.max().date()) \
+            + delta(hours=reset_hour_offset)
+        # print('d_upper:', d_upper)
+
+        # get weights for fit params
+        wm = WeightsManager.from_config(df)
+
+        # NOTE filter_highest might cause strat to go out of sync sometimes
+        # NOTE funding_rate isn't dropped by DROP_COLS
+        df = df \
+            .pipe(pu.safe_drop, cols=cf.DROP_COLS) \
+            .pipe(wm.filter_highest, quantile=cf.dynamic_cfg()['filter_fit_quantile'])
+
+        # trim df to older dates by cutting off progressively larger slices
+        for i in range(self.n_models):
+
+            delta_mins = -i * cut_mins * self.batch_size_cdls
+            # print('delta_mins:', delta_mins)
+            d = d_upper + delta(minutes=delta_mins)
+            # print('d:', d)
+
+            x_train, y_train = sk.split(df=df[:d])
+            # print('idxmax:', x_train.index.max())
+
+            # fit - using weighted currently
+            model.fit(
+                x_train,
+                y_train,
+                sample_weight=wm.weights.loc[x_train.index])
+
+            # save - add back cut hrs so always consistent
+            fname = f'{name}_{d:{self.dt_format_path}}'
+            p_save = jfl.save_pickle(model, p=self.p_model, name=fname)
+            self.saved_models.append(p_save)
+            log.info(f'saved model: {fname}')
+
+        # mirror saved models to azure blob
+        self.bs.upload_dir(p=self.p_model, mirror=True)
+
+    def old_fit_save(self, df: pd.DataFrame, name: str, estimator: 'LGBMClassifier') -> None:
         """fit model and save for n_models
 
         - to be run every x hours
@@ -146,7 +208,6 @@ class ModelStorageManager(DictRepr):
             + delta(hours=reset_hour_offset)
 
         # get weights for fit params
-
         weights = WeightsManager.from_config(df).weights.loc[:d_upper]
 
         index = df.loc[:d_upper].index
@@ -156,6 +217,7 @@ class ModelStorageManager(DictRepr):
             .to_numpy(np.float32)
 
         # TODO filter_fit_quantile... need to work how integer indexes working here FUGGGG
+        filter_fit_quantile = cf.dynamic_cfg()['filter_fit_quantile']
 
         # trim df to older dates by cutting off progressively larger slices
         for i in range(self.n_models):
@@ -214,7 +276,7 @@ class ModelStorageManager(DictRepr):
             d = dt.strptime(p.stem.split('_')[-1], self.dt_format_path)
 
             # load estimator
-            estimator = jfl.load_pickle(p)  # type: LGBMClassifier
+            model = jfl.load_pickle(p)  # type: LGBMClassifier
 
             if not i == len(p_models) - 1:
                 max_date = d + delta(hours=self.batch_size) - f.inter_offset(self.interval)
@@ -230,7 +292,7 @@ class ModelStorageManager(DictRepr):
                 # add y_pred and proba_ for slice of df
                 df_pred = sk.df_proba(
                     x=x.pipe(pu.safe_drop, cols=cf.DROP_COLS),
-                    model=estimator)
+                    model=model)
 
                 idx = df_pred.index
                 fmt = self.dt_format
@@ -243,3 +305,12 @@ class ModelStorageManager(DictRepr):
 
     def to_dict(self):
         return ('d_lower', 'n_models', 'batch_size', 'batch_size_cdls')
+
+
+if __name__ == '__main__':
+    from jambot import livetrading as live
+
+    # from jambot.ml.storage import ModelStorageManager
+    em = live.ExchangeManager()
+    msm = ModelStorageManager(test=True)
+    msm.fit_save_models(em=em)
