@@ -18,12 +18,10 @@ pyodbc = "^4.0.32"
 pandas = "^1.2.3"
 SQLAlchemy = {version = ">=1.4,<1.4.23"}
 PyYAML = "^5.4.1"
-numpy = "==1.20.3"  # poetry run pip install numpy==1.20.3 --no-use-pep517
+numpy = "^1.22.0" #"==1.20.3"  # poetry run pip install numpy==1.20.3 --no-use-pep517
 aenum = "^3.0.0"
 sklearn = "^0.0"
 ta = "^0.7.0"
-# cryptography = "^3.4.7"
-# azure-storage-blob = "^12.8.1"
 pygsheets = "^2.0.5"
 jsonschema = "<4.0"
 lightgbm = "^3.3.1"
@@ -52,12 +50,14 @@ colored-traceback = "^0.3.0"
 colorlog = "^6.4.1"
 graphviz = "^0.17"
 seaborn = "^0.11.2"
-llvmlite = "^0.37.0"
-shap = "^0.40.0"
+llvmlite = "0.38"
+# shap = "^0.40.0"
 pyarrow = "^6.0.0"
 scikit-optimize = "^0.9.0"
 pytest-cov = "^3.0.0"
 jgutils = {path = "../jgutils", extras = ["colorlogging", "azurestorage"], develop = true}
+tqdm = "^4.62.3"
+
 
 [tool.pytest.ini_options]
 testpaths = [
