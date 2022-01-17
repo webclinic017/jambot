@@ -148,13 +148,13 @@ class ModelStorageManager(DictRepr):
         # print('d_upper:', d_upper)
 
         # get weights for fit params
-        wm = WeightsManager.from_config(df)
+        wm = WeightsManager.from_config(df=df)
 
-        # NOTE filter_highest might cause strat to go out of sync sometimes
+        # NOTE filter_quantile might cause strat to go out of sync sometimes
         # NOTE funding_rate isn't dropped by DROP_COLS
         df = df \
             .pipe(pu.safe_drop, cols=cf.DROP_COLS) \
-            .pipe(wm.filter_highest, quantile=cf.dynamic_cfg()['filter_fit_quantile'])
+            .pipe(wm.filter_quantile, quantile=cf.dynamic_cfg()['filter_fit_quantile'])
 
         # trim df to older dates by cutting off progressively larger slices
         for i in range(self.n_models):
@@ -208,7 +208,7 @@ class ModelStorageManager(DictRepr):
             + delta(hours=reset_hour_offset)
 
         # get weights for fit params
-        weights = WeightsManager.from_config(df).weights.loc[:d_upper]
+        weights = WeightsManager.from_config(df=df).weights.loc[:d_upper]
 
         index = df.loc[:d_upper].index
         df = df \
