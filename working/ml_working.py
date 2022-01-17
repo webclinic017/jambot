@@ -1,7 +1,6 @@
 # TODO secondary model for "trade or no trade?"
 
 # %% - IMPORTS
-
 if True:
     from datetime import datetime as dt
     from datetime import timedelta as delta
@@ -44,13 +43,14 @@ if True:
     from jambot.livetrading import ExchangeManager
     from jambot.ml import models as md
     from jambot.ml.classifiers import LGBMClsLog
-    from jambot.tables import Tickers
+    from jambot.tables import Funding, Tickers
     from jambot.tradesys import backtest as bt
     from jambot.tradesys.strategies import ml as ml
     from jambot.utils import skopt as sko
     from jambot.utils import styles as st
     from jambot.utils.mlflow import MlflowManager
     from jambot.weights import WeightsManager
+    from jgutils import fileops as fl
     from jgutils import pandas_utils as pu
 
     log = getlog(__name__)
@@ -82,7 +82,7 @@ if True:
             funding=True,
             funding_exch=em.default('bitmex', refresh=False))
 
-        df.reset_index(drop=False).to_feather(p)
+        df.reset_index(drop=False).to_feather(fl.check_path(p))
     else:
         df = data.default_df()
 
@@ -98,7 +98,7 @@ if True:
     name = 'lgbm'
     cfg = md.model_cfg(name)
     regression = False
-    sm = sg.SignalManager.default().register(mfm)
+    sm = sg.SignalManager.default()  # .register(mfm)
 
     n_periods = cf.dynamic_cfg()['target_n_periods']
     # n_periods = 10
@@ -139,7 +139,7 @@ if True:
     max_train_size = None
     cv = TimeSeriesSplit(n_splits=n_splits, max_train_size=max_train_size)
 
-    wm = WeightsManager.from_config(df).register(mfm)
+    wm = WeightsManager.from_config(df=df)
 
     if regression:
         scoring = dict(rmse='neg_root_mean_squared_error')
@@ -209,16 +209,8 @@ is_iter = True
 # df = sm.add_signals(df=df_all, signals=target_signal, force_overwrite=True)
 # df = sm.filter_n_feats(df=df, n=36)
 
-# with mlflow.start_run(experiment_id='0'):
-# model = LGBMClsLog(
-#     num_leaves=34,
-#     n_estimators=97,
-#     max_depth=36,
-#     boosting_type='dart',
-#     learning_rate=0.1)
-
 model = LGBMClsLog.from_config()
-display(model)
+display(model, wm)
 
 if not is_iter:
     # if False:
@@ -254,14 +246,15 @@ else:
 df_pred = df_pred \
     .pipe(md.add_proba_trade_signal, regression=regression, n_smooth=None)
 
-strat = ml.make_strat(symbol=cf.SYMBOL, order_offset=-0.0006).register(mfm)
+strat = ml.Strategy.from_config(lev=3)
 
 bm = bt.BacktestManager(
     startdate=cf.D_SPLIT,
     strat=strat,
-    df=df_pred) \
+    df=df_pred,
+    # df_funding=Funding().get_df(exch_name='bitmex')
+) \
     .run(prnt=True, plot_balance=True)
-# .register(mfm)
 
 
 # %% - PLOT
