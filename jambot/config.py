@@ -31,7 +31,7 @@ INTERVAL = 15
 SYMBOL = 'XBTUSD'
 D_LOWER = dt(2017, 1, 1)
 D_SPLIT = dt(2021, 2, 1)
-# D_SPLIT = dt(2021, 8, 1)
+# D_SPLIT = dt(2020, 1, 1)
 DROP_COLS = ['open', 'high', 'low', 'close', 'volume', 'ema10', 'ema50', 'ema200']
 FILTER_FIT_QUANTILE = 0.55
 
@@ -50,7 +50,7 @@ COLORS = dict(
     lightyellow='#FFFFCC')
 
 
-def dynamic_cfg(symbol: str = SYMBOL, keys: List[str] = None) -> Dict[str, Any]:
+def dynamic_cfg(symbol: str = SYMBOL, keys: Union[List[str], Dict[str, str]] = None) -> Dict[str, Any]:
     """Get dynamic config values per symbol
     - TODO find a clean way to manage static/dynamic keys
 
@@ -58,8 +58,8 @@ def dynamic_cfg(symbol: str = SYMBOL, keys: List[str] = None) -> Dict[str, Any]:
     ----------
     symbol : str
         eg XBTUSD
-    keys: List[str]
-        pass in keys to filter by, default None
+    keys: Union[List[str], Dict[str, str]]
+        pass in keys to filter by, or dict of keys with conv value, default None
 
     Returns
     -------
@@ -70,6 +70,9 @@ def dynamic_cfg(symbol: str = SYMBOL, keys: List[str] = None) -> Dict[str, Any]:
 
     # filter to only requested keys
     if not keys is None:
-        m = {k: v for k, v in m.items() if k in keys}
+        if isinstance(keys, list):
+            m = {k: v for k, v in m.items() if k in keys}
+        elif isinstance(keys, dict):
+            m = {keys[k]: v for k, v in m.items() if k in keys.keys()}
 
     return m
