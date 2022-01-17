@@ -1,7 +1,6 @@
 """General Functions module - don't rely on any other modules from jambot"""
 
 import math
-import re
 from datetime import date
 from datetime import datetime as dt
 from datetime import timedelta as delta
@@ -221,100 +220,6 @@ def inter_now(interval: int = 1) -> dt:
 def round_minutes(dt, resolution):
     new_minute = (dt.minute // resolution) * resolution
     return dt + delta(minutes=new_minute - dt.minute)
-
-
-def remove_bad_chars(w: str):
-    """Remove any bad chars " : < > | . \\ / * ? in string to make safe for filepaths"""  # noqa
-    return re.sub(r'[":<>|.\\\/\*\?]', '', str(w))
-
-
-def from_snake(s: str):
-    """Convert from snake case cols to title"""
-    return s.replace('_', ' ').title()
-
-
-def to_snake(s: str):
-    """Convert messy camel case to lower snake case
-
-    Parameters
-    ----------
-    s : str
-        string to convert to special snake case
-
-    Examples
-    --------
-    """
-    s = remove_bad_chars(s).strip()  # get rid of /<() etc
-    s = re.sub(r'[\]\[()]', '', s)  # remove brackets/parens
-    s = re.sub(r'[\n-]', '_', s)  # replace newline/dash with underscore
-    s = re.sub(r'[%]', 'pct', s)
-    s = re.sub(r"'", '', s)
-
-    # split on capital letters
-    expr = r'(?<!^)((?<![A-Z])|(?<=[A-Z])(?=[A-Z][a-z]))(?=[A-Z])'
-
-    return re \
-        .sub(expr, '_', s) \
-        .lower() \
-        .replace(' ', '_') \
-        .replace('__', '_')
-
-
-def lower_cols(df: Union[pd.DataFrame, List[str]], title: bool = False) -> Union[pd.DataFrame, List[str]]:
-    """Convert df columns to snake case and remove bad characters
-
-    Parameters
-    ----------
-    df : Union[pd.DataFrame, list]
-        dataframe or list of strings
-    title : bool, optional
-        convert back to title case, by default False
-
-    Returns
-    -------
-    Union[pd.DataFrame, list]
-    """
-    is_list = False
-
-    if isinstance(df, pd.DataFrame):
-        cols = df.columns
-    else:
-        cols = df
-        is_list = True
-
-    func = to_snake if not title else from_snake
-
-    m_cols = {col: func(col) for col in cols}
-
-    if is_list:
-        return list(m_cols.values())
-    else:
-        return df.pipe(lambda df: df.rename(columns=m_cols))
-
-
-def remove_underscore(df: pd.DataFrame) -> pd.DataFrame:
-    """Remove underscores from df columns
-
-    Parameters
-    ----------
-    df : pd.DataFrame
-
-    Returns
-    -------
-    pd.DataFrame
-    """
-    return df.rename(columns={c: c.replace('_', ' ') for c in df.columns})
-
-
-def parse_datecols(df: pd.DataFrame, format: dict = None) -> pd.DataFrame:
-    """Convert any columns with 'date' or 'time' in header name to datetime"""
-    datecols = list(filter(lambda x: any(s in x.lower()
-                    for s in ('date', 'time')), df.columns))  # type: List[str]
-
-    df[datecols] = df[datecols].apply(
-        pd.to_datetime, errors='coerce', format=format)  # type: ignore
-
-    return df
 
 
 def ci_rate(final: float, periods: int, initial: float = 1.0) -> float:
