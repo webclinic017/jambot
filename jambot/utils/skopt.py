@@ -33,6 +33,51 @@ p_skopt = cf.p_data / 'skopt'
 p_res = p_skopt / f'results{ACTIVE_RESULT}.pkl'
 
 
+class ObjectCache(object):
+    """Cachce unique objects between optimization calls to avoid recalc"""
+
+    def __init__(self):
+        self.obj_cache = defaultdict(dict)
+
+    @staticmethod
+    def make_key(params: Dict[str, Any]) -> str:
+        """Create key from params dict"""
+        return ','.join(f'{k}={v}' for k, v in params.items())
+
+    def get_or_save(self, obj_cls: Type[Any], params: Dict[str, Any], **kw) -> Any:
+        """Get objc if exists in cache, or create new
+
+        Parameters
+        ----------
+        obj_cls : Type[Any]
+            uninstantiated object class
+        params : Dict[str, Any]
+            unique params to save obj with
+        kw : dict
+            extra non param_key args to instantiate object with
+
+        Returns
+        -------
+        Any
+            instantiated object
+        """
+        name = obj_cls.__name__
+        params_key = self.make_key(params)
+
+        # check if obj exists in cache
+        obj = self.obj_cache.get(name, {}).get(params_key, None)
+
+        # create obj and save
+        if obj is None:
+            obj = obj_cls(**params, **kw)
+            self.obj_cache[name] = {params_key: obj}
+        #     log.info(f'Init new object: {name}, {params}')
+        # else:
+        #     log.info(f'Using cached object: {name}, {params}')
+
+        return obj
+
+
 def get_space() -> List['Dimension']:
     space = [
         Integer(6, 40, name='max_depth'),
