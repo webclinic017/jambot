@@ -26,7 +26,7 @@ from ta.volume import ChaikinMoneyFlowIndicator
 from jambot import config as cf
 from jambot import getlog
 from jambot import sklearn_utils as sk
-from jambot.common import DictRepr
+from jambot.common import DictRepr, DynConfig
 from jambot.config import AZURE_WEB
 from jambot.utils.mlflow import MlflowLoggable
 from jgutils import fileops as jfl
@@ -41,8 +41,7 @@ warnings.filterwarnings('ignore', message='invalid value encountered in double_s
 # TODO distance to bolinger bands!
 
 
-class SignalManager(MlflowLoggable):
-    cut_periods = 200
+class SignalManager(MlflowLoggable, DictRepr):
 
     def __init__(
             self,
@@ -54,6 +53,7 @@ class SignalManager(MlflowLoggable):
         self.final_feats = []  # type: List[str]
         self.slope = slope
         self.sum = sum
+        self.cut_periods = 0
 
         # cant add any new cols, but CAN exclude cols without pushing new code
         self.bs = BlobStorage(container=cf.p_data / 'feats')
@@ -62,6 +62,9 @@ class SignalManager(MlflowLoggable):
     def default(cls, **kw) -> 'SignalManager':
         """Load signalmanager with global default vals"""
         return cls(**cf.SIGNALMANAGER_KW, **kw)
+
+    def to_dict(self) -> dict:
+        return dict(signals=[sg for sg in self.signal_groups.values()])
 
     @property
     def log_items(self) -> dict:
@@ -139,6 +142,23 @@ class SignalManager(MlflowLoggable):
         default_cols = [c for c in cf.DROP_COLS if c in df.columns]
         return df[default_cols + cols + ['target']]
 
+    def init_signal_group(self, signal_group: Union[str, 'SignalGroup']) -> 'SignalGroup':
+        """Instantiate signal group if str, save to self.signal_groups dict
+
+        Returns
+        -------
+        SignalGroup
+            instantiated SignalGroup
+        """
+
+        # if str, init obj with defauls args
+        if isinstance(signal_group, str):
+            signal_group = getattr(sys.modules[__name__], signal_group)()  # type: SignalGroup
+
+        # save to dict of self.signal_groups
+        self.signal_groups[signal_group.class_name] = signal_group
+        return signal_group
+
     def add_signals(
             self,
             df: pd.DataFrame,
@@ -156,17 +176,15 @@ class SignalManager(MlflowLoggable):
         final_signals = {}
         drop_cols = []
         require_cols = {}  # from signal_group, dict of all cols w their requirements
+        cut_periods = self.cut_periods
+        _signal_groups = []  # type: List[SignalGroup]
 
         # Loop SignalGroup objs (not single columns)
         for signal_group in jf.as_list(signals):
 
-            # if str, init obj with defauls args
-            if isinstance(signal_group, str):
-                signal_group = getattr(sys.modules[__name__], signal_group)()  # type: SignalGroup
-
-            # save to dict of self.signal_groups
-            self.signal_groups[signal_group.class_name] = signal_group
-
+            signal_group = self.init_signal_group(signal_group)
+            _signal_groups.append(signal_group)
+            cut_periods = max(cut_periods, signal_group.cut_periods)  # TODO dont want cached sigs to cut again
             signal_group.df = df  # NOTE kinda sketch
             signal_group.slope = self.slope  # sketch too
             signal_group.sum = self.sum
@@ -232,12 +250,31 @@ class SignalManager(MlflowLoggable):
         # print('len final_feats:', len(self.final_feats))
         # print('len final_signals:', len(final_signals))
 
-        # remove first rows that can't be set with 200ema accurately
-        return df.assign(**final_signals) \
+        # NOTE not sure if we should always fillna(0) here, maybe force errors and confront
+        df = df.assign(**final_signals) \
             .pipe(pu.safe_drop, cols=drop_cols) \
-            .iloc[self.cut_periods:, :] \
+            .iloc[cut_periods:, :] \
             .fillna(0) \
             .pipe(pu.safe_drop, cols=cf.DROP_COLS, do=drop_ohlc)
+
+        self.save_cache_cols(df, _signal_groups)
+
+        return df
+
+    def save_cache_cols(self, df: pd.DataFrame, signal_groups: List['SignalGroup']) -> None:
+        """Cache cols to avoid recalc later
+
+        Parameters
+        ----------
+        df : pd.DataFrame
+            df with all signal cols
+        signal_groups : List[SignalGroup]
+        """
+        for sg in signal_groups:
+            # don't save again if already saved
+            if sg.cache and not sg.cached_cols:
+                # log.info(f'saving cached cols')
+                sg.cached_cols = {c: df[c] for c in sg.cache_cols_names}
 
     def show_signals(self):
         m = dd(dict)
@@ -251,7 +288,7 @@ class SignalManager(MlflowLoggable):
 
         sk.pretty_dict(m)
 
-    def replace_single_feature(
+    def replace_single_feature_old(
             self,
             df: pd.DataFrame,
             feature_params: dict,
@@ -303,12 +340,25 @@ class SignalGroup(DictRepr):
 
     def __init__(
             self,
-            df: pd.DataFrame = None,
-            signals: List[str] = None,
+            # df: pd.DataFrame = None,
+            signals: Dict[str, Any] = None,
             fillna: bool = True,
             prefix: str = None,
+            cache: bool = False,
             **kw):
+        """Obj to create one or multiple signal columns
 
+        Parameters
+        ----------
+        signals : Dict[str, Any], optional
+            dict of {signal name: func}, by default None
+        fillna : bool, optional
+            default True
+        prefix : str, optional
+            add prefix to individual signal names, default None
+        cache : bool, optional
+            cache self.cache_cols, by default False
+        """
         self.drop_cols = []
         self.no_slope_cols = []
         self.no_sum_cols = []
@@ -316,18 +366,25 @@ class SignalGroup(DictRepr):
         self.force_slope_cols = []
         self.require_cols = {}
 
-        self.df = df
+        # self.df = df
         self.prefix = prefix
         self.fillna = fillna
         self.signals = self.init_signals(signals)
         self.slope = 0
         self.sum = 0
         self.class_name = self.__class__.__name__.lower()
+        self.cut_periods = 0  # drop n rows at start of df
+        self.cache = cache
+        self.cache_cols_names = []  # type: List[str]
+        self.cached_cols = {}  # type: Dict[str, pd.Series]
 
-    def init_signals(self, signals):
+    def to_dict(self) -> dict:
+        return dict(num_cols=len(self.signals))
+
+    def init_signals(self, signals: Dict[str, Any]) -> Dict[str, Any]:
         """Extra default processing to signals, eg add plot func"""
-        if signals is None:
-            return
+        # if signals is None:
+        #     return
 
         for name, m in signals.items():
 
@@ -395,6 +452,11 @@ class SignalGroup(DictRepr):
         dict
             dict of final signals to be used with .assign()
         """
+
+        # return initialized cached series instead of func to create series
+        if self.cache and self.cached_cols:
+            # log.info('returing cached cols')
+            return self.cached_cols
 
         final_signals = {}
         signals = self.signals if params is None else params
@@ -730,13 +792,7 @@ class EMA(SignalGroup):
     w = with, a = agains, n = neutral (neutral not used)
     """
 
-    def __init__(
-            self,
-            fast: int = 50,
-            slow: int = 200,
-            # speed: Tuple[int, int] = (24, 18),
-            # offset: int = 1,
-            **kw):
+    def __init__(self, fast: int = 50, slow: int = 200, **kw):
 
         # against, wth, neutral = speed[0], speed[1], int(np.average(speed))
         colfast, colslow = f'ema{fast}', f'ema{slow}'
@@ -753,16 +809,15 @@ class EMA(SignalGroup):
 
         super().__init__(**kw)
 
-        drop_cols = list(m_emas)
-        force_slope_cols = list(m_emas)
-        not_normal_cols = list(m_emas)
-        no_slope_cols = ['ema_trend']
+        self.drop_cols = list(m_emas)
+        self.force_slope_cols = list(m_emas)
+        self.not_normal_cols = list(m_emas)
+        self.no_slope_cols = ['ema_trend']
+        self.cut_periods = max(emas)  # drop first 200 rows after adding
 
-        require_cols = dict(
+        self.require_cols = dict(
             ema_spread=[colfast, colslow],
             ema_conf='ema_spread')
-
-        jf.set_self()
 
     def get_c(self, maxspread: float) -> float:
         """C coefficient for use in ema_exp"""
@@ -1028,7 +1083,7 @@ class CandlePatterns(SignalGroup):
         jf.set_self()
 
 
-class TargetClass(SignalGroup, MlflowLoggable):
+class TargetClass(SignalGroup, MlflowLoggable, DynConfig):
     """
     target classification
     - 3 classes
@@ -1037,22 +1092,16 @@ class TargetClass(SignalGroup, MlflowLoggable):
     - calc close price vs current price, x periods in future (rolling method)
     # NOTE doesn't work currently need to redo with kw['signals]
     """
+    log_keys = dict(target_n_periods='n_periods')
 
     def __init__(self, n_periods: int = 10, **kw):
         super().__init__(**kw)
-        # ema_col = f'ema{p_ema}'  # named so can drop later
-        # pct_min = pct_min / 2
-
         self.n_periods = n_periods
+        self.cache_cols_names = ['target']
 
     @property
     def log_items(self) -> Dict[str, Any]:
         return dict(target_n_periods=self.n_periods)
-
-    @classmethod
-    def from_config(cls, symbol: str = cf.SYMBOL, **kw) -> 'TargetClass':
-        dkw = cf.dynamic_cfg(symbol)
-        return cls(n_periods=dkw['target_n_periods'])
 
     def to_dict(self) -> dict:
         return dict(n_periods=self.n_periods)
@@ -1118,7 +1167,6 @@ class TargetMaxMin(TargetClass):
 
     def __init__(self, n_periods: int, use_close: bool = True, **kw):
 
-        # log.info(f'use_close: {use_close}')
         if use_close:
             items = [('max', 'close'), ('min', 'close')]
         else:
@@ -1129,9 +1177,7 @@ class TargetMaxMin(TargetClass):
             .rolling(n_periods).__getattribute__(fn)()
             .shift(-n_periods) - x.close) / x.close for fn, c in items}
 
-        super().__init__(**kw)
-
-        jf.set_self()
+        super().__init__(n_periods=n_periods, **kw)
 
 
 class TargetUpsideDownside(TargetMaxMin):
@@ -1143,17 +1189,15 @@ class TargetUpsideDownside(TargetMaxMin):
         super().__init__(n_periods=n_periods, **kw)
 
         self.signals |= dict(
-            target=lambda x: np.where(np.abs(x.target_max) > np.abs(x.target_min), 1, -1).astype(np.int8)
+            target=lambda x: np.where(
+                x.target_max.notna(),
+                np.where(np.abs(x.target_max) > np.abs(x.target_min), 1, -1),
+                np.NaN).astype(np.int8)  # int8 converts NaN to 0
         )
 
-        drop_cols = ['target_max', 'target_min']
-
+        self.drop_cols = ['target_max', 'target_min']
         self.signals = self.init_signals(self.signals)
-
-        require_cols = dict(
-            target=drop_cols)
-
-        jf.set_self()
+        self.require_cols = dict(target=self.drop_cols)
 
 
 class TargetRatio(SignalGroup):
