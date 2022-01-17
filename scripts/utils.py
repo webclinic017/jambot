@@ -1,9 +1,13 @@
 import argparse
 
 from jambot import config as cf
-from jambot import getlog
+from jambot import data, getlog
 from jambot.livetrading import ExchangeManager
+from jambot.ml.models import DEFAULT_SIGNALS
 from jambot.ml.storage import ModelStorageManager
+from jambot.signals import SignalManager
+from jambot.utils import skopt as sko
+from jambot.utils.mlflow import MlflowManager
 
 if True:
     from jgutils.azureblob import BlobStorage
@@ -24,6 +28,20 @@ cli.add_argument(
     action='store_true',
     help='Fit/save models for last 3 days, upload to azure')
 
+cli.add_argument(
+    '--skopt',
+    type=int,
+    default=200,
+    # action='store_true',
+    help='Run skopt optimization')
+
+cli.add_argument(
+    '--n_jobs',
+    type=int,
+    default=-1,
+    # action='store_true',
+    help='n_jobs for skopt')
+
 
 if __name__ == '__main__':
     a = cli.parse_args()
@@ -40,3 +58,12 @@ if __name__ == '__main__':
         p = cf.p_data / 'feats'
         for prefix in ('most', 'least'):
             BlobStorage(container=p).upload_file(p=p / f'{prefix}_imp_cols.pkl')
+
+    elif a.skopt:
+        df_all = SignalManager.default() \
+            .add_signals(df=data.default_df(), signals=DEFAULT_SIGNALS)
+
+        log.info(f'df_all: {df_all.shape}')
+
+        mfm = MlflowManager()
+        res = sko.run_opt(n_calls=a.skopt, df=df_all, mfm=mfm, n_jobs=a.n_jobs)
