@@ -178,7 +178,6 @@ class MlflowManager(DictRepr):
                     added[item_type] += 1
 
             session.commit()
-            log.info(f'Added rows to db: {dict(added)}')
 
         except Exception as e:
             session.rollback()
@@ -359,7 +358,6 @@ class MlflowManager(DictRepr):
 
     def add_prev_item(self, key: str, val: Any, table: str = 'metric') -> None:
         """Add metric for all runs which wasn't previously logged
-        - NOTE could also add paramas
 
         Parameters
         ----------
@@ -387,16 +385,23 @@ class MlflowManager(DictRepr):
 
         log.info(f'Added {table} "{key}={val}" for {len(df)} runs to table "{name}".')
 
-    def df_results(self, experiment_ids: Union[str, List[str]] = '0') -> pd.DataFrame:
+    def df_results(self, experiment_ids: Union[str, List[str]] = '0', by: str = 'ci_monthly') -> pd.DataFrame:
 
-        cols = ['n_estimators', 'num_leaves', 'max_depth', 'target_n_periods', 'n_periods_smooth', 'num_feats']
+        int_cols = ['target_n_periods', 'n_periods_smooth', 'weights_n_periods',
+                    'n_estimators', 'num_leaves', 'max_depth', 'num_feats']
+        cols2 = ['ci_monthly', 'final', 'w_sharpe', 'sharpe', 'filter_fit_quantile',
+                 'order_offset'] + int_cols + ['w_acc', 'acc', 'tpd', 'drawdown']
 
         return mlflow.search_runs(experiment_ids) \
+            .dropna() \
             .set_index(['experiment_id', 'run_id']) \
-            .sort_values('start_time') \
             .pipe(lambda df: df[[c for c in df.columns if re.match(r'metr|para', c)]]) \
             .pipe(lambda df: df.rename(columns={c: c.split('.')[1] for c in df.columns})) \
-            .pipe(pu.convert_dtypes, cols=cols, _type=int)
+            .pipe(pu.convert_dtypes, cols=int_cols, _type=int) \
+            .sort_values(by=by, ascending=False) \
+            .pipe(pu.reorder_cols, cols=cols2) \
+            .round(dict(filter_fit_quantile=3, order_offset=5)) \
+            .reset_index(drop=True)
 
     def pairplot(self, df: pd.DataFrame = None, latest: bool = False, experiment_ids: str = '0', **kw) -> None:
         import matplotlib.pyplot as plt
@@ -422,7 +427,7 @@ class MlflowManager(DictRepr):
             'num_feats'
         ]
 
-        y_vars = ['w_acc', 'ci_monthly']
+        y_vars = ['w_acc', 'ci_monthly', 'sharpe', 'w_sharpe']
 
         fig, axs = plt.subplots(
             nrows=len(x_vars),
