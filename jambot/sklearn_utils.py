@@ -291,7 +291,7 @@ class ModelManager(object):
 
             # if not filter_train_quantile is None:
             #     # TODO not done
-            #     x_train, y_train = self.wm.filter_highest(
+            #     x_train, y_train = self.wm.filter_quantile(
             #         datas=[self.x_train, self.y_train],
             #         quantile=filter_train_quantile)
             # else:
@@ -351,7 +351,7 @@ class ModelManager(object):
         x_train, y_train = self.x_train, self.y_train
 
         if not filter_fit_quantile is None:
-            x_train, y_train = self.wm.filter_highest(
+            x_train, y_train = self.wm.filter_quantile(
                 datas=[x_train, y_train],
                 quantile=filter_fit_quantile)
 
@@ -611,7 +611,7 @@ class ShapManager():
         Tuple[shap.TreeExplainer, List[np.array], pd.DataFrame, pd.DataFrame]
         """
         df = self.df
-        df = self.wm.filter_highest(df, quantile=cf.FILTER_FIT_QUANTILE)
+        df = self.wm.filter_quantile(df, quantile=cf.FILTER_FIT_QUANTILE)
 
         x = df.drop(columns=['target'])
         y = df.target
@@ -1340,9 +1340,37 @@ def add_predict_iter(
         max_train_size: int = None,
         regression: bool = False,
         filter_fit_quantile: float = None,
-        retrain_feats: bool = False) -> pd.DataFrame:
-    """Retrain model every x periods and add predictions for next batch_size"""
+        n_jobs: int = -1,
+        retrain_feats: bool = False,
+        interval: int = 15) -> pd.DataFrame:
+    """Retrain model every x periods and add predictions for next batch_size
 
+    Parameters
+    ----------
+    df : pd.DataFrame
+    wm : WeightsManager
+    model : BaseEstimator
+    split_date : dt
+        first date to start predicting
+    batch_size : int, optional
+        size in periods, by default 96
+    max_train_size : int, optional
+        size in months, by default None
+    regression : bool, optional
+        default False
+    filter_fit_quantile : float, optional
+        default None
+    n_jobs : int, optional
+    retrain_feats : bool, optional
+        retrain important feats (not used), by default False
+    interval : int, optional
+        period interval, by default 15
+
+    Returns
+    -------
+    pd.DataFrame
+        df with predictions added
+    """
     df_orig = df.copy()  # to keep all original cols when returned
 
     nrows = df.shape[0]
@@ -1352,6 +1380,10 @@ def add_predict_iter(
 
     # if model is None:
     #     model = self.pipes[name].named_steps[name]
+
+    # convert months to periods
+    if not max_train_size is None:
+        max_train_size = max_train_size * 30 * 24 * {1: 1, 15: 4}[interval]
 
     df = df.pipe(pu.safe_drop, cf.DROP_COLS)
 
@@ -1367,7 +1399,7 @@ def add_predict_iter(
         df_train = df.iloc[i_train_lower: i_lower]  # type: pd.DataFrame
 
         if filter_fit_quantile:
-            df_train = wm.filter_highest(df_train, quantile=filter_fit_quantile)
+            df_train = wm.filter_quantile(df_train, quantile=filter_fit_quantile, _log=False)
 
         x_train, y_train = split(df_train)
 
@@ -1398,7 +1430,7 @@ def add_predict_iter(
                     y_pred=model.predict(x_test),
                     proba_long=proba_long))
 
-    par = ProgressParallel(batch_size=2, n_jobs=-1, total=num_batches)
+    par = ProgressParallel(batch_size=2, n_jobs=n_jobs, total=num_batches)
     result = par(delayed(_fit)(i=i) for i in range(num_batches))
 
     return df_orig.pipe(pu.left_merge, pd.concat([df for df in result if not df is None]))
