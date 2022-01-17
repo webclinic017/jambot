@@ -246,7 +246,6 @@ def add_proba_trade_signal(
     # NOTE not implemented yet, need to make func dynamic for regression
     rolling_col = 'proba_long' if not regression else 'y_pred'
     n_smooth = n_smooth or cf.dynamic_cfg()['n_periods_smooth']  # get dynamic config value
-    log.info(f'Adding n_smooth: {n_smooth}')
 
     return df \
         .pipe(sg.add_ema, p=n_smooth, c=rolling_col, col='rolling_proba') \
