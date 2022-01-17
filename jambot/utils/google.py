@@ -77,7 +77,7 @@ def ws_df(name: str, wb: Spreadsheet = None, **kw) -> pd.DataFrame:
     wb = wb or get_google_sheet()
 
     return wb.worksheet_by_title(name).get_as_df() \
-        .pipe(f.lower_cols)
+        .pipe(pu.lower_cols)
 
 
 class GoogleSheet():
@@ -117,7 +117,7 @@ class GoogleSheet():
             # url for faster reading of sheet without authentication (~0.2s instead of 1.5)
             url = 'https://docs.google.com/spreadsheets/d/' \
                 + f'{self.sheet_id}/gviz/tq?tqx=out:csv&sheet={self.name}'
-            df = pd.read_csv(url).pipe(f.lower_cols)
+            df = pd.read_csv(url).pipe(pu.lower_cols)
 
         if self.index_col:
             df = df.set_index(self.index_col)
@@ -257,7 +257,7 @@ class TradeHistory(Bitmex):
         cols = ['side', 'dur', 'entry', 'exit', 'pnl', 'pnl_acct', 'profitable', 'status']
         df = strat.df_trades(last=last)[cols].copy() \
             .pipe(self.as_percent, cols=('pnl', 'pnl_acct')) \
-            .pipe(f.remove_underscore) \
+            .pipe(pu.remove_underscore) \
             .reset_index(drop=False) \
             .pipe(self.add_blank_rows, last=last) \
             .assign(timestamp=lambda x: x.timestamp.dt.strftime('%Y-%m-%d %H:%M'))
@@ -275,7 +275,7 @@ class OpenOrders(Bitmex):
         for exch in jf.as_list(exchs):
             df = exch.df_orders(refresh=True, new_only=True) \
                 .rename(columns=dict(order_type='ord_type')) \
-                .pipe(f.remove_underscore) \
+                .pipe(pu.remove_underscore) \
                 .pipe(pu.append_list, dfs)
 
         df = pd.concat(dfs) \
@@ -303,7 +303,7 @@ class OpenPositions(Bitmex):
             df = pd.DataFrame(data=data, columns=['user', 'exch'] + items) \
                 .pipe(self.as_percent, cols=('pnl_pct', 'roe_pct')) \
                 .rename(columns=m_rename) \
-                .pipe(f.remove_underscore) \
+                .pipe(pu.remove_underscore) \
                 .pipe(pu.append_list, dfs)
 
         df = pd.concat(dfs) \
