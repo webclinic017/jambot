@@ -13,12 +13,13 @@ from bitmex import bitmex
 from BitMEXAPIKeyAuthenticator import APIKeyAuthenticator
 from bravado.exception import HTTPBadRequest
 
-from jambot import SYMBOL
+from jambot import config as cf
 from jambot import functions as f
 from jambot import getlog
 from jambot.exchanges.exchange import SwaggerAPIException, SwaggerExchange
 from jambot.tradesys.orders import ExchOrder
 from jgutils import functions as jf
+from jgutils import pandas_utils as pu
 
 if TYPE_CHECKING:
     from bravado.http_future import HttpFuture
@@ -92,7 +93,7 @@ class BitmexAPIException(SwaggerAPIException):
 
 class Bitmex(SwaggerExchange):
     div = 1e8
-    default_symbol = SYMBOL
+    default_symbol = cf.SYMBOL
     conv_symbol = dict(BTCUSD=default_symbol)
     wallet_keys = dict(
         avail_margin='excessMargin',
@@ -191,7 +192,7 @@ class Bitmex(SwaggerExchange):
     def _get_instrument(self, **kw) -> dict:
         return self.req('Instrument.get', **kw)[0]
 
-    def get_filled_orders(self, symbol: str = SYMBOL, starttime: dt = None) -> List[ExchOrder]:
+    def get_filled_orders(self, symbol: str = cf.SYMBOL, starttime: dt = None) -> List[ExchOrder]:
         """Get orders filled since last starttime
 
         - NOTE This refreshes and sets exch orders to recent Filled/PartiallyFilled only
@@ -239,7 +240,7 @@ class Bitmex(SwaggerExchange):
 
     def next_funding(
             self,
-            symbol: str = SYMBOL,
+            symbol: str = cf.SYMBOL,
             with_hours: bool = False) -> Union[float, Tuple[float, int]]:
         """Get current funding rate from exchange"""
         result = self._get_instrument(symbol=symbol)
@@ -348,7 +349,7 @@ class Bitmex(SwaggerExchange):
             .reset_index() \
             .drop(columns=['num'])
 
-    def wait_candle_avail(self, interval: int = 1, symbol: str = SYMBOL) -> None:
+    def wait_candle_avail(self, interval: int = 1, symbol: str = cf.SYMBOL) -> None:
         """Wait till last period candle is available from exchange
             - rest api latency is ~15s
             - Just for testing, not used for anything
@@ -428,7 +429,7 @@ class Bitmex(SwaggerExchange):
 
     def get_candles(
             self,
-            symbol: str = SYMBOL,
+            symbol: str = cf.SYMBOL,
             starttime: dt = None,
             fltr: str = '',
             retain_partial: bool = False,
@@ -534,8 +535,25 @@ class Bitmex(SwaggerExchange):
 
         return pd.DataFrame(data)[cols] \
             .assign(timestamp=lambda x: x.timestamp.dt.tz_localize(None)) \
-            .pipe(f.lower_cols) \
+            .pipe(pu.lower_cols) \
             .set_index(['symbol', 'timestamp'])
+
+    def df_funding_fees(self, symbol: str = cf.SYMBOL) -> pd.DataFrame:
+        data = self.req(
+            'Execution.getTradeHistory',
+            symbol=symbol,
+            count=500,
+            reverse=True,
+            filter=json.dumps(dict(execType='Funding')))
+
+        cols = ['transact_time', 'cum_qty', 'avg_px', 'exec_comm']
+        return pd.DataFrame(data=data) \
+            .pipe(pu.lower_cols)[cols] \
+            .rename(columns=dict(transact_time='timestamp', exec_comm='funding_fee')) \
+            .assign(
+                timestamp=lambda x: x.timestamp.dt.tz_localize(None),
+                funding_fee=lambda x: x.funding_fee * -1e-8) \
+            .set_index('timestamp')
 
     def check_clock_skew(self) -> None:
         """Check local time vs exchange server for clock skew
