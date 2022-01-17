@@ -1,8 +1,10 @@
 import json
-from abc import ABCMeta, abstractmethod
+from abc import ABCMeta, abstractmethod, abstractproperty
 from typing import *
 
 from joblib import Parallel
+
+from jambot import config as cf
 
 try:
     from tqdm.auto import tqdm
@@ -79,10 +81,14 @@ class ProgressParallel(Parallel):
     def __init__(self, use_tqdm: bool = True, total: int = None, *args, **kwargs):
         self._use_tqdm = use_tqdm
         self._total = total
+        self.bar_format = '{l_bar}{bar:20}{r_bar}{bar:-20b}'  # limit bar width in terminal
         super().__init__(*args, **kwargs)
 
     def __call__(self, *args, **kwargs):
-        with tqdm(disable=not self._use_tqdm, total=self._total) as self._pbar:
+        with tqdm(
+                disable=not self._use_tqdm,
+                total=self._total,
+                bar_format=self.bar_format) as self._pbar:
             return Parallel.__call__(self, *args, **kwargs)
 
     def print_progress(self):
@@ -90,3 +96,14 @@ class ProgressParallel(Parallel):
             self._pbar.total = self.n_dispatched_tasks
         self._pbar.n = self.n_completed_tasks
         self._pbar.refresh()
+
+
+class DynConfig(metaclass=ABCMeta):
+    """Class to allow quick instantiation from dynamically written config values"""
+    log_keys = abstractproperty()
+
+    @classmethod
+    def from_config(cls, symbol: str = cf.SYMBOL, **kw):
+        """Instantiate from dynamic config file"""
+        kw = cf.dynamic_cfg(symbol, keys=cls.log_keys) | kw
+        return cls(**kw)

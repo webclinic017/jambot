@@ -4,17 +4,17 @@ import numpy as np
 import pandas as pd
 from sklearn.preprocessing import minmax_scale
 
-from jambot import config as cf
 from jambot import getlog
-from jambot.common import DictRepr
+from jambot.common import DictRepr, DynConfig
 from jambot.utils.mlflow import MlflowLoggable
 from jgutils import functions as jf
 
 log = getlog(__name__)
 
 
-class WeightsManager(DictRepr, MlflowLoggable):
+class WeightsManager(DictRepr, MlflowLoggable, DynConfig):
     """Class to manage creating weighted series and filtering by weights"""
+    log_keys = dict(weights_n_periods='n_periods')
 
     def __init__(self, df: pd.DataFrame, n_periods: int, weight_linear: bool = True):
 
@@ -26,10 +26,6 @@ class WeightsManager(DictRepr, MlflowLoggable):
         self.n_periods = n_periods
         self.weight_linear = weight_linear
         self._weights = None
-
-    @classmethod
-    def from_config(cls, df: pd.DataFrame) -> 'WeightsManager':
-        return cls(df=df, **cf.WEIGHTSMANAGER_KW)
 
     def to_dict(self) -> dict:
         return dict(
@@ -86,7 +82,7 @@ class WeightsManager(DictRepr, MlflowLoggable):
 
         s = self.weights
         if not filter_quantile is None:
-            s = s.pipe(self.filter_highest, weights=s, quantile=filter_quantile)
+            s = s.pipe(self.filter_quantile, weights=s, quantile=filter_quantile)
 
         return s
 
@@ -107,10 +103,11 @@ class WeightsManager(DictRepr, MlflowLoggable):
         name = f'{name}__' if not name is None else ''
         return {f'{name}sample_weight': self.weights.loc[x.index]}
 
-    def filter_highest(
+    def filter_quantile(
             self,
             datas: Union[pd.DataFrame, pd.Series, list],
-            quantile: float = 0.5) -> Union[pd.DataFrame, pd.Series, list]:
+            quantile: float = 0.5,
+            _log: bool = True) -> Union[pd.DataFrame, pd.Series, list]:
         """Filter df or series to highest qualtile based on index of weights
         - IMPORTANT: higher number = more rows filtered out, less remain
 
@@ -139,10 +136,11 @@ class WeightsManager(DictRepr, MlflowLoggable):
             idx = weights[weights >= _quantile].index
             out.append(df.loc[idx])
 
-        nrows = datas[0].shape[0]
-        msg = f'Filtered weights quantile [{quantile * 100:.0f}% = {_quantile:.3f}]' \
-            + f', [{nrows:,.0f} -> {idx.shape[0]:,.0f}] rows.'
-        log.info(msg)
+        if _log:
+            nrows = datas[0].shape[0]
+            msg = f'Filtered weights quantile [{quantile * 100:.0f}% = {_quantile:.3f}]' \
+                + f', [{nrows:,.0f} -> {idx.shape[0]:,.0f}] rows.'
+            log.info(msg)
 
         if len(datas) == 1:
             return out[0]

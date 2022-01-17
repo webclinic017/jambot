@@ -8,38 +8,41 @@ from jambot import config as cf
 from jambot import display
 from jambot import functions as f
 from jambot import getlog
+from jambot.common import DynConfig
 from jambot.ml import models as md
 from jambot.tradesys.backtest import BacktestManager
 from jambot.tradesys.orders import LimitOrder, MarketOrder, Order, StopOrder
 from jambot.tradesys.strategies.base import StrategyBase
 from jambot.tradesys.trade import Trade
 from jgutils import fileops as jfl
-from jgutils import functions as jf
 from jgutils import pandas_utils as pu
 
 log = getlog(__name__)
 warnings.filterwarnings(action='ignore', category=FutureWarning)
 
 
-class Strategy(StrategyBase):
+class Strategy(StrategyBase, DynConfig):
+    log_keys = ['order_offset']
+
     def __init__(
             self,
-            symbol: str = 'XBTUSD',
-            min_proba: float = 0.5,
-            min_agree: int = 0,
-            stop_pct: float = None,
-            min_proba_enter: float = 0.8,
-            num_disagree: int = 0,
-            min_agree_pct: float = 0.8,
-            regression: bool = False,
+            symbol: str = cf.SYMBOL,
             market_on_timeout: bool = False,
             order_offset: float = -0.0006,
+            stop_pct: float = None,
+            # min_proba: float = 0.5,
+            # min_agree: int = 0,
+            # min_proba_enter: float = 0.8,
+            # num_disagree: int = 0,
+            # min_agree_pct: float = 0.8,
+            # regression: bool = False,
             **kw):
         super().__init__(symbol=symbol, **kw)
 
-        use_stops = True if not stop_pct is None else False
-
-        jf.set_self()
+        self.use_stops = True if not stop_pct is None else False
+        self.market_on_timeout = market_on_timeout
+        self.order_offset = order_offset
+        self.stop_pct = stop_pct
 
     @property
     def log_items(self) -> Dict[str, Any]:
@@ -253,7 +256,7 @@ class StratScorer():
             .pipe(st.bg, subset=higher_centered_2, higher_better=True) \
             .apply(st.background_grad_center, subset=higher_centered, higher_better=True, center=1.0, vmin=0, vmax=100)
 
-        # style.columns = df.pipe(f.remove_underscore).columns
+        # style.columns = df.pipe(pu.remove_underscore).columns
 
         ints = ('good', 'filled', 'total')
         df_tot = df.mean().to_frame().T \
