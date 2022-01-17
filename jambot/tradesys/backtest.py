@@ -1,3 +1,4 @@
+import os
 from datetime import datetime as dt
 from typing import *
 
@@ -35,7 +36,9 @@ class BacktestManager(Clock, MlflowLoggable):
         total='{:,.0f}',
         gpct='{:.0%}',
         gfpct='{:.0%}',
-        ci_monthly='{:.2f}')
+        ci_monthly='{:.2f}',
+        sharpe='{:.3f}',
+        w_sharpe='{:.3f}')
 
     # rename data cols for display
     m_conv = dict(
@@ -52,6 +55,7 @@ class BacktestManager(Clock, MlflowLoggable):
             strat: 'StrategyBase',
             df: pd.DataFrame,
             startdate: dt,
+            df_funding: pd.DataFrame = None,
             **kw):
 
         super().__init__(df=df, **kw)
@@ -70,6 +74,7 @@ class BacktestManager(Clock, MlflowLoggable):
         self.strat = strat
         self.startdate = startdate
         self.df = df
+        self.df_funding = df_funding
 
     def step(self):
         """Top level doesn't need to do anything"""
@@ -94,6 +99,7 @@ class BacktestManager(Clock, MlflowLoggable):
             self
         """
         self.strat.wallet.reset()
+        self.strat.wallet.df_funding = self.df_funding
         super().run()
         self.end_session.emit()
 
@@ -116,7 +122,12 @@ class BacktestManager(Clock, MlflowLoggable):
             .format(self.summary_format) \
             .hide_index()
 
-        display(style)
+        if 'IPYKERNEL_CELL_NAME' in os.environ.keys():
+            # show in jupyter
+            display(style)
+        else:
+            # print to terminal
+            pu.terminal_df(df=style, pad=True, date_only=False)
 
     @property
     def log_items(self) -> dict:
@@ -154,7 +165,9 @@ class BacktestManager(Clock, MlflowLoggable):
             tpd=strat.tpd,
             good=strat.good_trades,
             filled=strat.num_trades_filled,
-            total=strat.num_trades
+            total=strat.num_trades,
+            sharpe=a.sharpe(weighted=False),
+            w_sharpe=a.sharpe(weighted=True),
         )
 
         # only count "good" as pct of filled trades, ignore unfilled
