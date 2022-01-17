@@ -48,7 +48,12 @@ class Wallet(Observer):
         bitmex=(0.0001, -0.0005),
         bybit=(0.00025, -0.00075))
 
-    def __init__(self, symbol: str, exch_name: str = 'bitmex', **kw):
+    def __init__(
+            self,
+            symbol: str,
+            exch_name: str = 'bitmex',
+            df_funding: pd.DataFrame = None,
+            **kw):
         super().__init__(**kw)
         self.reset()
         self._total_balance_margin = None  # live trading, comes from exch
@@ -56,6 +61,8 @@ class Wallet(Observer):
         self._lev = 3
         self.symbol = symbol
         self.exch_name = exch_name
+        self.df_funding = df_funding  # TODO track funding trades
+        self._df_ci_monthly = None  # type: pd.DataFrame
 
         self.maker_fee, self.taker_fee = self.exch_fees[exch_name]
 
@@ -70,7 +77,10 @@ class Wallet(Observer):
         self.price = 0
 
     def step(self):
-        pass
+
+        if not self.df_funding is None and self.c.Index in self.df_funding.index:
+            fund_rate = self.df_funding.loc[self.c.Index, 'funding_rate']
+            self._balance += self.funding_fee(self.qty, self.price, fund_rate)
 
     @property
     def side(self) -> TradeSide:
@@ -136,6 +146,34 @@ class Wallet(Observer):
         else:
             # live trading
             return self._total_balance_margin
+
+    @staticmethod
+    def funding_fee(qty: int, price: float, funding_rate: float) -> float:
+        """Get funding fee to pay for contracts at price
+        - if negative, shorts pay longs
+        - on bitmex fee is displayed as "fee rate", already calculated on side of position
+        - fee = (contracts / entry_price) * funding_rate
+        - NOTE may need to round differently for different symbols
+        - Funding fees not significant, ignoring for now
+
+        Parameters
+        ----------
+        qty : int
+            contracts
+        price : float
+            position entry price
+        funding_rate : float
+
+        Returns
+        -------
+        float
+            funding fee
+        """
+        if price == 0:
+            log.warning('price=0')
+            return 0.0
+
+        return round((qty / price) * funding_rate * -1, 8)
 
     def set_exchange_data(self, exch: SwaggerExchange) -> None:
         """Adjust current balance/upnl to match available on exchange
@@ -490,3 +528,60 @@ class Wallet(Observer):
 
     def show_orders(self, last: int = 30) -> None:
         display(self.df_filled_orders.iloc[-last:])
+
+    @property
+    def df_ci_monthly(self) -> pd.DataFrame:
+        """Get df of daily > monthly compound interest rates per month
+
+        Returns
+        -------
+        pd.DataFrame
+        """
+        # just to avoid recalc when logging both weighted and unweighted sharpe ratio
+        if not self._df_ci_monthly is None:
+            return self._df_ci_monthly
+
+        df = self.df_balance.resample(rule='M').last() \
+            .assign(initial=lambda x: x.balance.shift(1))
+
+        # add starting balance for first month
+        df.iloc[0, df.columns.get_loc('initial')] = 1
+
+        self._df_ci_monthly = df \
+            .assign(
+                ci_rate=lambda x: np.vectorize(f.ci_rate)(x.balance, x.index.day, x.initial),
+                w_ci_rate=lambda x: x.ci_rate * np.linspace(0.5, 1, len(x)))
+
+        return self._df_ci_monthly
+
+    def sharpe(self, weighted: bool = False) -> float:
+        """Calculate sharpe ratio across monthly returns
+
+        Parameters
+        ----------
+        weighted : bool, optional
+            weight more recent months higher, by default False
+
+        Returns
+        -------
+        float
+        """
+        df = self.df_ci_monthly
+        ci_col = 'ci_rate' if not weighted else 'w_ci_rate'
+        return df[ci_col].mean() / df.ci_rate.std()
+
+    def ci_monthly(self, weighted: bool = False) -> float:
+        """Calculate avg compound interest across monthly returns
+
+        Parameters
+        ----------
+        weighted : bool, optional
+            weight more recent months higher, by default False
+
+        Returns
+        -------
+        float
+        """
+        df = self.df_ci_monthly
+        ci_col = 'ci_rate' if not weighted else 'w_ci_rate'
+        return df[ci_col].mean()
