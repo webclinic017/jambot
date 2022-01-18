@@ -65,6 +65,9 @@ def dynamic_cfg(symbol: str = SYMBOL, keys: Union[List[str], Dict[str, str]] = N
     -------
     Dict[str, Any]
     """
+    # TODO temp solution for BTCUSD
+    symbol = 'XBTUSD' if symbol == 'BTCUSD' else symbol
+
     with open(p_cfg, 'r') as file:
         m = yaml.full_load(file)[symbol]
 

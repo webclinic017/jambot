@@ -16,10 +16,13 @@ from jambot.ml import models as md
 from jambot.ml.storage import ModelStorageManager
 from jambot.tables import Tickers
 from jambot.tradesys import backtest as bt
-from jambot.tradesys.strategies import base, ml
+from jambot.tradesys.strategies.ml import Strategy
 from jambot.utils import google as gg
 from jgutils import functions as jf
 from jgutils import pandas_utils as pu
+
+if TYPE_CHECKING:
+    from jambot.tradesys.strategies.base import StrategyBase
 
 log = getlog(__name__)
 
@@ -186,7 +189,7 @@ def check_filled_orders(minutes: int = 5, em: ExchangeManager = None) -> None:
 
 
 def write_balance_google(
-        strat: base.StrategyBase,
+        strat: 'StrategyBase',
         exchs: Union[SwaggerExchange, List[SwaggerExchange]],
         test: bool = False,
         gc: gg.Client = None) -> None:
@@ -195,7 +198,7 @@ def write_balance_google(
 
     Parameters
     ----------
-    strat : base.StrategyBase
+    strat : StrategyBase
     exchs : Union[SwaggerExchange, List[SwaggerExchange]]
     test : bool, optional
         only display dfs, don't write to sheet, default False
@@ -277,7 +280,7 @@ def get_df_raw(
     pd.DataFrame
     """
 
-    offset = {1: 16, 15: 4}[interval]
+    offset = {1: 16, 15: 6}[interval]  # get days offset
     startdate = f.inter_now(interval) + delta(days=-offset)
 
     return Tickers().get_df(
@@ -324,17 +327,16 @@ def get_df_pred(
 def run_strat(
         name: str = 'lgbm',
         df_pred: pd.DataFrame = None,
-        order_offset: float = -0.0006,
         exch_name: str = 'bitmex',
         symbol: str = cf.SYMBOL,
-        **kw) -> ml.Strategy:
+        **kw) -> Strategy:
 
     # allow passing in to replace OHLC cols and run again
     if df_pred is None:
         df_pred = get_df_pred(name=name, exch_name=exch_name, symbol=symbol, **kw)
 
     # run strat in "live" mode to get expected state
-    strat = ml.make_strat(live=True, order_offset=order_offset, exch_name=exch_name, symbol=symbol, **kw)
+    strat = Strategy.from_config(lev=3, live=True, exch_name=exch_name, symbol=symbol, keep_sym=True, **kw)
 
     cols = ['open', 'high', 'low', 'close', 'signal']
     bt.BacktestManager(
@@ -387,6 +389,7 @@ def run_strat_live(
         df_new=get_df_raw(exch_name='bybit', symbol='BTCUSD', interval=interval))
 
     strat_bbit = run_strat(name=name, df_pred=df_bbit, symbol='BTCUSD', exch_name='bybit')
+    print('strat_bbit symbol', strat_bbit.symbol)
 
     m_strats = dict(
         bitmex=strat_bmex,
