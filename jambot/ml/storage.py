@@ -1,3 +1,4 @@
+import math
 from datetime import datetime as dt
 from datetime import timedelta as delta
 from typing import TYPE_CHECKING, List
@@ -102,7 +103,6 @@ class ModelStorageManager(DictRepr):
         """
         log.info('running fit_save_models')
         name = 'lgbm'
-        n_periods = cf.dynamic_cfg()['target_n_periods']
 
         self.clean()
 
@@ -115,8 +115,7 @@ class ModelStorageManager(DictRepr):
                 interval=interval,
                 funding=True,
                 funding_exch=em.default('bitmex'))
-            .pipe(md.add_signals, name=name, drop_ohlc=False, use_important_dynamic=True)
-            .iloc[:-1 * n_periods, :],
+            .pipe(md.add_signals, name=name, drop_ohlc=False, use_important_dynamic=True),
             name=name,
             model=model)
 
@@ -131,30 +130,37 @@ class ModelStorageManager(DictRepr):
         ----------
         df : pd.DataFrame
             df with signals/target initialized
+        name : str
+            model name for naming saved model pkls
         model : LGBMClassifier
             estimator with fit/predict methods
         """
+        n_periods = cf.dynamic_cfg()['target_n_periods']
+        df = df.iloc[:-1 * n_periods, :]  # drop last target_n_periods
 
         # max date where hour is greater or equal to 18:00
         # set back @cut_hrs due to losing @n_periods for training preds
-        # model is trained AT 1800, but only UP TO 1500 - not anymore, could add this back
-        cut_mins = {1: 60, 15: 15}[self.interval]
-        reset_hour_offset = self.reset_hour - 0  # 18
-        # print('reset_hour_offset:', reset_hour_offset)
+        # model is trained AT 18:00, but only UP TO eg 10:00
+        cut_hrs = math.ceil(n_periods / {1: 1, 15: 4}[self.interval])
+        # print('cut_hrs:', cut_hrs)  # 8
+        reset_hour_offset = self.reset_hour - cut_hrs  # 18
+        # print('reset_hour_offset:', reset_hour_offset)  # 10
 
         d_upper = f.date_to_dt(
             df.query('timestamp.dt.hour >= @reset_hour_offset').index.max().date()) \
-            + delta(hours=reset_hour_offset)
-        # print('d_upper:', d_upper)
+            + delta(hours=reset_hour_offset)  # get date only eg '2022-01-01' then add delta hoursg
+        # print('d_upper:', d_upper)  # 2022-01-17 10:00:00
 
-        # get weights for fit params
+        # get weights for fit params and filter_fit_quantile
         wm = WeightsManager.from_config(df=df)
 
-        # NOTE filter_quantile might cause strat to go out of sync sometimes
+        # NOTE filter_quantile probs will cause strat to go out of sync sometimes
         # NOTE funding_rate isn't dropped by DROP_COLS
         df = df \
             .pipe(pu.safe_drop, cols=cf.DROP_COLS) \
             .pipe(wm.filter_quantile, quantile=cf.dynamic_cfg()['filter_fit_quantile'])
+
+        cut_mins = {1: 60, 15: 15}[self.interval]  # to offset .loc[:d] for each prev model/day
 
         # trim df to older dates by cutting off progressively larger slices
         for i in range(self.n_models):
@@ -162,10 +168,10 @@ class ModelStorageManager(DictRepr):
             delta_mins = -i * cut_mins * self.batch_size_cdls
             # print('delta_mins:', delta_mins)
             d = d_upper + delta(minutes=delta_mins)
-            # print('d:', d)
+            # print('d:', d)  # 2022-01-17 10:00
 
-            x_train, y_train = sk.split(df=df[:d])
-            # print('idxmax:', x_train.index.max())
+            x_train, y_train = sk.split(df=df[:d])  # train UP TO eg 2022-01-17 10:00 UTC
+            # print('idxmax:', x_train.index.max())  # max datetime could be < d (wm filtering)
 
             # fit - using weighted currently
             model.fit(
@@ -174,7 +180,7 @@ class ModelStorageManager(DictRepr):
                 sample_weight=wm.weights.loc[x_train.index])
 
             # save - add back cut hrs so always consistent
-            fname = f'{name}_{d:{self.dt_format_path}}'
+            fname = f'{name}_{d + delta(hours=cut_hrs):{self.dt_format_path}}'
             p_save = jfl.save_pickle(model, p=self.p_model, name=fname)
             self.saved_models.append(p_save)
             log.info(f'saved model: {fname}')
