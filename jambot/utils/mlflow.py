@@ -8,18 +8,10 @@ from collections import Counter, deque
 from pathlib import Path
 from typing import *
 
-import mlflow
 import pandas as pd
 import sqlalchemy as sa
 import yaml
 from aenum import StrEnum
-from mlflow.entities.run import Run
-from mlflow.entities.run_status import RunStatus
-from mlflow.entities.source_type import SourceType
-from mlflow.store.tracking.dbmodels.models import (SqlLatestMetric, SqlParam,
-                                                   SqlRun, SqlTag)
-from mlflow.tracking import MlflowClient
-from mlflow.tracking.fluent import _get_or_start_run
 from pandas.api.types import is_numeric_dtype
 from sqlalchemy.orm import Session, sessionmaker
 
@@ -28,6 +20,18 @@ from jambot import getlog
 from jambot.common import DictRepr
 from jgutils import functions as jf
 from jgutils import pandas_utils as pu
+
+# don't need mlflow package for azure app
+if not cf.AZURE_WEB:
+    import mlflow
+    from mlflow.entities.run import Run
+    from mlflow.entities.run_status import RunStatus
+    from mlflow.entities.source_type import SourceType
+    from mlflow.store.tracking.dbmodels.models import (SqlLatestMetric,
+                                                       SqlParam, SqlRun,
+                                                       SqlTag)
+    from mlflow.tracking import MlflowClient
+    from mlflow.tracking.fluent import _get_or_start_run
 
 log = getlog(__name__)
 
