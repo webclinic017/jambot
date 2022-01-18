@@ -32,6 +32,11 @@ if not cf.AZURE_WEB:
                                                        SqlTag)
     from mlflow.tracking import MlflowClient
     from mlflow.tracking.fluent import _get_or_start_run
+else:
+    SqlLatestMetric = ''
+    SqlParam = ''
+    SqlRun = ''
+    SqlTag = ''
 
 log = getlog(__name__)
 
@@ -263,7 +268,7 @@ class MlflowManager(DictRepr):
         df.reset_index(drop=not keep_index).to_feather(p)
         mlflow.log_artifact(p)
 
-    def load_df(self, run: Union[Run, str], name: str = None, index_col: str = None) -> pd.DataFrame:
+    def load_df(self, run: Union['Run', str], name: str = None, index_col: str = None) -> pd.DataFrame:
         """Load feather file from run's artifacts
 
         Parameters
