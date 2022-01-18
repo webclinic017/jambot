@@ -44,6 +44,10 @@ class Strategy(StrategyBase, DynConfig):
         self.order_offset = order_offset
         self.stop_pct = stop_pct
 
+    def to_dict(self) -> dict:
+        return super().to_dict() \
+            | dict(order_offset=self.order_offset)
+
     @property
     def log_items(self) -> Dict[str, Any]:
         return super().log_items \
