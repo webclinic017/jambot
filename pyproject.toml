@@ -29,6 +29,7 @@ mlflow = "^1.21.0"
 # mlflow = {git = "https://github.com/creinders/mlflow.git", branch = "master"}
 jgutils = {path = "../jgutils", extras = ["azurestorage"], develop = true}
 
+
 [tool.poetry.group.dev.dependencies]
 jupyter = "^1.0.0"
 plotly = "^4.14.3"
@@ -55,7 +56,7 @@ llvmlite = "0.38"
 pyarrow = "^6.0.0"
 scikit-optimize = "^0.9.0"
 pytest-cov = "^3.0.0"
-jgutils = {path = "../jgutils", extras = ["colorlogging", "azurestorage"], develop = true}
+jgutils = {path = "../jgutils", extras = ["colorlogging", "azurestorage", "terminaldf"], develop = true}
 tqdm = "^4.62.3"
 
 
