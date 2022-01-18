@@ -5,16 +5,6 @@
 
 In production, this app is hosted as an Azure Functions app running on a timer trigger, performing certain trade functions/checks/notifications on 5min and 1hr intervals.
 
->## Project
->**Functions** - Helper functions.
->
->**[JambotClasses](Project/JambotClasses.py)** - Main classes for backtesting strategies.
->
->**Launch** - Control module for local development, testing, backtesting strategies, multiprocess optimization etc. Used in VS Code with a Python Interactive (jupyter) environment.
->
->**[LiveTrading](Project/LiveTrading.py)** - Interaction with Bitmex for executing trades, and Google sheets for live dashboard of current status.
->run_toploop() is main control function, runs every 1 hour
-
 >## Azure Functions App - Triggers
 >**FiveMin** - Checks for filled orders and specific candle patterns, sends Discord alert messages.
 >
