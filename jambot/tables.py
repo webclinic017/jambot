@@ -11,8 +11,8 @@ from pypika import Query
 from pypika import functions as fn
 from pypika.terms import Criterion
 
-from jambot import SYMBOL
 from jambot import comm as cm
+from jambot import config as cf
 from jambot import functions as f
 from jambot import getlog
 from jambot.database import db
@@ -33,9 +33,7 @@ class Table(object, metaclass=ABCMeta):
     idx_cols = abstractproperty()  # type Union[List[str], str]
 
     # store exchange name as tinyint
-    exch_keys = dict(
-        bitmex=1,
-        bybit=2)
+    exch_keys = dict(bitmex=1, bybit=2)
     exch_keys_inv = jf.inverse(exch_keys)
 
     def __init__(self):
@@ -190,18 +188,30 @@ class Table(object, metaclass=ABCMeta):
         nsymbols = 0
 
         if dfs:
-            df = pd.concat(dfs)
+            df = pd.concat(dfs)  # type: pd.DataFrame
             nrows = df.shape[0]
             nsymbols = df.symbol.nunique()
 
             if not test:
-                df.to_sql(name=self.name, con=db.engine, if_exists='append', index=False)
+                self.load_to_db(df=df)
 
         msg = f'Imported [{nrows}] row(s) for [{nsymbols}] symbol(s)'
         log.info(msg)
 
         if self.name == 'funding':
             cm.discord(f'Funding: {msg}', channel='test')
+
+    def load_to_db(self, df: pd.DataFrame, **kw) -> None:
+        """Load data to database
+
+        Parameters
+        ----------
+        df : pd.DataFrame
+        """
+        # check if df index cols match self.idx_cols
+        index = True if sorted(df.index.names) == sorted(self.idx_cols) else False
+
+        df.to_sql(name=self.name, con=db.engine, if_exists='append', index=index)
 
 
 class Tickers(Table):
@@ -217,7 +227,7 @@ class Tickers(Table):
     def get_query(
             self,
             exch_name: str = 'bitmex',
-            symbol: str = SYMBOL,
+            symbol: str = cf.SYMBOL,
             period: int = 300,
             startdate: dt = None,
             enddate: dt = None,
@@ -283,7 +293,7 @@ class Tickers(Table):
             if funding_exch:
                 # NOTE XBTUSD will have to change
                 df = df.assign(
-                    funding_rate=lambda x: x.funding_rate.fillna(funding_exch.next_funding('XBTUSD')))
+                    funding_rate=lambda x: x.funding_rate.fillna(funding_exch.next_funding(cf.SYMBOL)))
 
         return df
 
@@ -387,3 +397,76 @@ class ApiKeys(Table):
     name = 'apikeys'
     cols = ['exchange', 'user', 'key', 'secret']
     idx_cols = ['exchange', 'user']
+
+
+class Predictions(Table):
+    """Historical model predictions"""
+    name = 'predictions'
+    idx_cols = ['interval', 'symbol', 'timestamp']
+    cols = idx_cols + ['signal']
+
+    def load_to_db(
+            self,
+            df: pd.DataFrame,
+            # n_hours: int = 24,
+            interval: int = 15,
+            symbol: str = cf.SYMBOL,
+            test: bool = False) -> None:
+        """Check max preds date in db and load new signals
+
+        Parameters
+        ----------
+        df : pd.DataFrame
+            df_ohlc with signal col
+        interval : int, optional
+            default 15
+        symbol : str, optional
+            default 'XBTUSD'
+        """
+
+        df_max = self.get_max_dates()
+
+        # filter greater than max date
+        if len(df_max) > 0:
+            df = df.loc[df.index > df_max.timestamp.max()]
+
+        # trim to last n periods
+        # d_min = df.index.max() + delta(hours=-n_hours)
+
+        # drop zeroes
+        # drop ohlc
+        # assign signal, interval
+        df = df[['signal']] \
+            .pipe(lambda df: df[df.signal != 0]) \
+            .assign(interval=interval, symbol=symbol) \
+            .reset_index(drop=False) \
+            .dropna()
+
+        if test:
+            from jambot import display
+            display(df)
+            return
+
+        try:
+            super().load_to_db(df=df)
+            log.info(f'loaded [{len(df)}] predictions to db.')
+        except Exception as e:
+            # TODO send discord error
+            log.warning('Failed to load preds to db.')
+
+    def process_df(self, df: pd.DataFrame, merge: bool = False, df_ohlc: pd.DataFrame = None) -> pd.DataFrame:
+
+        # if merge, merge to full df_ohlc
+        if merge:
+            pass
+
+        return df
+
+    def get_max_dates(self, interval: int = 15, symbols: List[str] = None) -> pd.DataFrame:
+
+        a = self.a
+        cols = ['interval', 'symbol']
+        conds = [a.interval == interval]
+
+        return self._get_max_dates(cols=cols, symbols=symbols, conds=conds) \
+            .assign(interval=lambda x: x.interval.astype(int))

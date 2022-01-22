@@ -14,7 +14,7 @@ from jambot.exchanges.bybit import Bybit
 from jambot.exchanges.exchange import SwaggerAPIException, SwaggerExchange
 from jambot.ml import models as md
 from jambot.ml.storage import ModelStorageManager
-from jambot.tables import Tickers
+from jambot.tables import Predictions, Tickers
 from jambot.tradesys import backtest as bt
 from jambot.tradesys.strategies.ml import Strategy
 from jambot.utils import google as gg
@@ -389,11 +389,8 @@ def run_strat_live(
         df_new=get_df_raw(exch_name='bybit', symbol='BTCUSD', interval=interval))
 
     strat_bbit = run_strat(name=name, df_pred=df_bbit, symbol='BTCUSD', exch_name='bybit')
-    print('strat_bbit symbol', strat_bbit.symbol)
 
-    m_strats = dict(
-        bitmex=strat_bmex,
-        bybit=strat_bbit)
+    m_strats = dict(bitmex=strat_bmex, bybit=strat_bbit)
 
     for exch in em.iter_exchanges(exch_name=exch_name, test_exchs=test_exchs):
         strat = m_strats[exch.exch_name]
@@ -410,3 +407,8 @@ def run_strat_live(
 
     # write current strat trades/open positions to google
     write_balance_google(strat=strat, exchs=em.list_exchs, test=test)
+
+    # log predictions
+    d = dt.utcnow()
+    if test or (d.hour == 17 and 45 <= d.minute <= 59):
+        Predictions().load_to_db(df=strat_bmex.df, test=test)
