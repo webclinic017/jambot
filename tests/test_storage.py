@@ -12,11 +12,11 @@ logging.getLogger('azure.core.pipeline.policies.http_logging_policy').disabled =
 @fixture(scope='session')
 def test_fit_save(em: ExchangeManager):
     msm = ModelStorageManager(test=True)
-    msm.fit_save_models(em=em)
+    msm.fit_save_models(em=em, overwrite_all=True)
 
     # check files uploaded to blob successfully
-    saved_models = [p.name for p in msm.saved_models]
-    assert sorted(saved_models) == sorted(msm.bs.list_files()), 'Saved models do not match files in azure blob'
+    # saved_models = [p.name for p in msm.saved_models]
+    assert msm.local_model_names == sorted(msm.bs.list_files()), 'Saved models do not match files in azure blob'
 
 
 @mark.usefixtures('test_fit_save')

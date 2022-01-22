@@ -52,7 +52,7 @@ if __name__ == '__main__':
 
         # fit models and upload
         em = ExchangeManager()
-        ModelStorageManager().fit_save_models(em=em)
+        ModelStorageManager().fit_save_models(em=em, overwrite_all=True)
 
         # also upload current "least_important_cols"
         p = cf.p_data / 'feats'
