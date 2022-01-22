@@ -279,6 +279,7 @@ class StratScorer():
             y_true: pd.Series,
             _type: str = 'final',
             regression: bool = False,
+            symbol: str = cf.SYMBOL,
             **kw) -> float:
         """Run strategy and return final balance
         - called for test then train for x number of splits
@@ -297,7 +298,7 @@ class StratScorer():
         if bm is None:
             df_pred = x.pipe(md.add_preds_probas, pipe=estimator, regression=regression)
 
-            strat = make_strat(symbol='XBTUSD', exch_name='bitmex', order_offset=-0.0006, regression=regression)
+            strat = Strategy.from_config(lev=3, live=True, exch_name='bitmex', symbol=symbol, keep_sym=True, **kw)
 
             cols = ['open', 'high', 'low', 'close', 'signal']
             bm = BacktestManager(startdate=startdate, strat=strat, df=df_pred[cols]).run(prnt=False)
