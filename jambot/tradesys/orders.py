@@ -247,8 +247,9 @@ class BaseOrder(object, metaclass=ABCMeta):
         """Return compressed version of info for messages
         - "XBTUSD | limit_open | $48,852 | +394,800" """
         qty = self.qty if not self.qty is None else 0
+        action = '🟢' if qty >= 0 else '🔴'
         price = f'${self.price:,.0f}' if not self.price is None else ''
-        return f'{self.symbol} | {self.name} | {qty:+,} | {price}'
+        return f'{action} {self.symbol} | {self.name} | {qty:+,} | {price}'
 
     def add(self, lst: Union['Trade', list]) -> 'Order':
         """Convenience func to add self to trade or list of orders
