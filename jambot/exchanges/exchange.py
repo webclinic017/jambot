@@ -5,6 +5,7 @@ import time
 import warnings
 from abc import ABCMeta, abstractmethod, abstractproperty, abstractstaticmethod
 from collections import defaultdict as dd
+from datetime import datetime as dt
 from typing import *
 
 import pandas as pd
@@ -59,7 +60,10 @@ class Exchange(DictRepr, metaclass=ABCMeta):
 
         self._client = self.init_client(test=test, from_local=from_local, swagger_spec=swagger_spec)
 
-        jf.set_self()
+        self.user = user
+        self.test = test
+        self.pct_balance = pct_balance
+        self.discord = discord
 
     @classmethod
     def default(cls, test: bool = True, refresh: bool = True, **kw) -> 'Exchange':
@@ -125,6 +129,33 @@ class Exchange(DictRepr, metaclass=ABCMeta):
 
         return df.loc[user].to_dict()
 
+    def get_earliest_candle_date(self, symbol: str, interval: int = 15) -> dt:
+        """Get earliest candle for symbol/intervcal
+        - NOTE doesn't work for bitmex
+
+        Parameters
+        ----------
+        symbol : str
+        interval : int, optional
+            default 15
+
+        Returns
+        -------
+        dt
+            earliest datetime
+        """
+        if self.exch_name == 'bitmex':
+            raise NotImplementedError('get_earliest_candle_date not init for bitmex')
+
+        d = dt(2016, 1, 1)  # absolute lowest
+
+        return self.get_candles(
+            starttime=d,
+            symbol=symbol,
+            interval=interval,
+            limit=2,
+            max_pages=1)['timestamp'].iloc[0].to_pydatetime()
+
 
 class SwaggerAPIException(Exception):
     def __init__(
@@ -179,7 +210,7 @@ class SwaggerExchange(Exchange, metaclass=ABCMeta):
     order_endpoints = abstractproperty()
     conv_symbol = {}
     other_keys = abstractproperty()
-    m_emoji = dict(submit='✅ ', amend='🌀 ', cancel='❌ ')
+    m_emoji = dict(submit='➡️ ', amend='🌀 ', cancel='❌ ')
 
     def __init__(self, *args, **kw):
         super().__init__(*args, **kw)
@@ -1048,11 +1079,13 @@ class SwaggerExchange(Exchange, metaclass=ABCMeta):
         # temp send order submit details to discord
         user = self.user if self.discord is None else self.discord
 
+        # create order msg from orders to submit/ammend etc
         m = {}
         m_ords = {k: [o.short_stats for o in orders]
                   for k, orders in all_orders.items() if orders and not k == 'manual'}
 
         if m_ords:
+            # add current qty/entry price msg
             m['current_qty'] = f'{self.current_qty(symbol=symbol):+,} @ ${self.current_entry(symbol):,.0f}'
             m |= m_ords
 
