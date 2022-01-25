@@ -139,7 +139,7 @@ class Bybit(SwaggerExchange):
             request: Union['HttpFuture', str],
             code: bool = False,
             fail_msg: str = None,
-            **kw) -> Union[Any, Tuple[Any, int], Dict[str, Any]]:
+            **kw) -> Union[Any, Tuple[Any, int], Dict[str, Any], List[Dict[str, Any]]]:
         """Wrapper to handle bybit request response/error code
         - pass through super().check_request for request retries
 
@@ -405,6 +405,7 @@ class Bybit(SwaggerExchange):
             symbol: Union[str, List[str]] = SYMBOl,
             interval: int = 15,
             endtime: dt = None,
+            max_pages: float = float('inf'),
             **kw) -> pd.DataFrame:
         """Get OHLC candles from Bybit
         - bybit returns last candle partial (always filter if time == now)
@@ -429,17 +430,22 @@ class Bybit(SwaggerExchange):
         _starttime = starttime
         endtime = min(endtime or dt.utcnow(), f.inter_now(interval)).replace(tzinfo=tz.utc)
         data = []
-        _interval = {1: '60', 15: '15'}.get(interval)
+        pages = 0
+        _interval = {1: '60', 15: '15'}[interval]
+        limit = 200  # max 200 candles for query_kline
 
         for symbol in jf.as_list(symbol):
-            limit = 200
             starttime = _starttime.replace(tzinfo=tz.utc)
 
-            while starttime < endtime:
+            # USDT contracts have different endpoint
+            _req = 'LinearKline' if symbol.lower().endswith('usdt') else 'Kline'
+
+            while starttime < endtime and pages < max_pages:
+                pages += 1
 
                 try:
                     _data = self.req(
-                        'Kline.get',
+                        f'{_req}.get',
                         symbol=symbol,
                         interval=_interval,
                         limit=limit,
@@ -489,6 +495,12 @@ class Bybit(SwaggerExchange):
         if m_new['expired_at'] < dt.utcnow() + delta(days=-3):
             msg = ''
             cm.discord(msg=msg, channel='alerts')
+
+    def list_symbols(self) -> List[str]:
+        """Get list of all exchange symbols"""
+        lst = self.req('Market.symbolInfo')  # type: List[Dict[str, Any]]
+        syms = [m['symbol'] for m in lst]
+        return sorted(syms)
 
 
 def test_candle_availability(interval: int = 5):
