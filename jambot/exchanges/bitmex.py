@@ -395,6 +395,8 @@ class Bitmex(SwaggerExchange):
         """Batch calls into pages for eg candles/funding history
         - useful when updating full history
         - requests will sleep 10s if ratelim hit
+        - NOTE max results is 12,000 records, eg 12 pages
+        - TODO reset startime param or something at 12k results, have to line up candles/avoid dupes
 
         Parameters
         ----------
@@ -480,16 +482,22 @@ class Bitmex(SwaggerExchange):
             fltr = json.dumps(dict(symbol=symbol))  # filter symbols needed
             symbol = None
 
+        # returns empty data [] if no symbols at starttime
         data = self.paged_req(
             'Trade.getBucketed',
             page_max=1000,
             binSize=binsize,
             symbol=symbol,
             startTime=starttime,
+            # endTime=dt.utcnow(),
             filter=fltr,
             reverse=reverse,
             partial=include_partial,
             columns=json.dumps(cols))
+
+        if not data:
+            log.warning(f'No candles returned for symbol: {symbol}, starttime: {starttime}')
+            return
 
         # fix bitmex high/low being less/greater than the open
         df = pd.DataFrame(data) \
