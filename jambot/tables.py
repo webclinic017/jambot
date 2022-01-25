@@ -29,11 +29,11 @@ class Table(object, metaclass=ABCMeta):
     """Class to represent database table"""
     name = abstractproperty()
     cols = abstractproperty()
-    dtypes = None
+    dtypes = {}  # type: Dict[str, Any]
     idx_cols = abstractproperty()  # type Union[List[str], str]
 
     # store exchange name as tinyint
-    exch_keys = dict(bitmex=1, bybit=2)
+    exch_keys = dict(bitmex=1, bybit=2, binance=3)
     exch_keys_inv = jf.inverse(exch_keys)
 
     def __init__(self):
@@ -164,18 +164,18 @@ class Table(object, metaclass=ABCMeta):
         """
 
         # use exch default symbols if not given
-        exchs = jf.as_list(exchs)
-        symbols = symbols or [exch.default_symbol for exch in exchs]
+        _exchs = jf.as_list(exchs)
+        symbols = symbols or [exch.default_symbol for exch in _exchs]
 
         # convert exchanges to dict for matching by num
-        exchs = {exch.exch_name: exch for exch in exchs}
+        exchs = {exch.exch_name: exch for exch in _exchs}
         dfs = []
 
         # get max symbol grouped by timestamp/interval/exch
-        df_max = self.get_max_dates(symbols=symbols, **kw)
+        df_max = self.get_max_dates(symbols=symbols, exchs=_exchs, **kw)
 
         for (exch_name, timestamp), df in df_max.groupby(['exchange', 'timestamp']):
-            # get exchange obj from exch_num
+            # get exchange obj from exch_num, get candle data from exch
             df = self._get_exch_data(
                 exch=exchs[exch_name],
                 timestamp=timestamp,
@@ -195,7 +195,7 @@ class Table(object, metaclass=ABCMeta):
             if not test:
                 self.load_to_db(df=df)
 
-        msg = f'Imported [{nrows}] row(s) for [{nsymbols}] symbol(s)'
+        msg = f'Imported [{nrows:,.0f}] row(s) for [{nsymbols}] symbol(s)'
         log.info(msg)
 
         if self.name == 'funding':
@@ -210,6 +210,8 @@ class Table(object, metaclass=ABCMeta):
         """
         # check if df index cols match self.idx_cols
         index = True if sorted(df.index.names) == sorted(self.idx_cols) else False
+
+        log.info(f'Loading [{len(df):,.0f}] rows to db.')
 
         df.to_sql(name=self.name, con=db.engine, if_exists='append', index=index)
 
@@ -297,14 +299,37 @@ class Tickers(Table):
 
         return df
 
-    def get_max_dates(self, interval: int = 15, symbols: List[str] = None) -> pd.DataFrame:
+    def get_max_dates(
+            self,
+            interval: int = 15,
+            symbols: List[str] = None,
+            exchs: Union[SwaggerExchange, List[SwaggerExchange]] = None) -> pd.DataFrame:
 
         a = self.a
         cols = ['exchange', 'interval', 'symbol']
         conds = [a.interval == interval]
 
-        return self._get_max_dates(cols=cols, symbols=symbols, conds=conds) \
+        df = self._get_max_dates(cols=cols, symbols=symbols, conds=conds) \
             .assign(interval=lambda x: x.interval.astype(int))
+
+        # create max date data from earliest record of symbol on exchange
+        if len(df) == 0:
+            if exchs is None:
+                raise RuntimeError(f'Must provide exchange to get max dates for missing symbol(s): {symbols}')
+
+            data = []
+            for exch in jf.as_list(exchs):
+                for symbol in jf.as_list(symbols):
+                    m = dict(
+                        exchange=exch.exch_name,
+                        interval=interval,
+                        symbol=symbol,
+                        timestamp=exch.get_earliest_candle_date(symbol=symbol, interval=interval))
+                    data.append(m)
+
+            df = pd.DataFrame(data=data)
+
+        return df
 
     def _get_exch_data(
             self,
@@ -454,7 +479,7 @@ class Predictions(Table):
             # TODO send discord error
             log.warning('Failed to load preds to db.')
 
-    def process_df(self, df: pd.DataFrame, merge: bool = False, df_ohlc: pd.DataFrame = None) -> pd.DataFrame:
+    def process_df(self, df: pd.DataFrame, merge: bool = False, df_ohlc: pd.DataFrame = None, **kw) -> pd.DataFrame:
 
         # if merge, merge to full df_ohlc
         if merge:
