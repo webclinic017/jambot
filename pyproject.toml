@@ -57,6 +57,7 @@ pytest-cov = "^3.0.0"
 jgutils = {path = "../jgutils", extras = ["colorlogging", "azurestorage", "terminaldf"], develop = true}
 tqdm = "^4.62.3"
 mlflow = "^1.21.0"
+binance-connector = "^1.10.0"
 
 
 [tool.pytest.ini_options]
