@@ -6,6 +6,8 @@ from joblib import Parallel
 
 from jambot import config as cf
 
+SYMBOL = 'XBTUSD'  # just use string here, dont want to import from Symbols
+
 try:
     from tqdm.auto import tqdm
 except ModuleNotFoundError:
@@ -103,10 +105,13 @@ class DynConfig(metaclass=ABCMeta):
     log_keys = abstractproperty()
 
     @classmethod
-    def from_config(cls, symbol: str = cf.SYMBOL, keep_sym: bool = False, **kw):
+    def from_config(cls, symbol: str = SYMBOL, keep_sym: bool = False, default: bool = False, **kw):
         """Instantiate from dynamic config file"""
         if keep_sym:
             kw |= dict(symbol=symbol)
+
+        if default:
+            symbol = SYMBOL
 
         kw = cf.dynamic_cfg(symbol, keys=cls.log_keys) | kw
         return cls(**kw)

@@ -9,7 +9,6 @@ import yaml
 # Set environments
 AZURE_LOCAL = not os.getenv('AZURE_FUNCTIONS_ENVIRONMENT') is None
 AZURE_WEB = not os.getenv('WEBSITE_SITE_NAME') is None
-SYMBOL = 'XBTUSD'
 
 if AZURE_LOCAL or AZURE_WEB:
     sys.modules['__main__'] = None  # type: ignore - this isn't set properly when run in azure and throws KeyError
@@ -28,7 +27,6 @@ p_data = p_root / 'data' if not AZURE_WEB else Path.home() / 'data'
 p_ftr = p_data / 'feather'
 
 INTERVAL = 15
-SYMBOL = 'XBTUSD'
 D_LOWER = dt(2017, 1, 1)
 D_SPLIT = dt(2021, 2, 1)
 # D_SPLIT = dt(2020, 1, 1)
@@ -50,7 +48,7 @@ COLORS = dict(
     lightyellow='#FFFFCC')
 
 
-def dynamic_cfg(symbol: str = SYMBOL, keys: Union[List[str], Dict[str, str]] = None) -> Dict[str, Any]:
+def dynamic_cfg(symbol: str = 'XBTUSD', keys: Union[List[str], Dict[str, str]] = None) -> Dict[str, Any]:
     """Get dynamic config values per symbol
     - TODO find a clean way to manage static/dynamic keys
 

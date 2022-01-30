@@ -23,6 +23,7 @@ from ta.volume import AccDistIndexIndicator  # noqa
 from ta.volume import MFIIndicator  # noqa
 from ta.volume import ChaikinMoneyFlowIndicator
 
+from jambot import SYMBOL
 from jambot import config as cf
 from jambot import getlog
 from jambot import sklearn_utils as sk
@@ -169,7 +170,7 @@ class SignalManager(MlflowLoggable, DictRepr):
             n_most_imp: int = None,
             use_important_dynamic: bool = False,
             drop_ohlc: bool = False,
-            symbol: str = cf.SYMBOL,
+            symbol: str = SYMBOL,
             **kw) -> pd.DataFrame:
         """Add multiple initialized signals to dataframe"""
         signal_params = signal_params or {}

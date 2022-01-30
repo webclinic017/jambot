@@ -5,6 +5,7 @@ from typing import TYPE_CHECKING, List
 
 import pandas as pd
 
+from jambot import SYMBOL
 from jambot import config as cf
 from jambot import functions as f
 from jambot import getlog
@@ -162,7 +163,7 @@ class ModelStorageManager(DictRepr):
 
         if df is None:
             df = Tickers().get_df(
-                symbol=cf.SYMBOL,
+                symbol=SYMBOL,
                 startdate=self.d_lower,
                 interval=interval,
                 funding=True,
@@ -214,6 +215,7 @@ class ModelStorageManager(DictRepr):
             model.fit(x_train, y_train, sample_weight=wm.weights.loc[x_train.index])
 
             # save - add back cut hrs so always consistent
+            # TODO name models with symbol
             fname = f'{name}_{d + delta(hours=cut_hrs):{self.dt_format_path}}'
             p_save = jfl.save_pickle(model, p=self.p_model, name=fname)
             log.info(f'saved model: {fname}')

@@ -8,6 +8,7 @@ from sklearn.linear_model import Ridge
 from sklearn.multioutput import MultiOutputRegressor
 from sklearn.pipeline import Pipeline
 
+from jambot import SYMBOL
 from jambot import config as cf
 from jambot import getlog
 from jambot import signals as sg
@@ -70,7 +71,7 @@ def model_cfg(name: str) -> Dict[str, Any]:
 def add_signals(
         df: pd.DataFrame,
         name: str,
-        symbol: str = cf.SYMBOL,
+        symbol: str = SYMBOL,
         drop_ohlc: bool = False,
         use_important_dynamic: bool = True,
         # use_important: bool = False,
@@ -159,7 +160,7 @@ def make_model_manager(
         encoders=encoders, **kw)
 
 
-def make_model(name: str, symbol: str = cf.SYMBOL) -> LGBMClsLog:
+def make_model(name: str, symbol: str = SYMBOL) -> LGBMClsLog:
     """Create instance of LGBMClassifier
 
     Parameters
@@ -167,7 +168,7 @@ def make_model(name: str, symbol: str = cf.SYMBOL) -> LGBMClsLog:
     name : str
 
     symbol : str, optional
-        default cf.SYMBOL
+        default SYMBOL
 
     Returns
     -------

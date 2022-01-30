@@ -4,6 +4,7 @@ from typing import *
 
 import pandas as pd
 
+from jambot import SYMBOL
 from jambot import comm as cm
 from jambot import config as cf
 from jambot import functions as f
@@ -328,7 +329,7 @@ def run_strat(
         name: str = 'lgbm',
         df_pred: pd.DataFrame = None,
         exch_name: str = 'bitmex',
-        symbol: str = cf.SYMBOL,
+        symbol: str = SYMBOL,
         **kw) -> Strategy:
 
     # allow passing in to replace OHLC cols and run again
