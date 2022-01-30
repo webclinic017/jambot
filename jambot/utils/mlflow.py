@@ -433,7 +433,8 @@ class MlflowManager(DictRepr):
             'n_estimators',
             'max_depth',
             'num_leaves',
-            'num_feats'
+            'num_feats',
+            'batch_size'
         ]
 
         y_vars = ['w_acc', 'ci_monthly', 'sharpe', 'w_sharpe']
