@@ -8,11 +8,12 @@ from binance.spot import Spot as Client
 from jambot import functions as f
 from jambot import getlog
 from jambot.exchanges.exchange import Exchange
+from jambot.tradesys.symbols import Symbol
 from jgutils import functions as jf
 
 log = getlog(__name__)
 
-SYMBOL = 'BTCUSD'
+SYMBOL = Symbol('BTCUSD')
 
 
 class Binance(Exchange):
