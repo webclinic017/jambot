@@ -42,6 +42,7 @@ class BaseOrder(object, metaclass=ABCMeta):
             order_id: str = None,
             **kw):
 
+        self.status = OrderStatus.PENDING
         self.price_original = price
         self.timestamp_filled = None
         self.qty = qty
@@ -59,7 +60,7 @@ class BaseOrder(object, metaclass=ABCMeta):
     @qty.setter
     def qty(self, val: Num):
         """Set qty and side based on qty"""
-        self._qty = val  # TODO confirm this is always rounded from wallet to lot_size
+        self._qty = float(val)  # TODO confirm this is always rounded from wallet to lot_size
         self._side = TradeSide(np.sign(val))
 
     def increase_qty(self, qty: Num):
@@ -253,7 +254,7 @@ class BaseOrder(object, metaclass=ABCMeta):
         price = f'${self.price:,.0f}' if not self.price is None else ''
         return f'{action} {self.symbol} | {self.name} | {qty:+,} | {price}'
 
-    def add(self, lst: Union['Trade', list]) -> 'Order':
+    def add(self, lst: Union['Trade', list]) -> 'BaseOrder':
         """Convenience func to add self to trade or list of orders
 
         Parameters
@@ -657,7 +658,7 @@ class Order(BaseOrder, Observer, metaclass=ABCMeta):
         super().__init__(**kw)
         Observer.__init__(self)
 
-        # NOTE these MUST be instance attrs
+        # these MUST be instance attrs
         self.filled = SignalEvent(float)
         self.cancelled = SignalEvent()
         self.amended = SignalEvent()
@@ -668,7 +669,6 @@ class Order(BaseOrder, Observer, metaclass=ABCMeta):
             order_id = str(uuid.uuid1())
         self.order_id = order_id
 
-        self.status = OrderStatus.PENDING
         self.timeout = timeout
         self.trail_close = trail_close
 

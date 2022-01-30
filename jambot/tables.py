@@ -379,7 +379,7 @@ class Funding(Table):
 
         return super().get_query(cols=cols)
 
-    def get_max_dates(self, symbols: List[str] = None) -> pd.DataFrame:
+    def get_max_dates(self, symbols: List[str] = None, **kw) -> pd.DataFrame:
 
         a = self.a
         cols = ['exchange', 'symbol']

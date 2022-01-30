@@ -1,7 +1,6 @@
 import pandas as pd
 
 from jambot import config as cf
-from jambot.tables import Symbols as _Symbols
 from jgutils.logger import getlog  # jambot.__init__ imports from symbols
 
 log = getlog(__name__)
@@ -65,6 +64,7 @@ class Symbols(object):
         pd.DataFrame
         """
         log.info('Loading symbol data from database')
+        from jambot.tables import Symbols as _Symbols
         return _Symbols().get_df()
 
     @property
