@@ -13,7 +13,7 @@ def wallet(clock):
     return wallet
 
 
-def test_market_orders(wallet):
+def test_market_orders(wallet: Wallet):
     """Test simple buying and selling in sequence"""
 
     o1 = ords.make_order(order_type='market', price=100, qty=100)

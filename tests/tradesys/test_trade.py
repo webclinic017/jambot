@@ -20,7 +20,7 @@ def test_init(trade):
     assert trade.symbol == SYMBOL
 
 
-def test_orders(trade, clock):
+def test_orders(trade: Trade, clock: Clock):
     """Test orders are added and removed correctly when filled"""
 
     order_specs = [
