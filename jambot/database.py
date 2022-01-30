@@ -5,7 +5,9 @@ from urllib import parse
 
 import pandas as pd
 import pyodbc
+import pypika as pk
 import sqlalchemy as sa
+from pypika import MSSQLQuery as Query
 from pypika.queries import QueryBuilder
 from sqlalchemy.orm import Session, sessionmaker
 
@@ -146,6 +148,104 @@ class DB(object):
             right_index=True,
             direction='forward',
             allow_exact_matches=True)
+
+    def import_df(
+            self,
+            df: pd.DataFrame,
+            imptable: str,
+            impfunc: str,
+            prnt: bool = False,
+            index: bool = False,
+            if_exists: str = 'append',
+            import_name: str = None) -> Union[int, None]:
+
+        rowsadded = 0
+        if df is None or len(df) == 0:
+            if imptable == 'temp_import' and not import_name is None:
+                imptable = import_name
+            log.warning(f'No rows to import to: {imptable}')
+            return
+
+        df.to_sql(
+            name=imptable,
+            con=self.engine,
+            if_exists=if_exists,
+            index=index)
+
+        cursor = self.cursor
+        rowsadded = cursor.execute(impfunc).rowcount
+        cursor.commit()
+
+        import_name = import_name or imptable
+        msg = f'{import_name}: {rowsadded}'
+        if prnt:
+            log.info(msg)
+
+        return rowsadded
+
+    def insert_update(
+            self,
+            a: str,
+            df: pd.DataFrame,
+            join_cols: List[str],
+            b: str = 'temp_import',
+            **kw) -> int:
+        """Insert values from df into temp update table b and merge to a
+
+        Parameters
+        ----------
+        a : str
+            insert into table
+        b : str
+            select from table (temp table)
+        join_cols : str
+            colums to join a/b on
+        df : pd.DataFrame
+
+        Returns
+        -------
+        int
+            rows added
+        """
+        if b == 'temp_import':
+            kw['if_exists'] = 'replace'
+
+        imptable = b
+
+        # drop duplicates
+        if not df is None and len(df) > 0:
+
+            # sometimes df will have been converted to lower cols
+            join_cols_lower = [c.lower() for c in join_cols]
+            subset = join_cols if not all(c in df.columns for c in join_cols_lower) else join_cols_lower
+
+            df = df \
+                .drop_duplicates(subset=subset, keep='first')
+
+            a, b = pk.Tables(a, b)
+            cols = df.columns
+
+            # this builds an import function from scratch, replaces stored proceedures
+            q = Query.into(a) \
+                .columns(*cols) \
+                .from_(b) \
+                .left_join(a).on_field(*join_cols) \
+                .select(*cols) \
+                .where(a.field(join_cols[0]).isnull())
+
+            print(q.get_sql())
+        else:
+            q = ''
+
+        rowsadded = self.import_df(df=df, imptable=imptable, impfunc=str(q), import_name=a, **kw)
+        # self.cursor.execute(f'TRUNCATE TABLE {b};')
+        self.cursor.execute(f'DROP TABLE {b};')
+        self.cursor.commit()
+
+        msg = f'{a}: {rowsadded}'
+        log.info(msg)
+
+        return rowsadded
 
 
 db = DB()
