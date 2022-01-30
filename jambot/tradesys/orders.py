@@ -5,22 +5,25 @@ import re
 import time
 import uuid
 from abc import ABCMeta
+from datetime import datetime as dt
 from typing import *
 
 import numpy as np
 
-from jambot import dt
+from jambot import SYMBOL, Num
 from jambot import functions as f
 from jambot import getlog
 from jambot.common import DictRepr, Serializable
-from jambot.config import SYMBOL
 from jambot.tradesys.base import Observer, SignalEvent
 from jambot.tradesys.enums import OrderStatus, OrderType, TradeSide
+from jambot.tradesys.symbols import Symbol, Symbols
 from jgutils import functions as jf
 
 if TYPE_CHECKING:
     from jambot.exchanges.exchange import SwaggerExchange
+    from jambot.tradesys.broker import Broker
     from jambot.tradesys.trade import Trade
+    from jambot.tradesys.wallet import Wallet
 
 log = getlog(__name__)
 
@@ -31,39 +34,38 @@ class BaseOrder(object, metaclass=ABCMeta):
 
     def __init__(
             self,
-            qty: int,
+            qty: Num,
+            symbol: Symbol = SYMBOL,
             name: str = '',
             price: float = None,
             offset: float = None,
-            symbol: str = SYMBOL,
             order_id: str = None,
             **kw):
 
-        price_original = price
-        timestamp_filled = None
-
-        # if pd.isna(qty) or qty == 0:
-        #     raise ValueError(f'Order quantity cannot be {qty}')
-
+        self.price_original = price
+        self.timestamp_filled = None
         self.qty = qty
         self.name = name
         self.price = price
         self.offset = offset
         self.symbol = symbol
         self.order_id = order_id
+        self.fee = 0
 
     @property
-    def qty(self):
+    def qty(self) -> Num:
         return self._qty
 
     @qty.setter
-    def qty(self, val) -> int:
+    def qty(self, val: Num):
         """Set qty and side based on qty"""
-        self._qty = int(val)
+        self._qty = val  # TODO confirm this is always rounded from wallet to lot_size
         self._side = TradeSide(np.sign(val))
 
-    def increase_qty(self, qty: int):
-        """Increase absolute order quantity"""
+    def increase_qty(self, qty: Num):
+        """Increase absolute order quantity
+        - Used for testing only
+        """
         self.qty += qty * self.side
 
     @property
@@ -217,15 +219,15 @@ class BaseOrder(object, metaclass=ABCMeta):
 
     def to_dict(self) -> dict:
 
-        price = f'{self.price:_.0f}' if not self.price is None else None
+        _price = f'{self.price:_.{self.symbol.prec}f}' if not self.price is None else None
 
         return dict(
             ts=self.format_ts(self.timestamp_start),
             # ts_filled=self.format_ts(self.timestamp_filled),
             symbol=self.symbol,
             order_type=str(self.order_type),
-            qty=f'{self.qty:+,.0f}',
-            price=price,
+            qty=f'{self.qty:+,.{self.symbol.prec_qty}f}',
+            price=_price,
             status=self.status,
             name=self.name)
 
@@ -317,6 +319,7 @@ class ExchOrder(BaseOrder, DictRepr, Serializable):
 
     def __init__(
             self,
+            symbol: Symbol,
             order_type: str,
             status: str = None,
             order_spec_raw: dict = None,
@@ -338,7 +341,7 @@ class ExchOrder(BaseOrder, DictRepr, Serializable):
         if len(name) > max_name_len:
             raise ValueError(f'Order name too long: {len(name)}, {name}. Max: {max_name_len}')
 
-        super().__init__(name=name, **kw)
+        super().__init__(symbol=symbol, name=name, **kw)
 
         order_type = OrderType(order_type)
         status = OrderStatus(status or 'new')
@@ -346,7 +349,7 @@ class ExchOrder(BaseOrder, DictRepr, Serializable):
         jf.set_self(exclude=('order_spec',))
 
     @classmethod
-    def from_dict(cls, order_spec: Union[dict, Order], exch_name: str = None) -> 'ExchOrder':
+    def from_dict(cls, order_spec: Union[dict, Order], syms: Symbols, exch_name: str = None) -> 'ExchOrder':
         """Create order from exchange order spec dict or BaseOrder"""
 
         # convenience to convert BaseOrder from strategy
@@ -358,12 +361,15 @@ class ExchOrder(BaseOrder, DictRepr, Serializable):
 
         # convert exchange keys to nice keys, or just use nice keys
         if not exch_name is None:
-            _m_conv = cls._m_conv.get(exch_name)
+            _m_conv = cls._m_conv[exch_name]
             # NOTE this could be sketch, m_conv only set if getting data from exchange
             cls.m_conv = _m_conv
             m = {k: order_spec.get(_m_conv[k], order_spec.get(k, None)) for k in _m_conv.keys()}
         else:
             m = copy.copy(order_spec)
+
+        # convert str symbol to Symbol
+        m['symbol'] = syms.symbol(m['symbol'], exch_name=exch_name)  # type: ignore
 
         return cls(**m, exch_name=exch_name, order_spec_raw=order_spec)
 
@@ -384,7 +390,7 @@ class ExchOrder(BaseOrder, DictRepr, Serializable):
 
     @classmethod
     def example(cls):
-        return cls(order_type='limit', qty=-1000, price=50000, name='example_order')
+        return cls(symbol=SYMBOL, order_type='limit', qty=-1000, price=50000, name='example_order')
 
     @classmethod
     def market(cls, **kw) -> 'ExchOrder':
@@ -404,26 +410,25 @@ class ExchOrder(BaseOrder, DictRepr, Serializable):
     @property
     def side_str(self) -> str:
         """Get side name for submitting ByBit orders"""
-        return {1: 'Buy', -1: 'Sell'}.get(self.side)
+        return {1: 'Buy', -1: 'Sell'}[self.side]
 
     @property
-    def qty(self):
+    def qty(self) -> Num:
         """Ensure ExchOrders always in multiples of 100 (Bitmex only)
-        - TODO need to enforce error if exch_name == ''
-
+        - Should be able to use lot_size properly now
         - Bybit reduce orders need to use exact qty (no 100 bin_size limit)
         """
-        if self.exch_name == 'bybit' and self.is_reduce:
-            return self._qty
-        else:
-            return f.round_down(n=abs(self._qty), nearest=100) * self.side
+        # if self.exch_name == 'bybit' and self.is_reduce:
+        #     return self._qty
+        # else:
+        return f.round_down(n=abs(self._qty), nearest=self.symbol.lot_size) * self.side
 
     @qty.setter
-    def qty(self, val):
+    def qty(self, val: Num):
         """Set qty and side based on qty
         - NOTE not dry, but can't redefine getter without setter in same class
         """
-        self._qty = int(val)
+        self._qty = val
         self._side = TradeSide(np.sign(val))
 
     @property
@@ -653,7 +658,7 @@ class Order(BaseOrder, Observer, metaclass=ABCMeta):
         Observer.__init__(self)
 
         # NOTE these MUST be instance attrs
-        self.filled = SignalEvent(int)
+        self.filled = SignalEvent(float)
         self.cancelled = SignalEvent()
         self.amended = SignalEvent()
         self.timedout = SignalEvent(object)
@@ -666,6 +671,16 @@ class Order(BaseOrder, Observer, metaclass=ABCMeta):
         self.status = OrderStatus.PENDING
         self.timeout = timeout
         self.trail_close = trail_close
+
+    @property
+    def broker(self) -> 'Broker':
+        """Global Broker obj"""
+        return self.parent.broker
+
+    @property
+    def wallet(self) -> 'Wallet':
+        """Global Wallet obj"""
+        return self.parent.wallet
 
     @property
     def is_expired(self) -> bool:
@@ -697,12 +712,12 @@ class Order(BaseOrder, Observer, metaclass=ABCMeta):
     def max_qty(self, price: float = None) -> float:
         """get max available qty at current price"""
         price = price or self.price
-        return self.parent.wallet.available_quantity(price=price) * self.side
+        return self.wallet.available_quantity(price=price) * self.side  # type: ignore
 
     def adjust_max_qty(self) -> None:
         """Set qty to max available
         """
-        self.parent.broker.amend_order(order=self, qty=self.max_qty())
+        self.broker.amend_order(order=self, qty=self.max_qty())
 
     def adjust_price(self, price: float) -> None:
         """Adjust price and max qty
@@ -716,10 +731,10 @@ class Order(BaseOrder, Observer, metaclass=ABCMeta):
         if self.is_reduce:
             qty = None
         else:
-            price += -1 * self.side  # offset limit_close by $1 to keep on inside
+            price += -2 * self.symbol.tick_size * self.side  # offset limit_close by eg $1 to keep on inside
             qty = self.max_qty(price)
 
-        self.parent.broker.amend_order(order=self, qty=qty, price=price)
+        self.broker.amend_order(order=self, qty=qty, price=price)
 
     def to_dict(self) -> dict:
         """Add t_num for strat Orders"""
@@ -741,7 +756,11 @@ class LimitOrder(Order):
 
         # adjust price/qty to offset from current close
         if not self.trail_close is None and not self.is_filled:
-            price = f.get_price(pnl=self.trail_close, price=self.c.close, side=self.side)
+            price = f.get_price(
+                pnl=self.trail_close,
+                price=self.c.close,
+                side=self.side,
+                tick_size=self.symbol.tick_size)
             self.adjust_price(price=price)
 
 
@@ -759,10 +778,23 @@ class StopOrder(Order):
 
     @classmethod
     def from_order(cls, order: Order, stop_pct: float) -> StopOrder:
+        """Create StopOrder from LimitOrder
+
+        Parameters
+        ----------
+        order : Order
+        stop_pct : float
+            pct to offset from LimitOrder
+
+        Returns
+        -------
+        StopOrder
+        """
         stop_price = f.get_price(
             pnl=abs(stop_pct) * -1,
             price=order.price,
-            side=order.side)
+            side=order.side,
+            tick_size=order.symbol.tick_size)
 
         stop_order = StopOrder(
             symbol=order.symbol,
@@ -822,7 +854,7 @@ def make_orders(
     return orders
 
 
-def make_exch_orders(order_specs: Union[List[dict], dict], exch_name: str) -> List[ExchOrder]:
+def make_exch_orders(order_specs: Union[List[dict], dict], exch_name: str, syms: Symbols = None) -> List[ExchOrder]:
     """Create multiple ExchOrders orders from raw bitmex order spec dicts
     - if already dict just return
 
@@ -837,8 +869,13 @@ def make_exch_orders(order_specs: Union[List[dict], dict], exch_name: str) -> Li
     -------
     List[ExchOrder]
     """
+
+    # used to convert symbol str to Symbol
+    if syms is None:
+        syms = Symbols()
+
     return [
-        ExchOrder.from_dict(spec, exch_name=exch_name) if not isinstance(spec, ExchOrder) else spec
+        ExchOrder.from_dict(spec, exch_name=exch_name, syms=syms) if not isinstance(spec, ExchOrder) else spec
         for spec in jf.as_list(order_specs)]
 
 

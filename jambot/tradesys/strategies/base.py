@@ -5,9 +5,9 @@ import pandas as pd
 from jambot import display, getlog
 from jambot.tradesys.base import Observer
 from jambot.tradesys.broker import Broker
+from jambot.tradesys.symbols import Symbol
 from jambot.tradesys.trade import Trade
 from jambot.utils.mlflow import MlflowLoggable
-from jgutils import functions as jf
 
 log = getlog(__name__)
 
@@ -15,21 +15,26 @@ log = getlog(__name__)
 class StrategyBase(Observer, MlflowLoggable):
     def __init__(
             self,
-            symbol: str,
-            weight: int = 1,
+            symbol: Symbol,
+            # weight: int = 1,
             lev: int = 3,
             slippage: float = 0.02,
             live: bool = False,
             exch_name: str = 'bitmex',
+            df_syms: pd.DataFrame = None,
             **kw):
         super().__init__(**kw)
 
-        _trades = []
-        self._broker = Broker(parent_listener=self, symbol=symbol, exch_name=exch_name)
-        self.wallet = self._broker.get_wallet(symbol)
+        self.broker = Broker(parent_listener=self, symbol=symbol, exch_name=exch_name)
+        self.wallet = self.broker.get_wallet(symbol)
         self.wallet.lev = lev
 
-        jf.set_self()
+        self.symbol = symbol
+        self.lev = lev
+        self.slippage = slippage
+        self.live = live
+        self.exch_name = exch_name
+        self._trades = []
 
     def on_attach(self):
         """Market close last trade at end of session (if not live trading)"""
@@ -44,15 +49,8 @@ class StrategyBase(Observer, MlflowLoggable):
     def step(self):
         pass
 
-    def to_dict(self) -> dict:
-        m = dict(exch=self.exch_name)
-
-        if not self.parent is None:
-            m_fmt = self.parent.summary_format
-            _m = self.parent.df_result.iloc[0].to_dict()
-            m |= {k: m_fmt[k].format(v) if k in m_fmt else v for k, v in _m.items()}
-
-        return m
+    def to_dict(self) -> List[str]:
+        return ['symbol', 'exch_name']
 
     @property
     def log_items(self) -> Dict[str, Any]:
@@ -67,11 +65,6 @@ class StrategyBase(Observer, MlflowLoggable):
     def df(self) -> pd.DataFrame:
         """Convenience to get parent df"""
         return self.parent.df if not self.parent is None else None
-
-    @property
-    def broker(self) -> Broker:
-        """Broker"""
-        return self._broker
 
     @property
     def side(self):
@@ -123,6 +116,19 @@ class StrategyBase(Observer, MlflowLoggable):
         except IndexError:
             return
 
+    def get_trade_num(self, i: int) -> Trade:
+        """Get trade by trade_num (index - 1)
+
+        Parameters
+        ----------
+        i : int
+
+        Returns
+        -------
+        Trade
+        """
+        return self.trades[i - 1]
+
     @property
     def tpd(self):
         """Trades per day frequency"""
@@ -170,23 +176,26 @@ class StrategyBase(Observer, MlflowLoggable):
 
         from jambot.utils.styles import _cmap
 
-        df = df or self.df_trades(first=first, last=last)
+        if df is None:
+            df = self.df_trades(first=first, last=last)
         style = df.style.hide_index()
 
         # figs = self.bm.decimal_figs
-        # price_format = '{:,.' + str(figs) + 'f}'
-        price_format = '{:,.0f}'
+        price_format = '{:,.' + str(self.symbol.prec) + 'f}'
+        qty_format = '{:+,.' + str(self.symbol.prec_qty) + 'f}'
+        m_fmt = dict(
+            ts='{:%Y-%m-%d %H:%M}',
+            qty=qty_format,
+            entry=price_format,
+            exit=price_format,
+            pnl='{:.2%}',
+            pnl_acct='{:.2%}',
+            bal='{:,.2f}',
+            fees=price_format)
 
         style \
             .background_gradient(cmap=_cmap.reversed(), subset=['pnl', 'pnl_acct'], vmin=-0.1, vmax=0.1) \
-            .format({
-                'ts': '{:%Y-%m-%d %H:%M}',
-                'qty': '{:+,}',
-                'entry': price_format,
-                'exit': price_format,
-                'pnl': '{:.2%}',
-                'pnl_acct': '{:.2%}',
-                'bal': '{:.2f}'})
+            .format(m_fmt)
 
         display(style)
 
@@ -222,7 +231,10 @@ class StrategyBase(Observer, MlflowLoggable):
         df.pnl.plot(kind='hist', bins=50)
 
     def err_summary(self, last: int = 30) -> None:
+        print('broker orders:')
         self.broker.show_orders(last=last)
+        print('wallet orders:')
         self.wallet.show_orders(last=last)
+        print('trades:')
         self.show_trades(last=last)
         print('Time failed: ', self.timestamp)

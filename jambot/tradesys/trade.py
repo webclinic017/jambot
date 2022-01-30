@@ -4,15 +4,19 @@ from typing import *
 import numpy as np
 import pandas as pd
 
-from jambot import display
+from jambot import Num, display
 from jambot import functions as f
+from jambot import getlog
 from jambot.tradesys.base import Observer, SignalEvent
 from jambot.tradesys.enums import TradeSide, TradeStatus
 from jambot.tradesys.exceptions import InvalidTradeOperationError
 from jambot.tradesys.orders import MarketOrder, Order
+from jambot.tradesys.symbols import Symbol
 
 if TYPE_CHECKING:
     from jambot.tradesys.broker import Broker
+
+log = getlog(__name__)
 
 
 class Trade(Observer):
@@ -20,7 +24,7 @@ class Trade(Observer):
     - Must begin and end with 0 quantity
     """
 
-    def __init__(self, symbol: str, broker: 'Broker', **kw):
+    def __init__(self, symbol: Symbol, broker: 'Broker', **kw):
         super().__init__(**kw)
         self.opened = SignalEvent()
         self.closed = SignalEvent()
@@ -34,6 +38,7 @@ class Trade(Observer):
         self.exit_balance = None
         self.symbol = symbol
         self.broker = broker
+        self.trade_num = -1  # not init
 
     @property
     def side(self) -> int:
@@ -157,6 +162,11 @@ class Trade(Observer):
         """Return quantity of contracts"""
         return sum([o.qty for o in self.entry_orders])
 
+    @property
+    def fees(self):
+        """Return summed order fees"""
+        return sum([o.fee for o in self.orders])
+
     def add_orders(self, orders: list):
         """Add multiple orders"""
         for order in orders:
@@ -178,8 +188,12 @@ class Trade(Observer):
         order.filled.connect(self.on_fill)
         self.broker.submit(order)
 
-    def on_fill(self, qty: int, *args) -> None:
+    def on_fill(self, qty: Num, *args) -> None:
         """Perform action when any orders filled"""
+        if self.is_closed:
+            log.warning(f'trade already closed: {self.trade_num}')
+            print('qty:', qty, 'status:', self.status, 'wallet qty:', self.wallet.qty)
+
         self.qty_filled += qty
 
         if self.is_pending:
@@ -230,21 +244,21 @@ class Trade(Observer):
     def pnl_maxmin(self, maxmin, firstonly=False):
         return f.get_pnl(self.side, self.entry_price, self.extremum(self.side * maxmin, firstonly))
 
-    def rescale_orders(self, balance):
-        # need to fix 'orders' for trade_chop
-        for order in self.orders:
-            order.rescale_contracts(balance=balance, conf=self.conf)
+    # def rescale_orders(self, balance):
+    #     # need to fix 'orders' for trade_chop
+    #     for order in self.orders:
+    #         order.rescale_contracts(balance=balance, conf=self.conf)
 
-    def df(self) -> pd.DataFrame:
-        """Show df of candles for trade's duration"""
-        return self.bm.df.iloc[self.i_enter:self.i_exit]
+    # def df(self) -> pd.DataFrame:
+    #     """Show df of candles for trade's duration"""
+    #     return self.bm.df.iloc[self.i_enter:self.i_exit]
 
     def to_dict(self) -> dict:
         return dict(
             side=self.side_planned,
             qty=sum(o.qty for o in self.entry_orders),
-            entry_price=f'{self.entry_price:_.0f}',
-            exit_price=f'{self.exit_price:_.0f}',
+            entry_price=f'{self.entry_price:_.{self.symbol.prec}f}',
+            exit_price=f'{self.exit_price:_.{self.symbol.prec}f}',
             pnl=f'{self.pnl:.2%}')
 
     def dict_stats(self) -> dict:
@@ -259,6 +273,7 @@ class Trade(Observer):
             pnl=self.pnl,
             pnl_acct=self.pnl_acct,
             bal=self.exit_balance,
+            fees=self.fees,
             status=self.status,
             t_num=self.trade_num)
 

@@ -3,7 +3,7 @@ from datetime import timedelta as delta
 import numpy as np
 import pandas as pd
 
-from jambot import display, dt
+from jambot import Num, display, dt
 from jambot import functions as f
 from jambot import getlog
 from jambot.exchanges.exchange import SwaggerExchange
@@ -11,6 +11,7 @@ from jambot.tradesys.base import DictRepr, Observer
 from jambot.tradesys.enums import OrderType, TradeSide
 from jambot.tradesys.exceptions import InsufficientBalance
 from jambot.tradesys.orders import Order
+from jambot.tradesys.symbols import Symbol
 
 log = getlog(__name__)
 
@@ -50,14 +51,14 @@ class Wallet(Observer):
 
     def __init__(
             self,
-            symbol: str,
+            symbol: Symbol,
             exch_name: str = 'bitmex',
             df_funding: pd.DataFrame = None,
             **kw):
         super().__init__(**kw)
         self.reset()
         self._total_balance_margin = None  # live trading, comes from exch
-        self.precision = 8
+        self.prec_balance = 8  # wallet precision (base currency, eg XBT or USDT)
         self._lev = 3
         self.symbol = symbol
         self.exch_name = exch_name
@@ -77,6 +78,7 @@ class Wallet(Observer):
         self.price = 0
 
     def step(self):
+        """Check if need to pay funding fee, if funding df given"""
 
         if not self.df_funding is None and self.c.Index in self.df_funding.index:
             fund_rate = self.df_funding.loc[self.c.Index, 'funding_rate']
@@ -87,11 +89,11 @@ class Wallet(Observer):
         return TradeSide(np.sign(self.qty))
 
     @property
-    def qty(self) -> int:
-        return int(self._qty)
+    def qty(self) -> Num:
+        return self._qty
 
     @property
-    def qty_opp(self) -> int:
+    def qty_opp(self) -> Num:
         """Negative of current wallet qty (used to close)"""
         return self.qty * -1
 
@@ -140,15 +142,22 @@ class Wallet(Observer):
 
     @property
     def total_balance_margin(self) -> float:
+        """Get current balance plus unrealized pnl gain/loss to know max possible contracts for next trade"""
         if self._total_balance_margin is None:
             # backtesting
-            return max(self.balance + f.get_pnl_xbt(self.qty, self.price, self.c.close), self._min_balance)
+            return max(
+                self.balance +
+                self.get_profit(
+                    exit_qty=self.qty * -1,
+                    entry_price=self.price,
+                    exit_price=self.c.close),
+                self._min_balance)
         else:
             # live trading
             return self._total_balance_margin
 
     @staticmethod
-    def funding_fee(qty: int, price: float, funding_rate: float) -> float:
+    def funding_fee(qty: Num, price: float, funding_rate: float) -> float:
         """Get funding fee to pay for contracts at price
         - if negative, shorts pay longs
         - on bitmex fee is displayed as "fee rate", already calculated on side of position
@@ -213,14 +222,16 @@ class Wallet(Observer):
             delta = self.get_profit(order.qty, price_pre, order.price)
             self.add_transaction(delta)
 
+        # print(f'order qty: {order.qty:+,.{self.symbol.prec_qty}f}, \
+        # qty after fill: {self._qty:+,.{self.symbol.prec_qty}f}')
         self._qty += order.qty
-        # print(f'order qty: {order.qty:+,.0f}, qty after fill: {self._qty:+,.0f}')
 
         if self.qty == 0:
             self.price = 0
 
         # fees
         fee = self.calc_fee(order.qty, order.price, order.order_type)
+        order.fee = fee
         self._balance += fee
 
         self.filled_orders.append(order)
@@ -243,9 +254,10 @@ class Wallet(Observer):
 
         self.balance += delta
 
-    def calc_fee(self, qty: int, price: float, order_type: OrderType) -> float:
+    def calc_fee(self, qty: Num, price: float, order_type: OrderType) -> float:
         """Calculate fee in base instrument
         - NOTE fees in this way not exact, but accurate to first 3 significant digits
+        - FIXME fails for perpetual!!
 
         Parameters
         ----------
@@ -263,9 +275,16 @@ class Wallet(Observer):
         """
         # log.info(f'qty: {order.qty:+.0f}, px: {order.price:.0f}, fee: {fee:+.8f}, bal: {self._balance:.6f}')
         fee_rate = self.maker_fee if order_type == OrderType.LIMIT else self.taker_fee
-        return (abs(qty) / price) * fee_rate
+        if self.symbol.is_inverse:
+            # inverse perpetual
+            fee = (abs(qty) / price) * fee_rate
+        else:
+            # linear usdt
+            fee = abs(qty) * price * fee_rate
 
-    def available_quantity(self, price: float) -> int:
+        return fee
+
+    def available_quantity(self, price: float) -> Num:
         """Max available quantity to purchase of qty in base pair (eg XBT)
 
         Parameters
@@ -278,10 +297,22 @@ class Wallet(Observer):
         int
             quantity of qty
         """
-        qty = self.total_balance_margin * self.lev * price
-        return int(qty)
+        if self.symbol.is_inverse:
+            qty = self.total_balance_margin * self.lev * price
+        else:
+            qty = self.total_balance_margin * self.lev / price
 
-    def adjust_price(self, price: float, order_price: float, qty: int, order_qty: int) -> float:
+        # TODO this might make backtesting annoying, might need to start w larger balance for non inverse
+        # maybe only do this if live trading?
+        # return f.round_down(n=abs(qty), nearest=self.symbol.lot_size)
+        return round(qty, self.symbol.prec + 2)
+
+    def adjust_price(
+            self,
+            price: float,
+            order_price: float,
+            qty: Num,
+            order_qty: Num) -> float:
         """Calculate adjusted basis price when new order filled
         - used for entry/exit price
 
@@ -291,9 +322,9 @@ class Wallet(Observer):
             current wallet price
         order_price : float
             current filled order price
-        qty : int
+        qty : Num
             current wallet quantity
-        order_qty : int
+        order_qty : Num
             current filled order quantity
 
         Returns
@@ -301,15 +332,15 @@ class Wallet(Observer):
         float
             adjusted price
         """
-        return (price * qty + order_price * order_qty) / (qty + order_qty)
+        return round((price * qty + order_price * order_qty) / (qty + order_qty), self.symbol.prec)
 
-    def get_profit(self, exit_qty: int, entry_price: float, exit_price: float):
+    def get_profit(self, exit_qty: Num, entry_price: float, exit_price: float):
         """Calculate profit in base instrument (XBT)
         - NOTE this will change with different exchange and different base currency
 
         Parameters
         ----------
-        exit_qty : int
+        exit_qty : Num
             quantity of qty to sell (decrease position)
         entry_price : float
         exit_price : float
@@ -319,8 +350,17 @@ class Wallet(Observer):
         float
             profit in base instrument
         """
-        profit = -1 * exit_qty * (1 / entry_price - 1 / exit_price)
-        return round(profit, self.precision)
+        if 0 in (entry_price, exit_price):
+            return 0.0  # first trades wont have entry/exit price yet
+
+        if self.symbol.is_inverse:
+            # inverse perpetual
+            profit = -1 * exit_qty * (1 / entry_price - 1 / exit_price)
+        else:
+            # USDT perpetual
+            profit = -1 * exit_qty * (exit_price - entry_price)
+
+        return round(profit, self.prec_balance)
 
     def drawdown(self):
         """Calculate maximum value drawdown during backtest period

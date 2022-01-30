@@ -4,6 +4,7 @@ from typing import *
 import pandas as pd
 from sklearn.base import BaseEstimator
 
+from jambot import SYMBOL
 from jambot import config as cf
 from jambot import display
 from jambot import functions as f
@@ -26,27 +27,20 @@ class Strategy(StrategyBase, DynConfig):
 
     def __init__(
             self,
-            symbol: str = cf.SYMBOL,
             market_on_timeout: bool = False,
             order_offset: float = -0.0006,
             stop_pct: float = None,
-            # min_proba: float = 0.5,
-            # min_agree: int = 0,
-            # min_proba_enter: float = 0.8,
-            # num_disagree: int = 0,
-            # min_agree_pct: float = 0.8,
-            # regression: bool = False,
             **kw):
-        super().__init__(symbol=symbol, **kw)
+        super().__init__(**kw)
 
         self.use_stops = True if not stop_pct is None else False
         self.market_on_timeout = market_on_timeout
         self.order_offset = order_offset
         self.stop_pct = stop_pct
 
-    def to_dict(self) -> dict:
+    def to_dict(self) -> List[str]:
         return super().to_dict() \
-            | dict(order_offset=self.order_offset)
+            + ['order_offset']
 
     @property
     def log_items(self) -> Dict[str, Any]:
@@ -117,19 +111,12 @@ class Strategy(StrategyBase, DynConfig):
         """Create limit order with offset to enter or exit
         """
 
-        # if hasattr(self.c, 'pred_max'):
-        #     minmax_col = {-1: 'pred_max', 1: 'pred_min'}.get(side)
-        #     offset = abs(getattr(self.c, minmax_col)) * -1 * 0.25
-
-        # minmax_col = {-1: 'target_max', 1: 'target_min'}.get(side)
-        # offset_true = abs(getattr(self.c, minmax_col)) * -1  #* 0.5
-
-        limit_price = f.get_price(pnl=offset, price=price, side=side)
+        limit_price = f.get_price(pnl=offset, price=price, side=side, tick_size=self.symbol.tick_size)
 
         # NOTE timeout params are kinda arbitrary
         if name == 'open':
-            # NOTE this will have to change for symbols other than BTCUSD
-            limit_price += -1 * side  # offset limit_close by $1
+            # offset limit_close by eg $1. NOTE not dry, also in Order.adjust_price
+            limit_price += -2 * self.symbol.tick_size * side
             qty = self.wallet.available_quantity(price=limit_price) * side
             timeout = 6
         else:
@@ -279,7 +266,7 @@ class StratScorer():
             y_true: pd.Series,
             _type: str = 'final',
             regression: bool = False,
-            symbol: str = cf.SYMBOL,
+            symbol: str = SYMBOL,
             **kw) -> float:
         """Run strategy and return final balance
         - called for test then train for x number of splits
