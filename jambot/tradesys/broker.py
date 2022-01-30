@@ -118,7 +118,6 @@ class Broker(Observer):
 
     def step(self):
         """Check open orders, fill if price hit
-        - NOTE should probably consider order candle hits either side
         """
 
         for order_id in list(self.open_orders):
@@ -130,9 +129,8 @@ class Broker(Observer):
                 order.price = self.c.close
 
             # fill if order lies in current candle's range
-            # NOTE technically this should just check if price > low or < high, per side
-            # if self.c.low <= order.price <= self.c.high:
-            if (order.is_sell and order.price < self.c.high) or (order.is_buy and order.price > self.c.low):
+            if ((order.is_sell and order.price <= self.c.high) or
+                    (order.is_buy and order.price >= self.c.low)):
 
                 self.fill_order(order)
 
