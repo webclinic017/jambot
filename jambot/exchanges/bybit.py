@@ -204,11 +204,12 @@ class Bybit(SwaggerExchange):
             existing_keys = [o[k] for o in existing]
             return [o for o in new if not o[k] in existing_keys]
 
-        kw = dict(symbol=symbol, limit=30)
-        orders = self.req('Order.getOrders', **kw)
+        prefix = 'Linear' if symbol.lower().endswith('usdt') else ''
+        kw = dict(symbol=symbol, limit='30')  # TODO not sure if want this limit always
+        orders = self.req(f'{prefix}Order.getOrders', **kw)
 
         if bybit_async:
-            orders += _filter_keys(orders, self.req('Order.query', **kw))
+            orders += _filter_keys(orders, self.req(f'{prefix}Order.query', **kw))
 
         # very sketch, bybit returns stop orders as "Market", with no price
         orders = [o for o in orders if not 'stop' in o['order_link_id']]
@@ -218,9 +219,57 @@ class Bybit(SwaggerExchange):
             stop_orders = self.req('Conditional.getOrders', **kw)
 
             if bybit_async:
-                stop_orders += _filter_keys(stop_orders, self.req('Conditional.query', **kw))
+                stop_orders += _filter_keys(stop_orders, self.req(f'{prefix}Conditional.query', **kw))
 
         self._orders = self.add_custom_specs(self.proc_raw_spec(orders + stop_orders))
+
+    def get_active_instruments(self, **kw) -> List[Dict[str, Any]]:
+        """Get all open symbol data
+
+        Examples
+        --------
+        [{'name': 'SOLUSDT',
+        'alias': 'SOLUSDT',
+        'status': 'Trading',
+        'base_currency': 'SOL',
+        'quote_currency': 'USDT',
+        'price_scale': 3,
+        'taker_fee': '0.00075',
+        'maker_fee': '-0.00025',
+        'leverage_filter':
+            {'min_leverage': 1,
+            'max_leverage': 50,
+            'leverage_step': '0.01'},
+        'price_filter':
+            {'min_price': '0.005',
+            'max_price': '9999.99',
+            'tick_size': '0.005'},
+        'lot_size_filter':
+            {'max_trading_qty': 3000,
+            'min_trading_qty': 0.1,
+            'qty_step': 0.1}}]
+
+        Returns
+        -------
+        List[Dict[str, Any]]
+            [description]
+        """
+        data = self.req('Symbol.get', **kw)  # type: List[Dict[str, Any]]
+        data_out = []
+
+        for m_in in data:
+            if m_in['status'] == 'Trading':
+                m = {}
+                m['symbol'] = m_in['name']
+                m['base_currency'] = m_in['base_currency']
+                m['quote_currency'] = m_in['quote_currency']
+                m['is_inverse'] = not m_in['name'].lower().endswith('usdt')
+                m['tick_size'] = float(m_in['price_filter']['tick_size'])
+                m['lot_size'] = float(m_in['lot_size_filter']['min_trading_qty'])
+
+                data_out.append(m)
+
+        return data_out
 
     def _set_positions(self) -> List[dict]:
         """Get position info, eg current qty
@@ -240,6 +289,8 @@ class Bybit(SwaggerExchange):
             p['sym_short'] = p['symbol'][:3]
             p['roe_pct'] = (p['unrealised_pnl']) / (p['position_margin'] or 1)
             p['pnl_pct'] = p['roe_pct'] / p['leverage']
+
+            # FIXME need symbol precision!!
             p['last_price'] = f.get_price(p['pnl_pct'], p['entry_price'], p['side']) if p['side'] else None
 
             positions.append(p)
@@ -296,7 +347,12 @@ class Bybit(SwaggerExchange):
 
                 # qty strings to int
                 for k in ('qty', 'cum_exec_qty'):
-                    o[k] = int(o.get(k, 0))
+                    o[k] = o.get(k, 0)
+
+                # usdt orders use different key
+                if 'created_time' in o.keys():
+                    o['created_at'] = o.pop('created_time')
+                    o['updated_at'] = o.pop('updated_time')
 
                 # decimals returned are inconsistent length
                 for k in ('created_at', 'updated_at'):
@@ -438,14 +494,14 @@ class Bybit(SwaggerExchange):
             starttime = _starttime.replace(tzinfo=tz.utc)
 
             # USDT contracts have different endpoint
-            _req = 'LinearKline' if symbol.lower().endswith('usdt') else 'Kline'
+            prefix = 'Linear' if symbol.lower().endswith('usdt') else ''
 
             while starttime < endtime and pages < max_pages:
                 pages += 1
 
                 try:
                     _data = self.req(
-                        f'{_req}.get',
+                        f'{prefix}Kline.get',
                         symbol=symbol,
                         interval=_interval,
                         limit=limit,
@@ -485,6 +541,22 @@ class Bybit(SwaggerExchange):
                 m[k] = dt.strptime(m[k].split('.')[0], '%Y-%m-%dT%H:%M:%S')
 
         return keys
+
+    def update_api_keys(self, key: str, secret: str) -> None:
+        """Update api key and secret in database
+        - bybit api keys expire every 3 months
+
+        Parameters
+        ----------
+        key : str
+        secret : str
+        """
+        from jambot.database import db
+        sql = f"update apikeys set [key]='{key}', [secret]='{secret}' where [exchange]='bybit' and [user]='{self.user}'"
+        cursor = db.cursor
+        cursor.execute(sql)
+        cursor.commit()
+        log.info(f'Updated exchange key/secret to: key="{key}", secret="{secret}"')
 
     def check_api_expiry(self, discord_user) -> None:
         """Sort apikeys by expiry date"""

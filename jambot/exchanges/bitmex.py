@@ -13,7 +13,7 @@ from bitmex import bitmex
 from BitMEXAPIKeyAuthenticator import APIKeyAuthenticator
 from bravado.exception import HTTPBadRequest
 
-from jambot import config as cf
+from jambot import SYMBOL
 from jambot import functions as f
 from jambot import getlog
 from jambot.exchanges.exchange import SwaggerAPIException, SwaggerExchange
@@ -93,7 +93,7 @@ class BitmexAPIException(SwaggerAPIException):
 
 class Bitmex(SwaggerExchange):
     div = 1e8
-    default_symbol = cf.SYMBOL
+    default_symbol = SYMBOL
     conv_symbol = dict(BTCUSD=default_symbol)
     wallet_keys = dict(
         avail_margin='excessMargin',
@@ -189,10 +189,30 @@ class Bitmex(SwaggerExchange):
         symbol = symbol or self.default_symbol
         self.req('Position_updateLeverage', symbol=symbol, leverage=lev)
 
+    def get_active_instruments(self) -> List[Dict[str, Any]]:
+
+        # actual lot_size > lot_size / underlyingToPositionMultiplier ?
+
+        cols = ['symbol', 'underlying', 'quoteCurrency', 'isInverse', 'lotSize', 'tickSize',
+                'underlyingToPositionMultiplier']
+
+        data = self.req(
+            'Instrument.get',
+            filter=json.dumps(dict(state='Open')),
+            columns=json.dumps(cols))  # type: List[Dict[str, Any]]
+
+        for m in data:
+            # given lotSize needs to be converted for usdt
+            pos_multi = m['underlyingToPositionMultiplier'] or 1
+            m['lotSize'] = m['lotSize'] / pos_multi
+            m['base_currency'] = m['underlying']
+
+        return data
+
     def _get_instrument(self, **kw) -> dict:
         return self.req('Instrument.get', **kw)[0]
 
-    def get_filled_orders(self, symbol: str = cf.SYMBOL, starttime: dt = None) -> List[ExchOrder]:
+    def get_filled_orders(self, symbol: str = SYMBOL, starttime: dt = None) -> List[ExchOrder]:
         """Get orders filled since last starttime
 
         - NOTE This refreshes and sets exch orders to recent Filled/PartiallyFilled only
@@ -240,7 +260,7 @@ class Bitmex(SwaggerExchange):
 
     def next_funding(
             self,
-            symbol: str = cf.SYMBOL,
+            symbol: str = SYMBOL,
             with_hours: bool = False) -> Union[float, Tuple[float, int]]:
         """Get current funding rate from exchange"""
         result = self._get_instrument(symbol=symbol)
@@ -349,7 +369,7 @@ class Bitmex(SwaggerExchange):
             .reset_index() \
             .drop(columns=['num'])
 
-    def wait_candle_avail(self, interval: int = 1, symbol: str = cf.SYMBOL) -> None:
+    def wait_candle_avail(self, interval: int = 1, symbol: str = SYMBOL) -> None:
         """Wait till last period candle is available from exchange
             - rest api latency is ~15s
             - Just for testing, not used for anything
@@ -431,7 +451,7 @@ class Bitmex(SwaggerExchange):
 
     def get_candles(
             self,
-            symbol: str = cf.SYMBOL,
+            symbol: str = SYMBOL,
             starttime: dt = None,
             fltr: str = '',
             retain_partial: bool = False,
@@ -546,7 +566,7 @@ class Bitmex(SwaggerExchange):
             .pipe(pu.lower_cols) \
             .set_index(['symbol', 'timestamp'])
 
-    def df_funding_fees(self, symbol: str = cf.SYMBOL) -> pd.DataFrame:
+    def df_funding_fees(self, symbol: str = SYMBOL) -> pd.DataFrame:
         data = self.req(
             'Execution.getTradeHistory',
             symbol=symbol,

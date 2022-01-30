@@ -24,6 +24,7 @@ from jambot.tradesys.enums import OrderStatus
 from jambot.tradesys.exceptions import PositionNotClosedError
 from jambot.tradesys.orders import ExchOrder, Order
 from jgutils import functions as jf
+from jgutils import pandas_utils as pu
 from jgutils.secrets import SecretsManager
 
 if TYPE_CHECKING:
@@ -155,6 +156,25 @@ class Exchange(DictRepr, metaclass=ABCMeta):
             interval=interval,
             limit=2,
             max_pages=1)['timestamp'].iloc[0].to_pydatetime()
+
+    def instrument_data(self) -> pd.DataFrame:
+        """Get symbol data for all active symbols
+        - prec is price precision eg price = 95.345, prec = 3
+
+        Returns
+        -------
+        pd.DataFrame
+        """
+
+        cols = ['exchange', 'symbol', 'base_currency', 'quote_currency',
+                'is_inverse', 'lot_size', 'tick_size']
+
+        data = self.get_active_instruments()
+        return pd.DataFrame(data=data) \
+            .assign(exchange=self.exch_name) \
+            .pipe(pu.lower_cols)[cols] \
+            .set_index(['exchange', 'symbol']) \
+            .assign(prec=lambda x: x.tick_size.apply(lambda y: len(f'{y:.16f}'.rstrip('0').split('.')[-1])))
 
 
 class SwaggerAPIException(Exception):
@@ -649,7 +669,7 @@ class SwaggerExchange(Exchange, metaclass=ABCMeta):
             for k in ('qty', 'cum_qty'):
                 _qty = self.order_keys[k]
                 if not o[_qty] is None:
-                    o[_qty] = int(o['side'] * int(o[_qty]))
+                    o[_qty] = o['side'] * o[_qty]
 
             # add key to the order, excluding manual orders
             _link_id = self.order_keys['order_link_id']
@@ -680,6 +700,7 @@ class SwaggerExchange(Exchange, metaclass=ABCMeta):
             refresh: bool = False,
             **kw) -> Union[List[dict], List[ExchOrder], Dict[str, ExchOrder]]:
         """Get orders which match criterion
+        - TODO #35 need to enable set_orders to save multiple symbols
 
         Parameters
         ----------
@@ -708,7 +729,7 @@ class SwaggerExchange(Exchange, metaclass=ABCMeta):
 
         if refresh or self._orders is None:
             # kw = bybit stops/async
-            self.set_orders(**kw)
+            self.set_orders(symbol=symbol, **kw)
 
         var = {k: v for k, v in vars().items() if not v in ('as_exch_order', 'refresh', 'as_dict')}
 
