@@ -46,6 +46,7 @@ if True:
     from jambot.tables import Funding, Tickers
     from jambot.tradesys import backtest as bt
     from jambot.tradesys.strategies import ml as ml
+    from jambot.tradesys.symbols import Symbols
     from jambot.utils import skopt as sko
     from jambot.utils import styles as st
     from jambot.utils.mlflow import MlflowManager
@@ -56,6 +57,7 @@ if True:
     log = getlog(__name__)
 
     mfm = MlflowManager()
+    syms = Symbols()
 
     plt.rcParams |= {'figure.figsize': (12, 5), 'font.size': 14, 'lines.linewidth': 1.0}
     plt.style.use('dark_background')
@@ -65,22 +67,37 @@ if True:
 
 # %% - LOAD DF
 reload_df = False
+_symbol = 'BNBUSDT'
+_symbol = 'SOLUSDT'
+_symbol = 'DOGEUSDT'
+_symbol = 'AVAXUSDT'
+# _symbol = 'LUNAUSDT'
+# _symbol = 'XBTUSD'
+symbol = syms.symbol(_symbol, exch_name='bitmex')
+exch_name = 'binance'
+# exch_name = 'bitmex'
+
 if True:
     interval = 15
-    p = cf.p_data / 'feather/df.ftr'
+    p = cf.p_data / f'feather/df_{symbol.lower()}.ftr'
 
     # read from db or csv
     if reload_df or not p.exists() or dt.fromtimestamp(p.stat().st_mtime) < dt.now() + delta(days=-1):
-        log.info('Downloading from db')
+        log.info(f'Downloading {symbol} from db')
 
         em = ExchangeManager()
 
         df = Tickers().get_df(
-            symbol='XBTUSD',
+            symbol=symbol,
             startdate=dt(2017, 1, 1),
             interval=interval,
             funding=True,
+            exch_name=exch_name,
+            prnt=False,
             funding_exch=em.default('bitmex', refresh=False))
+
+        if not symbol == 'XBTUSD':
+            df = df.assign(funding_rate=0)
 
         df.reset_index(drop=False).to_feather(fl.check_path(p))
     else:
@@ -102,9 +119,6 @@ if True:
 
     n_periods = cf.dynamic_cfg()['target_n_periods']
     # n_periods = 10
-    p_ema = None  # 6
-    # Target = sg.TargetMeanEMA
-    # Target = sg.TargetMean
     if not regression:
         Target = sg.TargetUpsideDownside
     else:
@@ -246,14 +260,13 @@ else:
 df_pred = df_pred \
     .pipe(md.add_proba_trade_signal, regression=regression, n_smooth=None)
 
-strat = ml.Strategy.from_config(lev=3)
+strat = ml.Strategy.from_config(lev=3, symbol=symbol, keep_sym=True, default=True)
 
+# df_funding=Funding().get_df(exch_name='bitmex')
 bm = bt.BacktestManager(
     startdate=cf.D_SPLIT,
     strat=strat,
-    df=df_pred,
-    # df_funding=Funding().get_df(exch_name='bitmex')
-) \
+    df=df_pred) \
     .run(prnt=True, plot_balance=True)
 
 
@@ -302,7 +315,8 @@ spm.force_plot(sample_n=0)
 # spm.check_init()
 lgb.create_tree_digraph(
     # spm.model,
-    mm.models['lgbm'],
+    # mm.models['lgbm'],
+    model,
     show_info=['internal_count', 'leaf_count', 'data_percentage'],
     orientation='vertical')
 

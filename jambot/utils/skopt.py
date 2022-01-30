@@ -3,13 +3,15 @@ from collections import defaultdict
 from typing import *
 
 import mlflow
+import numpy as np
 import pandas as pd
 import skopt
 import yaml
 from skopt import plots
 from skopt.callbacks import CheckpointSaver
-from skopt.space import Integer, Real
+from skopt.space import Categorical, Integer, Real  # noqa
 
+from jambot import SYMBOL
 from jambot import config as cf
 from jambot import getlog
 from jambot import sklearn_utils as sk
@@ -30,8 +32,8 @@ if TYPE_CHECKING:
 
 log = getlog(__name__)
 
-ACTIVE_RESULT = 14
-MLFLOW_EXP = str(9)  # TODO make this set auto with new run
+ACTIVE_RESULT = 15
+MLFLOW_EXP = str(10)  # TODO make this set auto with new run
 p_skopt = cf.p_data / 'skopt'
 p_res = p_skopt / f'results{ACTIVE_RESULT}.pkl'
 
@@ -83,16 +85,16 @@ class ObjectCache(object):
 
 def get_space() -> List['Dimension']:
     space = [
-        Integer(6, 60, name='max_depth'),
-        Integer(20, 100, name='num_leaves'),
-        Integer(40, 100, name='n_estimators'),
-        Integer(1, 10, name='n_smooth'),
-        Integer(2, 40, name='n_target'),
-        Integer(2, 40, name='weights_n_periods'),
-        Integer(20, 80, name='num_feats'),
-        # Integer(12, 12 * 4, name='max_train_size'),
+        # Integer(6, 60, name='max_depth'),
+        # Integer(20, 100, name='num_leaves'),
+        # Integer(40, 100, name='n_estimators'),
+        # Integer(1, 10, name='n_smooth'),
+        # Integer(2, 40, name='n_target'),
+        # Integer(2, 40, name='weights_n_periods'),
+        # Integer(20, 80, name='num_feats'),
         Real(0.2, 0.9, name='filter_fit_quantile', prior='uniform'),
-        Real(-0.002, -0.0001, name='order_offset', prior='uniform')
+        # Real(-0.002, -0.0001, name='order_offset', prior='uniform'),
+        Categorical(np.array(range(1, 19)) * 24 * 4, name='batch_size')
     ]  # type: List[Dimension]
 
     return space
@@ -108,6 +110,8 @@ def objective(
         n_jobs: int = -1,
         **kw) -> Union[float, Tuple[float, float]]:
 
+    kw |= dict(num_feats=40, n_target=29, weights_n_periods=2, order_offset=-0.0014)
+
     # time penalty
     start = time.time()
 
@@ -118,14 +122,14 @@ def objective(
     n_smooth = kw.get('n_smooth', cfg['n_smooth_proba'])
 
     model = LGBMClsLog(
-        num_leaves=kw.get('num_leaves', 40),
-        n_estimators=kw.get('n_estimators', 80),
-        max_depth=kw.get('max_depth', 10),
+        num_leaves=kw.get('num_leaves', 80),
+        n_estimators=kw.get('n_estimators', 60),
+        max_depth=kw.get('max_depth', 6),
         boosting_type='dart',
         learning_rate=0.1).register(mfm)
 
     iter_kw = dict(
-        batch_size=24 * 4 * 8,
+        batch_size=kw.get('batch_size', 24 * 4 * 8),
         filter_fit_quantile=kw.get('filter_fit_quantile', 0.6),
         retrain_feats=False,
         split_date=cf.D_SPLIT,
@@ -160,7 +164,7 @@ def objective(
             .pipe(md.add_proba_trade_signal, n_smooth=n_smooth)
 
         strat = make_strat(
-            symbol=cf.SYMBOL,
+            symbol=SYMBOL,
             order_offset=kw.get('order_offset', -0.0006)).register(mfm)
 
         try:
@@ -188,7 +192,7 @@ def objective(
             mlflow.log_metrics(metrics)
             mlflow.log_params(params)
         except Exception as e:
-            log.error('filed backtest')
+            log.error('failed backtest')
             print(e)
 
         mfm.log_all(flush=True)

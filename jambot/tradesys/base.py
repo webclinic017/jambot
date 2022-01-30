@@ -69,7 +69,7 @@ class Observer(DictRepr, metaclass=ABCMeta):
 
         self._listeners = []
         self._duration = 0
-        self.c = None
+        self.c = None  # type: Tuple[float, float, float, float, int]
         self.parent = None
         self.timestamp_start = None
 
@@ -125,7 +125,7 @@ class Observer(DictRepr, metaclass=ABCMeta):
             return self.parent.get_parent(name)
 
     def on_attach(self):
-        """Called by parent when child is attached
+        """Called by child when attached
         - Perform any necessary actions on attach"""
         pass
 
