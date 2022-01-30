@@ -5,13 +5,14 @@ from typing import Union
 import numpy as np
 import pandas as pd
 
-from jambot import SYMBOL, display
+from jambot import SYMBOL, Num, display
 from jambot import functions as f
 from jambot import getlog
 from jambot.exchanges.exchange import SwaggerExchange
 from jambot.tradesys.base import Observer
 from jambot.tradesys.enums import OrderStatus
 from jambot.tradesys.orders import ExchOrder, Order
+from jambot.tradesys.symbols import Symbol
 from jambot.tradesys.wallet import Wallet
 from jgutils import functions as jf
 
@@ -22,18 +23,15 @@ class Broker(Observer):
     """Class to manage submitting and checking orders
     """
 
-    def __init__(self, symbol: str = SYMBOL, exch_name: str = 'bitmex', *args, **kw):
+    def __init__(self, symbol: Symbol = SYMBOL, exch_name: str = 'bitmex', *args, **kw):
         super().__init__(*args, **kw)
-        all_orders = {}
-        open_orders = {}
-        wallets = {}
+        self.all_orders = {}  # type: Dict[str, Order]
+        self.open_orders = {}  # type: Dict[str, Order]
+        self.wallets = {}  # type: Dict[str, Wallet]
 
         # temp set default wallet to only XBTUSD
-        symbol = symbol.lower()
-        wallets[symbol] = Wallet(symbol=symbol, exch_name=exch_name)
-        self.attach_listeners(wallets.values())
-
-        jf.set_self()
+        self.wallets[symbol] = Wallet(symbol=symbol, exch_name=exch_name)
+        self.attach_listeners(self.wallets.values())
 
     def get_wallet(self, symbol: str) -> Wallet:
         """Get wallet for specific trade pair (symbol)
@@ -47,7 +45,7 @@ class Broker(Observer):
         -------
         Wallet
         """
-        return self.wallets[symbol.lower()]
+        return self.wallets[symbol]
 
     def submit(self, orders: Union[list, Order]):
         """Submit single or multiple orders at once
@@ -90,7 +88,7 @@ class Broker(Observer):
             self.open_orders.pop(order.order_id)
             order.cancel()
 
-    def amend_order(self, order: Order, price: float = None, qty: int = None) -> None:
+    def amend_order(self, order: Order, price: float = None, qty: Num = None) -> None:
         """Change order price or quantity
 
         Parameters
@@ -98,7 +96,7 @@ class Broker(Observer):
         order : Order
         price : float
             new order price
-        qty : int
+        qty : Num
             new order quantity
         """
         if not price is None:
@@ -133,7 +131,8 @@ class Broker(Observer):
 
             # fill if order lies in current candle's range
             # NOTE technically this should just check if price > low or < high, per side
-            if self.c.low <= order.price <= self.c.high:
+            # if self.c.low <= order.price <= self.c.high:
+            if (order.is_sell and order.price < self.c.high) or (order.is_buy and order.price > self.c.low):
 
                 self.fill_order(order)
 
@@ -172,11 +171,17 @@ class Broker(Observer):
         """
         return list(self.open_orders.values())
 
-    def expected_orders(self, symbol: str, exch: SwaggerExchange = None) -> List[ExchOrder]:
+    def expected_orders(self, symbol: Symbol, exch: SwaggerExchange = None) -> List[ExchOrder]:
         """Get all market/limit orders to check for current timestamp
         - Must be called with user-specific Exchange
         - NOTE this will currently just scale orders based on max avail qtys
         - May need to support multiple orders in the future (eg close half of position)
+
+        Parameters
+        ----------
+        symbol : Symbol
+        exch : SwaggerExchange, optional
+            default None
 
         Returns
         -------
@@ -192,17 +197,11 @@ class Broker(Observer):
             wallet = self.get_wallet(symbol)
             wallet.set_exchange_data(exch)  # IMPORTANT
             expected_side = wallet.side
-            cur_qty = exch.current_qty(symbol=symbol)
+            cur_qty = exch.current_qty(symbol=symbol)  # type: int
             cur_side = np.sign(cur_qty)
             # last_price = exch.last_price(symbol=symbol)
 
             for o in orders:
-                # if o.is_limit:
-                #     # order is offside (price moved too fast from close)
-                #     # adjust close price to exch's last price + offset %
-                #     if (o.price - last_price) * o.side > 0:
-                #         o.price = f.get_price(pnl=o.offset, price=last_price, side=o.side)
-
                 if o.is_reduce:
                     if not o.is_stop:
                         o.qty = cur_qty * -1
@@ -242,7 +241,8 @@ class Broker(Observer):
                     limit_price = f.get_price(
                         pnl=self.parent.order_offset,
                         price=exch.last_price(symbol=symbol),
-                        side=expected_side)
+                        side=expected_side,
+                        tick_size=symbol.tick_size)
 
                     # # NOTE could enforce this as Limit only, keep retrying till success
                     lim_er = ExchOrder.limit(
