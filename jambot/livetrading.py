@@ -18,6 +18,7 @@ from jambot.ml.storage import ModelStorageManager
 from jambot.tables import Predictions, Tickers
 from jambot.tradesys import backtest as bt
 from jambot.tradesys.strategies.ml import Strategy
+from jambot.tradesys.symbols import Symbols
 from jambot.utils import google as gg
 from jgutils import functions as jf
 from jgutils import pandas_utils as pu
@@ -374,11 +375,12 @@ def run_strat_live(
     """
     name = 'lgbm'
     em = em or ExchangeManager()
+    syms = Symbols()
 
     # run strat for bmex first
     strat_bmex = run_strat(
         interval=interval,
-        symbol='XBTUSD',
+        symbol=syms.symbol('XBTUSD', exch_name='bitmex'),
         name=name,
         exch_name='bitmex',
         funding_exch=em.get_exch('bitmex', 'jayme'),
@@ -389,13 +391,17 @@ def run_strat_live(
         df=strat_bmex.df,
         df_new=get_df_raw(exch_name='bybit', symbol='BTCUSD', interval=interval))
 
-    strat_bbit = run_strat(name=name, df_pred=df_bbit, symbol='BTCUSD', exch_name='bybit')
+    strat_bbit = run_strat(
+        name=name,
+        df_pred=df_bbit,
+        symbol=syms.symbol('BTCUSD', exch_name='bybit'),
+        exch_name='bybit')
 
     m_strats = dict(bitmex=strat_bmex, bybit=strat_bbit)
 
     for exch in em.iter_exchanges(exch_name=exch_name, test_exchs=test_exchs):
         strat = m_strats[exch.exch_name]
-        symbol = exch.default_symbol
+        symbol = syms.symbol(exch.default_symbol, exch_name=exch.exch_name)
 
         # TODO will need to test this with multiple symbols eventually
         try:
