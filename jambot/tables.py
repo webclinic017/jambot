@@ -7,12 +7,12 @@ from typing import *
 import numpy as np
 import pandas as pd
 import pypika as pk
-from pypika import Query
+from pypika import MSSQLQuery as Query
 from pypika import functions as fn
 from pypika.terms import Criterion
 
+from jambot import SYMBOL
 from jambot import comm as cm
-from jambot import config as cf
 from jambot import functions as f
 from jambot import getlog
 from jambot.database import db
@@ -229,7 +229,7 @@ class Tickers(Table):
     def get_query(
             self,
             exch_name: str = 'bitmex',
-            symbol: str = cf.SYMBOL,
+            symbol: str = SYMBOL,
             period: int = 300,
             startdate: dt = None,
             enddate: dt = None,
@@ -295,7 +295,7 @@ class Tickers(Table):
             if funding_exch:
                 # NOTE XBTUSD will have to change
                 df = df.assign(
-                    funding_rate=lambda x: x.funding_rate.fillna(funding_exch.next_funding(cf.SYMBOL)))
+                    funding_rate=lambda x: x.funding_rate.fillna(funding_exch.next_funding(SYMBOL)))
 
         return df
 
@@ -435,7 +435,7 @@ class Predictions(Table):
             df: pd.DataFrame,
             # n_hours: int = 24,
             interval: int = 15,
-            symbol: str = cf.SYMBOL,
+            symbol: str = SYMBOL,
             test: bool = False) -> None:
         """Check max preds date in db and load new signals
 
@@ -495,3 +495,45 @@ class Predictions(Table):
 
         return self._get_max_dates(cols=cols, symbols=symbols, conds=conds) \
             .assign(interval=lambda x: x.interval.astype(int))
+
+
+class Symbols(Table):
+    name = 'symbols'
+    idx_cols = ['exchange', 'symbol']
+    cols = idx_cols + ['base_currency', 'quote_currency', 'is_inverse', 'lot_size', 'tick_size', 'prec']
+
+    def update_from_exch(
+            self,
+            exchs: Union[SwaggerExchange, List[SwaggerExchange]],
+            **kw) -> pd.DataFrame:
+        """Update table data from exchange based on max dates in table
+
+        Parameters
+        ----------
+        exchs : Union[SwaggerExchange, List[SwaggerExchange]]
+            single or multiple exchanges to get data from
+        """
+
+        # convert exchanges to dict for matching by num
+        dfs = []
+
+        for exch in jf.as_list(exchs):
+            # get exchange obj from exch_num, get candle data from exch
+            df = exch.instrument_data() \
+                .reset_index(drop=False)
+
+            if not df is None:
+                dfs.append(df)
+
+        df = pd.concat(dfs)  # type: pd.DataFrame
+
+        # drop everything per exchange before loading new
+        names = [exch.exch_name for exch in jf.as_list(exchs)]
+        a = pk.Table(self.name)
+        q = Query.from_(a).delete().where(a.exchange.isin(names))
+        cursor = db.cursor
+        cursor.execute(q.get_sql())
+        cursor.commit()
+        self.load_to_db(df=df)
+
+        return df
