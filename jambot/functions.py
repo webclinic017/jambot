@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING, Any, List, Union
 
 import pandas as pd
 
-from jambot import getlog
+from jambot import Num, getlog
 
 if TYPE_CHECKING:
     from pandas._libs.missing import NAType
@@ -61,12 +61,12 @@ def percent(x: float) -> Union[str, 'NAType']:
     return f'{x:.2%}' if pd.notna(x) else pd.NA
 
 
-def round_down(n: Union[int, float], nearest: Union[int, float] = 100) -> float:
+def round_down(n: Num, nearest: Num = 100) -> float:
     """Round down to nearest value (used for round contract sizes to nearest 100)
 
     Parameters
     ----------
-    n : Union[int, float]
+    n : Num
         number to round
     nearest : int, optional
         value to round to, by default 100
@@ -79,8 +79,9 @@ def round_down(n: Union[int, float], nearest: Union[int, float] = 100) -> float:
     return int(math.floor(n / nearest)) * nearest
 
 
-def get_price(pnl: float, price: float, side: int, prec: float = 0.5) -> float:
+def get_price(pnl: float, price: float, side: int, tick_size: float = 0.5) -> float:
     """Get price at percentage offset
+    - TODO fix precision
 
     Parameters
     ----------
@@ -90,6 +91,7 @@ def get_price(pnl: float, price: float, side: int, prec: float = 0.5) -> float:
         price to offset from
     side : int
         order side
+    tick_size : float
 
     Returns
     -------
@@ -101,79 +103,18 @@ def get_price(pnl: float, price: float, side: int, prec: float = 0.5) -> float:
     elif side == -1:
         price = price / (1 + pnl)
 
-    return round_down(n=price, nearest=prec)
+    return round_down(n=price, nearest=tick_size)
 
 
-def get_pnl_xbt(qty: int, entry_price: float, exit_price: float, isaltcoin: bool = False) -> float:
-    """Get profit/loss in base currency (xbt) from entry/exit
+def get_pnl(side: int, entry_price: float, exit_price: float):
+    # FIXME... how...?
 
-    Parameters
-    ----------
-    qty : int, optional
-        quantity of contracts
-    entry_price : float, optional
-    exit_price : float, optional
-    isaltcoin : bool, optional
-        alts calculated opposite, default False
-        - NOTE this should all be restructured to be relative to a base currency somehow
-
-    Returns
-    -------
-    float
-        amount of xbt gained/lossed
-    """
-    if 0 in (entry_price, exit_price):
-        return 0.0
-    elif not isaltcoin:
-        return round(qty * (1 / entry_price - 1 / exit_price), 8)
-    else:
-        # is altcoin
-        return round(qty * (exit_price - entry_price), 8)
-
-
-def get_pnl(side, entry_price, exit_price):
     if 0 in (entry_price, exit_price):
         return 0
     elif side == 1:
         return round((exit_price - entry_price) / entry_price, 4)
     else:
         return round((entry_price - exit_price) / exit_price, 4)
-
-
-def get_contracts(xbt, leverage, price, side, is_altcoin=False):
-    if not is_altcoin:
-        return int(xbt * leverage * price * side)
-    else:
-        return int(xbt * leverage * (1 / price) * side)
-
-
-def side(x):
-    return -1 if x < 0 else (1 if x > 0 else 0)
-
-
-def useful_keys(orders):
-    """return only useful keys from bitmex orders in dict form
-    - NOTE don't think this is needed anymore
-    """
-    keys = ('symbol', 'clOrdID', 'side', 'price', 'stopPx', 'ordType',
-            'execInst', 'ordStatus', 'qty', 'name', 'manual', 'orderID')
-
-    if not isinstance(orders, list):
-        islist = False
-        orders = [orders]
-    else:
-        islist = True
-
-    result = [{key: o[key] for key in o.keys() if key in keys} for o in orders]
-
-    if islist:
-        return result
-    else:
-        return result[0]
-
-
-def col(df, col):
-    return df.columns.get_loc(col)
 
 
 def inter_offset(interval: int = 1) -> delta:
