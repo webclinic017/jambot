@@ -1201,7 +1201,23 @@ class TargetUpsideDownside(TargetMaxMin):
         self.require_cols = dict(target=self.drop_cols)
 
 
-class TargetRatio(SignalGroup):
+class TargetPercentile(TargetClass):
+    """Is current close in upper or lower 50% of future n_periods
+    lmao this is the EXACT same as TargetUpdsideDownside...
+    """
+
+    def __init__(self, n_periods: int, **kw):
+        n = n_periods
+
+        kw['signals'] = dict(
+            target=lambda x: np.where(
+                ((x.close.rolling(n).max() + x.close.rolling(n).min()).shift(-n) / 2) - x.close > 0, 1, -1)
+        )
+
+        super().__init__(n_periods=n_periods, **kw)
+
+
+class TargetRatio(TargetClass):
     #  could either do ratio of up-downside
     #   OR difference % of up - downside
     #  using only close vs closes
@@ -1223,7 +1239,7 @@ class TargetRatio(SignalGroup):
             target=lambda x: 100 * (-2 + (x.close.rolling(n).max() + x.close.rolling(n).min()).shift(-n) / x.close)
         )
 
-        super().__init__(**kw)
+        super().__init__(n_periods=n_periods, **kw)
 
 
 def add_emas(df, emas: list = None):
