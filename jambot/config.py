@@ -48,7 +48,9 @@ COLORS = dict(
     lightyellow='#FFFFCC')
 
 
-def dynamic_cfg(symbol: str = 'XBTUSD', keys: Union[List[str], Dict[str, str]] = None) -> Dict[str, Any]:
+def dynamic_cfg(
+        symbol: str = 'XBTUSD',
+        keys: Union[List[str], Dict[str, str]] = None) -> Union[Dict[str, Any], Any]:
     """Get dynamic config values per symbol
     - TODO find a clean way to manage static/dynamic keys
 
@@ -67,10 +69,21 @@ def dynamic_cfg(symbol: str = 'XBTUSD', keys: Union[List[str], Dict[str, str]] =
     symbol = 'XBTUSD' if symbol == 'BTCUSD' else symbol
 
     with open(p_cfg, 'r') as file:
-        m = yaml.full_load(file)[symbol]
+        m = yaml.full_load(file)
+
+    if not symbol in m.keys():
+        print(f'Symbol: {symbol} not in model_config.yaml, using XBTUSD')
+        symbol = 'XBTUSD'
+
+    m = m[symbol]
 
     # filter to only requested keys
     if not keys is None:
+
+        # return single key
+        if isinstance(keys, str):
+            return m[keys]
+
         if isinstance(keys, list):
             m = {k: v for k, v in m.items() if k in keys}
         elif isinstance(keys, dict):
