@@ -1,16 +1,18 @@
 import time
 from typing import List
 
-from pytest import raises
+import pytest
+from pytest import fixture, mark, raises
 
+from jambot import functions as f
 from jambot import getlog
 from jambot.exchanges.exchange import SwaggerAPIException, SwaggerExchange
 from jambot.livetrading import ExchangeManager
 from jambot.tradesys import orders as ords
 from jambot.tradesys.enums import OrderStatus
 from jambot.tradesys.orders import ExchOrder
-
-from .__init__ import *
+from jambot.tradesys.symbols import Symbol, Symbols
+from tests import mul
 
 log = getlog(__name__)
 
@@ -19,6 +21,12 @@ log = getlog(__name__)
 def exch(exch_name: str, em: ExchangeManager) -> SwaggerExchange:
     """Exchange object"""
     return em.default(exch_name=exch_name, test=True, refresh=True)
+
+
+@fixture(scope='session')
+def syms(em: ExchangeManager) -> Symbols:
+    """Symbols manager, init once with ExchangeManager first"""
+    return em.syms
 
 
 @fixture(scope='session')
@@ -37,25 +45,27 @@ def test_exch_is_test(exch) -> None:
 
 
 @fixture(scope='session')
-def last_close(exch) -> float:
+def last_close(exch: SwaggerExchange, symbol: Symbol) -> float:
     """Get last close price offset by 15% higher to use as base for creating new orders"""
-    price = f.get_price(pnl=-0.15, price=exch.last_price(symbol=exch.default_symbol), side=-1)
+    price = f.get_price(pnl=-0.15, price=exch.last_price(symbol=symbol), side=-1)
     return round(price, 0)
 
 
 @fixture
-def exch_orders(last_close, symbol: str, exch_name: str) -> List[ExchOrder]:
+def exch_orders(last_close: float, symbol: Symbol, exch_name: str, syms: Symbols) -> List[ExchOrder]:
     """Create two bitmex orders for testing"""
     order_specs = [
-        dict(symbol=symbol, order_type='limit', qty=-100, price=last_close, name='test_ord_1'),
-        dict(symbol=symbol, order_type='limit', qty=-100, price=last_close + 100, name='test_ord_2'),
+        dict(symbol=symbol, order_type='limit', qty=mul(-1, symbol), price=last_close, name='test_ord_1'),
+        dict(symbol=symbol, order_type='limit', qty=mul(-1, symbol),
+             price=last_close + mul(1, symbol), name='test_ord_2'),
     ]
 
-    return ords.make_exch_orders(order_specs, exch_name=exch_name)
+    return ords.make_exch_orders(order_specs, exch_name=exch_name, syms=syms)
 
 
-def test_order_flow(exch: SwaggerExchange, exch_orders):
+def test_order_flow(exch: SwaggerExchange, exch_orders: List[ExchOrder], symbol: Symbol):
     """Test submitting, amending, cancelling and comparing in/out order specs for multiple orders"""
+    exch.cancel_all_orders(symbol=symbol)
 
     # submit orders
     out_orders = exch.submit_orders(exch_orders)
@@ -66,11 +76,11 @@ def test_order_flow(exch: SwaggerExchange, exch_orders):
             _compare_order_specs(order_in, order_out)
 
             # amend order
-            order_out.price += 100
-            order_out.increase_qty(100)
+            order_out.price += mul(1, symbol)
+            order_out.increase_qty(mul(1, symbol))
 
         amend_orders = exch.amend_orders(out_orders)
-        assert all(order_amend.qty == -200 for order_amend in amend_orders)
+        assert all(order_amend.qty == mul(-2, symbol) for order_amend in amend_orders)
 
     except Exception as e:
         pytest.fail(str(e))
@@ -111,7 +121,11 @@ def _compare_order_specs(order_1: ExchOrder, order_2: ExchOrder) -> None:
             order[{k}]={item_in}, order_out[{k}]={item_out}\n\n{order_1}\n{order_2}'
 
 
-def test_reconcile_orders(exch: SwaggerExchange, last_close: float, symbol: str) -> None:
+def test_reconcile_orders(
+        exch: SwaggerExchange,
+        last_close: float,
+        symbol: Symbol,
+        syms: Symbols) -> None:
     """Test amending/cancelling/submitting orders from strategy
     - TODO test position offside > add lim_open_er
     - TODO test wallets have been refreshed to set total_balance_margin
@@ -119,28 +133,32 @@ def test_reconcile_orders(exch: SwaggerExchange, last_close: float, symbol: str)
     - create matched, missing, and not_matched orders for limit/stop/market
     """
     if not exch.current_qty(symbol=symbol) == 0:
-        exch.close_position()
+        exch.close_position(symbol=symbol)
 
-    exch.cancel_all_orders()
+    exch.cancel_all_orders(symbol=symbol)
     # TODO test current_qty somewhere big oops made it into prod!!
+    # NOTE could set qtys/price dynamic per symbol by checking exch max qty but too lazy
 
     try:
         # submit test orders
         order_specs_test = [
-            dict(symbol=symbol, order_type='limit', qty=-1234, price=last_close, name='limit_1'),  # amend
-            dict(symbol=symbol, order_type='limit', qty=-2200, price=last_close + 400, name='limit_2'),  # cancel
+            dict(symbol=symbol, order_type='limit', qty=mul(-12.34, symbol), price=last_close, name='limit_1'),  # amend
+            dict(symbol=symbol, order_type='limit', qty=mul(-22, symbol),
+                 price=last_close + mul(4, symbol), name='limit_2'),  # cancel
         ]
 
         test_orders = exch.submit_orders(order_specs_test)
 
         # set 'expected' orders (from strat)
         order_specs_expected = [
-            dict(symbol=symbol, order_type='limit', qty=-1500, price=last_close + 200, name='limit_1'),  # amend
-            dict(symbol=symbol, order_type='stop', qty=1234, price=last_close + 500, name='stop_1'),  # submit
-            dict(symbol=symbol, order_type='market', qty=-2400, name='market_3'),  # submit
+            dict(symbol=symbol, order_type='limit', qty=mul(-15, symbol),
+                 price=last_close + mul(-2, symbol), name='limit_1'),  # amend
+            dict(symbol=symbol, order_type='stop', qty=mul(12.34, symbol),
+                 price=last_close + mul(5, symbol), name='stop_1'),  # submit
+            dict(symbol=symbol, order_type='market', qty=mul(-1, symbol), name='market_3'),  # submit
         ]
 
-        expected_orders = ords.make_exch_orders(order_specs_expected, exch_name=exch.exch_name)
+        expected_orders = ords.make_exch_orders(order_specs_expected, exch_name=exch.exch_name, syms=syms)
 
         # reconcile - cancel, amend, submit
         exch.reconcile_orders(symbol=symbol, expected_orders=expected_orders, bybit_async=True, bybit_stops=True)
@@ -148,10 +166,11 @@ def test_reconcile_orders(exch: SwaggerExchange, last_close: float, symbol: str)
         # assert correct orders submitted, cancelled, and amended
         if exch.exch_name == 'bybit':
             # bybit api seems to be too slow even with async orders (only sometimes)
-            log.warning('Sleeping 10s for Bybit')
-            time.sleep(10)
+            log.warning('Sleeping 20s for Bybit')
+            time.sleep(20)
 
         final_orders = exch.get_orders(
+            symbol=symbol,
             bot_only=True,
             new_only=False,
             as_exch_order=True,
@@ -180,8 +199,8 @@ def test_reconcile_orders(exch: SwaggerExchange, last_close: float, symbol: str)
 
     finally:
         # cancel everything
-        exch.close_position()
-        exch.cancel_all_orders()
+        exch.close_position(symbol=symbol)
+        exch.cancel_all_orders(symbol=symbol)
 
 
 @mark.skip
@@ -193,16 +212,17 @@ def test_cancel_warning(exch, last_close):
     return
 
 
-def test_api_exception(exch: SwaggerExchange, symbol: str):
+def test_api_exception(exch: SwaggerExchange, symbol: Symbol, syms: Symbols):
     """Test correct exception raised with invalid data to exchange"""
 
     # orderID length too short
     with raises(SwaggerAPIException):
-        kw = {exch.order_keys['order_id']: '1234', 'symbol': symbol}
-        exch.req('Order.cancel', **kw)
+        order_spec = {exch.order_keys['order_id']: '1234', 'symbol': symbol}
+        # exch.req('Order.cancel', **kw)
+        exch.cancel_orders(orders=order_spec)
 
     # invalid price
     with raises(SwaggerAPIException):
-        spec = dict(order_type='limit', symbol=symbol, price=-5, qty=1000, name='test_excep')
-        orders = ords.make_exch_orders(order_specs=spec, exch_name=exch.exch_name)
+        spec = dict(order_type='limit', symbol=symbol, price=-5, qty=mul(1, symbol), name='test_excep')
+        orders = ords.make_exch_orders(order_specs=spec, exch_name=exch.exch_name, syms=syms)
         exch.submit_orders(orders)
