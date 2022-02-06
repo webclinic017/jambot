@@ -1,9 +1,14 @@
+from typing import *
+
 from jambot.tradesys import orders as ords
 from jambot.tradesys.broker import Broker
 from jambot.tradesys.enums import TradeSide
 from jambot.tradesys.trade import Trade
 
 from .__init__ import *
+
+if TYPE_CHECKING:
+    from jambot.tradesys.symbols import Symbol
 
 
 @fixture
@@ -12,15 +17,15 @@ def broker(clock):
 
 
 @fixture
-def trade(broker, clock):
-    return Trade(symbol=SYMBOL, broker=broker, parent_listener=clock)
+def trade(broker, clock, symbol: 'Symbol' = SYMBOL):
+    return Trade(symbol=symbol, broker=broker, parent_listener=clock)
 
 
-def test_init(trade):
-    assert trade.symbol == SYMBOL
+def test_init(trade, symbol: 'Symbol' = SYMBOL):
+    assert trade.symbol == symbol
 
 
-def test_orders(trade: Trade, clock: Clock):
+def test_orders(trade: Trade, clock: Clock, symbol: 'Symbol' = SYMBOL):
     """Test orders are added and removed correctly when filled"""
 
     order_specs = [
@@ -28,7 +33,7 @@ def test_orders(trade: Trade, clock: Clock):
         dict(price=120, qty=1000, name='o2')
     ]
 
-    orders = ords.make_orders(order_specs, order_type='market', symbol=SYMBOL)
+    orders = ords.make_orders(order_specs, order_type='market', symbol=symbol)
     o1, o2 = orders[0], orders[1]
 
     trade.add_orders(orders)

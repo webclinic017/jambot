@@ -8,9 +8,9 @@ log = getlog(__name__)
 
 
 @fixture(scope='session')
-def em() -> ExchangeManager:
+def em(syms) -> ExchangeManager:
     """Create ExchangeManager"""
-    return ExchangeManager()
+    return ExchangeManager(syms=syms)
 
 
 def test_iter_exchanges(em: ExchangeManager):
