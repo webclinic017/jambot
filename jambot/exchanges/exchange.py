@@ -23,12 +23,15 @@ from jambot.tradesys import orders as ords
 from jambot.tradesys.enums import OrderStatus
 from jambot.tradesys.exceptions import PositionNotClosedError
 from jambot.tradesys.orders import ExchOrder, Order
+from jambot.tradesys.symbols import Symbol
 from jgutils import functions as jf
 from jgutils import pandas_utils as pu
 from jgutils.secrets import SecretsManager
 
 if TYPE_CHECKING:
     from bravado.http_future import HttpFuture
+
+    from jambot.tradesys.symbols import Symbols
 
 log = getlog(__name__)
 
@@ -46,6 +49,7 @@ class Exchange(DictRepr, metaclass=ABCMeta):
             api_key: str = None,
             api_secret: str = None,
             discord: str = None,
+            syms: 'Symbols' = None,
             **kw):
 
         self.exch_name = self.__class__.__name__.lower()
@@ -65,6 +69,7 @@ class Exchange(DictRepr, metaclass=ABCMeta):
         self.test = test
         self.pct_balance = pct_balance
         self.discord = discord
+        self.syms = syms
 
     @classmethod
     def default(cls, test: bool = True, refresh: bool = True, **kw) -> 'Exchange':
@@ -346,7 +351,7 @@ class SwaggerExchange(Exchange, metaclass=ABCMeta):
         """Set margin balance, current position info, all orders"""
         self.set_total_balance()
         self.set_positions()
-        self.set_orders()
+        self.set_orders()  # FIXME symbol missing, uses default!!
 
     @abstractmethod
     def req(self, request: str, **kw) -> Any:
@@ -395,6 +400,12 @@ class SwaggerExchange(Exchange, metaclass=ABCMeta):
 
         # filter correct keys to submit
         kw = {k: v for k, v in kw.items() if k in func.operation.params.keys()}
+
+        # make sure Symbol converted to str
+        for k, v in kw.items():
+            if k == 'symbol' and isinstance(v, Symbol):
+                kw[k] = str(v)
+
         return func(**kw)
 
     def _reapply_auth(self, request: 'HttpFuture') -> 'HttpFuture':
@@ -726,6 +737,7 @@ class SwaggerExchange(Exchange, metaclass=ABCMeta):
         """
         if symbol is None:
             symbol = self.default_symbol
+            log.warning(f'get_orders using default symbol: {symbol}')
 
         if refresh or self._orders is None:
             # kw = bybit stops/async
@@ -835,7 +847,7 @@ class SwaggerExchange(Exchange, metaclass=ABCMeta):
                 raise AttributeError(
                     f'Invalid order specs returned from {self.exch_name}. {type(item)}: {item}')
 
-        return ords.make_exch_orders(order_specs, exch_name=self.exch_name)
+        return ords.make_exch_orders(order_specs, exch_name=self.exch_name, syms=self.syms)
 
     def convert_exch_keys(self, order_specs: List[Union[ExchOrder, dict]]) -> List[dict]:
         """Convert ExchOrder or dict to exch-specific keys
@@ -968,7 +980,7 @@ class SwaggerExchange(Exchange, metaclass=ABCMeta):
         for o in jf.as_list(orders):
             # convert dict specs to ExchOrder
             if not isinstance(o, ExchOrder):
-                o = ords.make_exch_orders(order_specs=o, exch_name=self.exch_name)[0]
+                o = ords.make_exch_orders(order_specs=o, exch_name=self.exch_name, syms=self.syms)[0]
 
             _orders.append(o)
 
@@ -1059,6 +1071,7 @@ class SwaggerExchange(Exchange, metaclass=ABCMeta):
 
     def cancel_all_orders(self, symbol: str = None) -> List[ExchOrder]:
         """Cancel all open orders
+        - Only used for testing, bybit symbol cannot be None
 
         Parameters
         ----------
