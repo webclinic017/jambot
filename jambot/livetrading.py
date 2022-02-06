@@ -32,13 +32,14 @@ log = getlog(__name__)
 class ExchangeManager(DictRepr):
     m_exch = dict(bitmex=Bitmex, bybit=Bybit)
 
-    def __init__(self, df_users: pd.DataFrame = None):
+    def __init__(self, df_users: pd.DataFrame = None, syms: Symbols = None):
         self._exchanges = {}
 
         if df_users is None:
             df_users = gg.UserSettings(auth=False).get_df(load_api=True)
 
         self.df_users = df_users
+        self.syms = syms or Symbols()  # init Symbols manager
 
     def to_dict(self) -> dict:
         return dict(init_exchanges=len(self.list_exchs))
@@ -109,7 +110,7 @@ class ExchangeManager(DictRepr):
 
         # NOTE only set up for XBT currently
         Exchange = self.m_exch[exch_name]
-        exch = Exchange.from_dict(user=user, m=m, **kw)
+        exch = Exchange.from_dict(user=user, m=m, syms=self.syms, **kw)
 
         # save to exchange cache
         self.exchanges[k] = exch
@@ -290,7 +291,7 @@ def get_df_raw(
         symbol=symbol,
         startdate=startdate,
         interval=interval,
-        funding=True if exch_name == 'bitmex' else False,
+        # funding=True if exch_name == 'bitmex' else False,
         funding_exch=funding_exch)
 
 
@@ -323,7 +324,7 @@ def get_df_pred(
 
     # load saved/trained models from blob storage and add pred signals
     return ModelStorageManager(test=test) \
-        .df_pred_from_models(df=df, name=name)
+        .df_pred_from_models(df=df, name=name, symbol=symbol)
 
 
 def run_strat(
