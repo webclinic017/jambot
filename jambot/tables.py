@@ -24,6 +24,8 @@ if TYPE_CHECKING:
 
 log = getlog(__name__)
 
+# TODO set up funding rate data for all symbols
+
 
 class Table(object, metaclass=ABCMeta):
     """Class to represent database table"""
@@ -195,7 +197,7 @@ class Table(object, metaclass=ABCMeta):
             if not test:
                 self.load_to_db(df=df)
 
-        msg = f'Imported [{nrows:,.0f}] row(s) for [{nsymbols}] symbol(s)'
+        msg = f'{self.name}: Imported [{nrows:,.0f}] row(s) for [{nsymbols}] symbol(s)'
         log.info(msg)
 
         if self.name == 'funding':
@@ -218,10 +220,12 @@ class Table(object, metaclass=ABCMeta):
 
 class Tickers(Table):
     name = 'bitmex'
-    cols = ['timestamp', 'open', 'high', 'low', 'close', 'volume']
-    idx_cols = 'timestamp'
-    dtypes = {c: np.float32 for c in cols[1:]}
+    idx_cols = ['symbol', 'timestamp']
+    # idx_cols = ['timestamp']
+    cols = idx_cols + ['open', 'high', 'low', 'close', 'volume']
+    dtypes = {c: np.float32 for c in cols[len(idx_cols):]}
     dtypes['volume'] = pd.Int64Dtype()
+    dtypes['symbol'] = pd.CategoricalDtype()
 
     def __init__(self):
         super().__init__()
@@ -229,16 +233,42 @@ class Tickers(Table):
     def get_query(
             self,
             exch_name: str = 'bitmex',
-            symbol: str = SYMBOL,
+            symbols: Union[str, List[str]] = SYMBOL,
             period: int = 300,
             startdate: dt = None,
             enddate: dt = None,
             interval: int = 15,
-            funding: bool = False,
+            # funding: bool = False,
             **kw) -> pd.DataFrame:
+        """Get df of OHLCV + funding_rate
+        - funding_exch passed to process_df to fill last funding row
+        - TODO add SYMBOL to index and fix everything everywhere
+            - eg allow symbols = dict(bitmex=['XBTUSD'])
 
-        # TODO allow symbols = dict(bitmex=['XBTUSD'])
+        Parameters
+        ----------
+        exch_name : str, optional
+            default 'bitmex'
+        symbols : Union[str, List[str]], optional
+            default SYMBOL
+        period : int, optional
+            last n periods, default 300 (only used if startdate not given)
+        startdate : dt, optional
+            default None
+        enddate : dt, optional
+            default None
+        interval : int, optional
+            default 15
+
+        Returns
+        -------
+        pd.DataFrame
+        """
         # this could actually just be a "build conds"
+
+        # FIXME temp solution use binance for other symbols
+        if not symbols == 'XBTUSD' and exch_name == 'bitmex':
+            exch_name = 'binance'
 
         if startdate is None:
             startdate = f.inter_now(interval=interval) + delta(hours=abs(period) * -1)
@@ -251,14 +281,13 @@ class Tickers(Table):
         q = Query.from_(a)
         cols = copy.copy(self.cols)
 
-        # add funding column
-        if funding:
-            b = pk.Table('funding')
-            q = q \
-                .left_join(b) \
-                .on_field('exchange', 'symbol', 'timestamp')
+        # add funding column, will be NaN if not present
+        b = pk.Table('funding')
+        q = q \
+            .left_join(b) \
+            .on_field('exchange', 'symbol', 'timestamp')
 
-            cols.append(b.funding_rate)
+        cols.append(b.funding_rate)
 
         conds = [
             a.interval == interval,
@@ -266,8 +295,9 @@ class Tickers(Table):
             a.exchange == self.exch_keys[exch_name]
         ]
 
-        if not symbol is None:
-            conds.append(a.symbol == symbol)
+        if not symbols is None:
+            conds.append(a.symbol.isin(jf.as_list(symbols)))
+            # conds.append(a.symbol == symbols)
 
         if not enddate is None:
             conds.append(a.timestamp <= enddate)
@@ -287,13 +317,15 @@ class Tickers(Table):
         -------
         pd.DataFrame
         """
+        return df.assign(funding_rate=0)
 
         # backfill funding rate
         if 'funding_rate' in df.columns:
             df = df.assign(funding_rate=lambda x: x.funding_rate.backfill().astype(np.float32))
 
             if funding_exch:
-                # NOTE XBTUSD will have to change
+                # FIXME XBTUSD will have to change
+                # TODO grouby symbol before adding latest funding
                 df = df.assign(
                     funding_rate=lambda x: x.funding_rate.fillna(funding_exch.next_funding(SYMBOL)))
 
@@ -309,6 +341,12 @@ class Tickers(Table):
         cols = ['exchange', 'interval', 'symbol']
         conds = [a.interval == interval]
 
+        # filter max_dates to specific exchanges
+        if not exchs is None:
+            exch_names = [self.exch_keys[exch.exch_name] for exch in jf.as_list(exchs)]
+            conds.append(self.a.exchange.isin(exch_names))
+
+        # see if ohlc data exists for symbol/exchange
         df = self._get_max_dates(cols=cols, symbols=symbols, conds=conds) \
             .assign(interval=lambda x: x.interval.astype(int))
 
