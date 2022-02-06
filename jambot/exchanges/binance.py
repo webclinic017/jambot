@@ -73,10 +73,12 @@ class Binance(Exchange):
                     last_starttime = int(str(_data[-1][0])[:-3])  # last timestamp, strip ms '000'
                     temp_starttime = dt.fromtimestamp(last_starttime, tz.utc) + f.inter_offset(interval)  # add offset
                     _starttime = int(temp_starttime.timestamp())  # back to int
-                    log.info(f'symbol: {symbol}, starttime: {temp_starttime}, len_data: {len(_data)}')
+                    log.info(f'{symbol}: starttime={temp_starttime}, len_data={len(_data)}')
                 except Exception as e:
                     log.warning(e)
-                    log.warning(f'starttime: {_starttime}, endtime: {endtime}, len_data: {len(data)}')
+                    log.warning(
+                        'Failed to get candle data. '
+                        + f'starttime: {_starttime}, endtime: {endtime},len_data: {len(data)}')
                     break
 
             data = [d[:num_cols] for d in data][:-1]  # only keep needed cols, drop last partial candle
