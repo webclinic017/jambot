@@ -486,8 +486,8 @@ class ExchOrder(BaseOrder, DictRepr, Serializable):
             exec_inst=self.exec_inst_str,
             side=self.side_str,
             time_in_force='GoodTillCancel',
-            p_r_price=str(self.price),
-            p_r_qty=str(self.qty))
+            p_r_price=self.price,
+            p_r_qty=self.qty)
 
         # market order doesn't have price
         # stop needs stopPx only
@@ -499,6 +499,9 @@ class ExchOrder(BaseOrder, DictRepr, Serializable):
         if self.is_reduce:
             m['reduce_only'] = True
             m['close_on_trigger'] = True
+        else:
+            m['reduce_only'] = False
+            m['close_on_trigger'] = False
 
         return m
 
@@ -805,7 +808,7 @@ class StopOrder(Order):
         return stop_order
 
 
-def make_order(order_type: 'OrderType', **kw) -> Order:
+def make_order(order_type: Union['OrderType', str], **kw) -> Order:
     """Make single order from dict of order_specs
 
     Parameters
@@ -829,6 +832,7 @@ def make_orders(
         order_specs: Union[List[dict], dict],
         as_exch_order: bool = False, **kw) -> Union[List[Order], List[ExchOrder]]:
     """Make multiple orders
+    - NOTE symbol must be Symbol
 
     Parameters
     ----------
