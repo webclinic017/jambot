@@ -25,10 +25,11 @@ def test_tickers(ticker: Tickers, em: ExchangeManager):
         symbol='XBTUSD',
         interval=15,
         startdate=dt.now() + delta(days=-90),
-        funding=True,
+        # funding=True,
         funding_exch=em.default('bitmex'))
 
-    assert df.shape[1] == 6
+    assert df.shape[1] == 6, 'Incorrect number of columns loaded'
+    assert df.shape[0] >= 1, 'No OHLCV data loaded from database'
 
 
 def test_update_exchange(ticker: Tickers, funding: Funding, em: ExchangeManager):
