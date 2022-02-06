@@ -47,7 +47,8 @@ class Wallet(Observer):
     """
     exch_fees = dict(
         bitmex=(0.0001, -0.0005),
-        bybit=(0.00025, -0.00075))
+        bybit=(0.00025, -0.00075),
+        binance=(0.00025, -0.00075))  # binance not accurate, just for convenience
 
     def __init__(
             self,
