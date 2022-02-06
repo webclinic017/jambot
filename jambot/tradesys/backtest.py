@@ -64,6 +64,10 @@ class BacktestManager(Clock, MlflowLoggable):
                 'rolling_proba', 'signal']
         df = df.pipe(pu.clean_cols, cols)
 
+        # drop symbol from index ('symbol', 'timestamp') if exists
+        if 'symbol' in df.index.names():
+            df = df.droplevel('symbol')  # type: pd.DataFrame
+
         self.end_session = SignalEvent()
 
         # actual backtest, not just admin info
