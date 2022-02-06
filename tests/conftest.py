@@ -8,6 +8,8 @@ import pytest
 from discord import Webhook
 from pytest import fixture, mark, raises  # noqa
 
+from jambot.tradesys.symbols import Symbol, Symbols
+
 
 def set_fixture_modules():
     """Make all fixtures available from any files"""
@@ -49,10 +51,30 @@ def pytest_addoption(parser):
         default='bitmex',
         choices=('bybit', 'bitmex'))
 
+    parser.addoption(
+        '--symbol',
+        action='store',
+        default='XBTUSD',
+        # choices=('XBTUSD', 'BNBUSDT')
+    )
+
 
 @fixture(scope='session')
 def exch_name(request):
     return request.config.getoption('--exch_name')
+
+
+@fixture(scope='session')
+def syms() -> Symbols:
+    """Symbols manager"""
+    return Symbols()
+
+
+@fixture(scope='session')
+def symbol(request, syms: Symbols, exch_name: str) -> Symbol:
+    """Get default symbol obj"""
+    symbol = request.config.getoption('--symbol')
+    return syms.symbol(symbol, exch_name=exch_name)
 
 
 def pytest_collection_modifyitems(config, items):
