@@ -13,6 +13,7 @@ from jambot import sklearn_utils as sk
 from jambot.common import DictRepr
 from jambot.ml import models as md
 from jambot.tables import Tickers
+from jambot.tradesys.symbols import Symbol
 from jambot.weights import WeightsManager
 from jgutils import fileops as jfl
 from jgutils import pandas_utils as pu
@@ -84,53 +85,78 @@ class ModelStorageManager(DictRepr):
         if self.d_lower is None:
             self.d_lower = cf.D_LOWER
 
-    def local_models(self, name: str = NAME) -> List['Path']:
-        """Get sorted list of all local models"""
-        return sorted(self.p_model.glob(f'*{name}*'))
+    def local_models(self, symbol: str = None) -> List['Path']:
+        """Get sorted list of all local models
 
-    @property
-    def local_model_names(self) -> List[str]:
-        """Get list of local model names to compare with azure storage"""
-        return [p.name for p in self.local_models()]
+        Parameters
+        ----------
+        symbol : str, optional
+            filter local models by symbol name
+        """
+        symbol = symbol or ''
+        return sorted(self.p_model.glob(f'*{symbol.lower()}*'))
 
-    def get_oldest_model(self, name: str = NAME) -> 'Path':
-        """Get oldest model path"""
-        return self.local_models(name)[0]
+    def local_model_names(self, symbol: str = None) -> List[str]:
+        """Get list of local model names to compare with azure storage
+        - only used for testing
 
-    @property
-    def n_models_local(self, name: str = NAME) -> int:
+        Parameters
+        ----------
+        symbol : str, optional
+            default 'XBTUSD'
+        """
+        return [p.name for p in self.local_models(symbol=symbol)]
+
+    def get_oldest_model(self, symbol: str = SYMBOL) -> 'Path':
+        """Get oldest model path
+
+        Parameters
+        ----------
+        symbol : str, optional
+            default 'XBTUSD'
+        """
+        return self.local_models(symbol)[0]
+
+    def n_models_local(self, symbol: str = SYMBOL) -> int:
         """Count of local model paths"""
-        return len(self.local_models(name))
+        return len(self.local_models(symbol))
 
     def parse_date(self, p: 'Path') -> dt:
         """Get date from model path"""
         return dt.strptime(p.stem.split('_')[-1], self.dt_format_path)
 
-    def d_latest_model(self, name: str = NAME) -> dt:
+    def d_latest_model(self, symbol: str = SYMBOL) -> dt:
         """Get date of latest model"""
-        return self.parse_date(p=self.local_models(name)[-1])
+        p_models = self.local_models(symbol)
+        if p_models:
+            return self.parse_date(p=p_models[-1])
+        else:
+            # no saved models exist, return low date
+            return dt(2000, 1, 1)
 
-    def clean(self, last_only: bool = True, name: str = NAME) -> None:
+    def clean(self, last_only: bool = True, symbol: str = SYMBOL) -> None:
         """Clean all or oldest saved models in models dir
 
         Parameters
         ----------
         last_only : bool, optional
             only delete oldest model path, default True
-        name : str, optional
-            default NAME
+        symbol : str, optional
+            default 'XBTUSD'
         """
         if last_only:
-            p = self.get_oldest_model(name=name)
+            p = self.get_oldest_model(symbol=symbol)
             p.unlink()
         else:
-            jfl.clean_dir(self.p_model)
+            for p in self.local_models(symbol=symbol):
+                p.unlink()
 
     def fit_save_models(
             self,
             em: 'ExchangeManager',
             df: pd.DataFrame = None,
             name: str = NAME,
+            symbol: Symbol = SYMBOL,
             interval: int = 15,
             overwrite_all: bool = False) -> None:
         """Retrain single new, or overwrite all models
@@ -144,7 +170,9 @@ class ModelStorageManager(DictRepr):
         df : pd.DataFrame, optional
             df with OHLC from db, default None
         name : str, optional
-            default NAME
+            default 'lgbm'
+        symbol : Symbol, optional
+            default Symbol('XBTUSD', 'bitmex')
         interval : int, optional
             default 15
         overwrite_all : bool, optional
@@ -153,20 +181,21 @@ class ModelStorageManager(DictRepr):
         interval : int, optional
             default 15
         """
-        self.bs.download_dir(p=self.p_model, mirror=True)
+        self.bs.download_dir(p=self.p_model, mirror=True, match=symbol)
 
         # check to make sure all models downloaded
-        if self.n_models_local < self.n_models:
+        if self.n_models_local(symbol) < self.n_models:
             overwrite_all = True
 
-        log.info(f'running fit_save_models, overwrite_all={overwrite_all}')
+        log.info(f'running fit_save_models: symbol={symbol}, overwrite_all={overwrite_all}')
 
         if df is None:
             df = Tickers().get_df(
-                symbol=SYMBOL,
+                symbol=symbol,
                 startdate=self.d_lower,
                 interval=interval,
-                funding=True,
+                exch_name=symbol.exch_name,
+                # funding=True,
                 funding_exch=em.default('bitmex')) \
                 .pipe(md.add_signals, name=name, drop_ohlc=False, use_important_dynamic=True)
 
@@ -185,16 +214,18 @@ class ModelStorageManager(DictRepr):
             + delta(hours=reset_hour_offset)  # get date only eg '2022-01-01' then add delta hoursg
         # print('d_upper:', d_upper)  # 2022-01-17 10:00:00
 
-        if self.d_latest_model(name=name) < d_upper or overwrite_all:
-            self.clean(last_only=not overwrite_all)
+        if self.d_latest_model(symbol=symbol) < d_upper or overwrite_all:
+            self.clean(symbol=symbol, last_only=not overwrite_all)
 
         # get weights for fit params and filter_fit_quantile
-        wm = WeightsManager.from_config(df=df)
+        wm = WeightsManager.from_config(df=df, symbol=symbol)
 
         # NOTE funding_rate isn't dropped by DROP_COLS
         df = df \
             .pipe(pu.safe_drop, cols=cf.DROP_COLS) \
-            .pipe(wm.filter_quantile, quantile=cf.dynamic_cfg()['filter_fit_quantile'])
+            .pipe(
+                wm.filter_quantile,
+                quantile=cf.dynamic_cfg(symbol=symbol, keys='filter_fit_quantile'))
 
         cut_mins = {1: 60, 15: 15}[self.interval]  # to offset .loc[:d] for each prev model/day
         model = md.make_model(name)
@@ -215,15 +246,14 @@ class ModelStorageManager(DictRepr):
             model.fit(x_train, y_train, sample_weight=wm.weights.loc[x_train.index])
 
             # save - add back cut hrs so always consistent
-            # TODO name models with symbol
-            fname = f'{name}_{d + delta(hours=cut_hrs):{self.dt_format_path}}'
+            fname = f'{symbol.lower()}_{d + delta(hours=cut_hrs):{self.dt_format_path}}'
             p_save = jfl.save_pickle(model, p=self.p_model, name=fname)
             log.info(f'saved model: {fname}')
 
         # mirror saved models to azure blob
-        self.bs.upload_dir(p=self.p_model, mirror=True)
+        self.bs.upload_dir(p=self.p_model, mirror=True, match=symbol)
 
-    def df_pred_from_models(self, df: pd.DataFrame, name: str) -> pd.DataFrame:
+    def df_pred_from_models(self, df: pd.DataFrame, name: str, symbol: str) -> pd.DataFrame:
         """Load all models, make iterative predictions
         - probas added in a bit of a unique way here, one model slice at a time instead of all at once
 
@@ -233,19 +263,20 @@ class ModelStorageManager(DictRepr):
             truncated df (~400 rows?) with signals added and OHLC cols dropped, for live trading
         name : str
             model name
+        symbol : str
 
         Returns
         -------
         pd.DataFrame
             df with all predictions added
         """
-        self.bs.download_dir(p=self.p_model, mirror=True)
+        self.bs.download_dir(p=self.p_model, mirror=True, match=symbol)
 
         cfg = md.model_cfg(name)
         target = cfg['target']
         pred_dfs = []
 
-        p_models = sorted(self.p_model.glob(f'*{name}*'))
+        p_models = self.local_models(symbol=symbol)
 
         if len(p_models) == 0:
             raise RuntimeError(f'No saved models found at: {self.p_model}')
@@ -253,7 +284,6 @@ class ModelStorageManager(DictRepr):
         for i, p in enumerate(p_models):
 
             # get model train date from filepath
-            # d = dt.strptime(p.stem.split('_')[-1], self.dt_format_path)
             d = self.parse_date(p=p)
 
             # load estimator
