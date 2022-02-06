@@ -14,6 +14,7 @@ class Symbol(str):
     def __init__(
             self,
             symbol: str,
+            exch_name: str = 'bitmex',
             is_inverse: bool = True,
             lot_size: int = 100,
             tick_size: float = 0.5,
@@ -25,6 +26,7 @@ class Symbol(str):
         self.lot_size = lot_size
         self.tick_size = tick_size
         self.prec = prec
+        self.exch_name = exch_name
 
         # only used for display NOTE might need to adjust this
         self.prec_qty = max(0, 4 - self.prec) if not is_inverse else 0
@@ -36,7 +38,7 @@ class Symbol(str):
 
     def __repr__(self) -> str:
         """Create repr with extra params to differentiate from normal string"""
-        vals = ['prec', 'tick_size_str', 'lot_size', 'is_inverse']
+        vals = ['exch_name', 'prec', 'tick_size_str', 'lot_size', 'is_inverse']
         m = {k: getattr(self, k) for k in vals}
         m['tick_size'] = m.pop('tick_size_str')
 
@@ -82,7 +84,7 @@ class Symbols(object):
             raise IndexError(f'No symbol "{symbol}" found for exchange "{exch_name}"')
 
         row = self.df_syms.loc[key]  # get row Series from dataframe
-        return Symbol(symbol, **row.to_dict())
+        return Symbol(symbol, exch_name=exch_name, **row.to_dict())
 
     def symbol(self, symbol: str, exch_name: str = 'bitmex', reset: bool = False) -> Symbol:
         """Get Symbol obj, cached or create new
