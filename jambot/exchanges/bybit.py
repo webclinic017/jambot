@@ -23,6 +23,8 @@ SYMBOl = 'BTCUSD'
 
 log = getlog(__name__)
 
+# TODO make sure balance_margin set for linear usdt contracts properly
+
 """
 ByBit API issues
 ----------------
@@ -35,9 +37,11 @@ ByBit API issues
     - conditional_submit doesn't return order_status
     - conditional_submit returns order type, but not stop_order_type
     - inconsistent price/qty return types (sometimes string, sometimes int)
-    - amend/cancel only return order_id (need to query again) - but cancel_all returns all fields
+    - amend/cancel only return order_id (need to query again)
+        - but cancel_all returns all fields (except for Linear)
     - stops have completely different and inconsistent endpoint than market/limit
     - update/created_at times return inconsistent length microsec decimals (or none)
+        - Linear returns updated_time, created_time
     - stop orders have "stop_order_id" instead of just "order_id"
     - Conditional_query doesnt have any fields to be able to determine its conditional
     - no way to filter orders by filled_time
@@ -181,6 +185,10 @@ class Bybit(SwaggerExchange):
         if isinstance(result, dict) and 'data' in result:
             result = result['data']
 
+            # UGH Conditional returns data=[], LinearConditional returns data=None
+            if result is None:
+                result = []
+
         # default, just give the data
         return result if not code else (result, ret_code)
 
@@ -216,7 +224,7 @@ class Bybit(SwaggerExchange):
 
         stop_orders = []
         if bybit_stops:
-            stop_orders = self.req('Conditional.getOrders', **kw)
+            stop_orders = self.req(f'{prefix}Conditional.getOrders', **kw)
 
             if bybit_async:
                 stop_orders += _filter_keys(stop_orders, self.req(f'{prefix}Conditional.query', **kw))
@@ -281,19 +289,21 @@ class Bybit(SwaggerExchange):
         """
         positions = []
 
-        for m in self.req('Positions.myPosition'):
-            p = {k: f.str_to_num(v) for k, v in m['data'].items()}
-            p['side_str'] = p['side']
-            p['side'] = {'Buy': 1, 'Sell': -1}.get(p['side'])
-            p['size'] = p['size'] * (p['side'] or 1)
-            p['sym_short'] = p['symbol'][:3]
-            p['roe_pct'] = (p['unrealised_pnl']) / (p['position_margin'] or 1)
-            p['pnl_pct'] = p['roe_pct'] / p['leverage']
+        # UGH linear positions are different endpoint
+        for prefix in ('Linear', ''):
+            for m in self.req(f'{prefix}Positions.myPosition'):
+                p = {k: f.str_to_num(v) for k, v in m['data'].items()}
+                p['side_str'] = p['side']
+                p['side'] = {'Buy': 1, 'Sell': -1}.get(p['side'])
+                p['size'] = p['size'] * (p['side'] or 1)
+                p['sym_short'] = p['symbol'][:3]
+                p['roe_pct'] = (p['unrealised_pnl']) / (p['position_margin'] or 1)
+                p['pnl_pct'] = p['roe_pct'] / p['leverage']
 
-            # FIXME need symbol precision!!
-            p['last_price'] = f.get_price(p['pnl_pct'], p['entry_price'], p['side']) if p['side'] else None
+                # FIXME need symbol precision!! default rounding down to 0.5 currently
+                p['last_price'] = f.get_price(p['pnl_pct'], p['entry_price'], p['side']) if p['side'] else None
 
-            positions.append(p)
+                positions.append(p)
 
         return positions
 
@@ -347,7 +357,7 @@ class Bybit(SwaggerExchange):
 
                 # qty strings to int
                 for k in ('qty', 'cum_exec_qty'):
-                    o[k] = o.get(k, 0)
+                    o[k] = float(o.get(k, 0))
 
                 # usdt orders use different key
                 if 'created_time' in o.keys():
@@ -407,6 +417,9 @@ class Bybit(SwaggerExchange):
             # stupid stop orders have completely different endpoint
             is_stop = spec.get('order_type', '').lower() == 'stop'
 
+            # cancel_orders sends {'symbol': None}
+            prefix = 'Linear' if str(spec.get('symbol', '')).lower().endswith('usdt') else ''
+
             if is_stop:
                 # stop order type needs to be market
                 if not cancel_all:
@@ -419,39 +432,51 @@ class Bybit(SwaggerExchange):
                 if action in ('amend', 'cancel'):
                     spec['stop_order_id'] = spec['order_id']
 
-                base = 'Conditional'
+                base = f'{prefix}Conditional'  # eg Linearconditional
             else:
-                base = 'Order'
+                base = f'{prefix}Order'
 
             # get correct endpoint
-            endpoint_full = f'{base}.{endpoint}'
+            endpoint_full = f'{base}.{endpoint}'  # eg Linearconditional.new
             endpoint_query = f'{base}.query'
 
             if cancel_all and spec['symbol'] is None:
-                spec['symbol'] = self.default_symbol
+                raise RuntimeError('cancel_all: symbol cannot be None!')
 
             # bybit forces use of abs contracts + side = 'Sell'
             for key in ('qty', 'p_r_qty'):
                 if key in spec.keys():
-                    spec[key] = str(abs(int(spec[key])))
+                    # TODO not forcing str anymore linear
+                    if prefix == 'Linear':
+                        spec[key] = abs(float(spec[key]))
+                    else:
+                        spec[key] = int(abs(float(spec[key])))
 
-            # fail_msg = f'[{action}]:\n\t{spec}'
-            fail_msg = None  # data returned through request data
-            # log.info(fail_msg)
-            ret_spec = self.req(endpoint_full, fail_msg=fail_msg, **spec)
+            # msg = f'[{action}]:\n\t{spec}'
+            # log.info(msg)
+            ret_spec = self.req(endpoint_full, **spec)
 
             # check for ret_code errors
             if not ret_spec is None:
-                # NOTE not sure if this is ever needed other than manual testing
-                if action in ('amend', 'cancel'):
-                    # kinda annoying but have to call for order again
-                    id_key = 'order_id' if not is_stop else 'stop_order_id'
-                    ret_spec = self.req(
-                        endpoint_query,
-                        symbol=spec['symbol'],
-                        **{id_key: ret_spec[id_key]})
+                # log.warning(ret_spec)
 
-                jf.safe_append(return_specs, self.proc_raw_spec(ret_spec))
+                # LinearOrder.cancel_all returns ['<order_id>'], reglar returns full spec
+                if not (prefix == 'Linear' and action == 'cancel_all'):
+
+                    # NOTE not sure if this is ever needed other than manual testing
+                    if action in ('amend', 'cancel'):
+                        # kinda annoying but have to call for order again
+                        id_key = 'order_id' if not is_stop else 'stop_order_id'
+
+                        # if prefix == 'Linear':
+                        #     order_id =
+
+                        ret_spec = self.req(
+                            endpoint_query,
+                            symbol=spec['symbol'],
+                            **{id_key: ret_spec[id_key]})
+
+                    jf.safe_append(return_specs, self.proc_raw_spec(ret_spec))
 
         return return_specs
 
@@ -512,7 +537,7 @@ class Bybit(SwaggerExchange):
 
                     data.extend(_data)
                     starttime = dt.fromtimestamp(_data[-1]['open_time'], tz.utc) + f.inter_offset(interval)
-                    # log.info(f'starttime: {starttime}, len_data: {len(_data)}')
+                    log.info(f'{symbol}: starttime={starttime}, len_data={len(_data)}')
                 except Exception as e:
                     log.warning(e)
                     log.info(f'starttime: {starttime}, len_data: {len(data)}')
