@@ -2,18 +2,174 @@
 Loading dataframe
 """
 
+from collections import defaultdict as dd
+from datetime import datetime as dt
+from datetime import timedelta as delta
+from pathlib import Path
+from typing import *
+
 import pandas as pd
 
 from jambot import SYMBOL
 from jambot import config as cf
 from jambot import getlog
+from jambot.tables import Tickers
+from jgutils import functions as jf
+from jgutils import pandas_utils as pu
+
+ExchSymbols = Dict[str, Union[str, List[str]]]  # {exch_name: ['BNBUSDT', 'SOLUSDT']}
 
 log = getlog(__name__)
+
+
+class DataManager(object):
+    """Manage loading single/multi symbol dfs from db and feather"""
+
+    def __init__(self):
+        self.p_ftr = cf.p_data / 'feather'
+        self.dfs_raw = {}  # OHLCVF data
+        self.dfs_signals = {}  # data with signals added
+
+    def _get_path(self, symbol: str, exch_name: str) -> Path:
+        """Get local ftr path for symbol/exchange
+
+        Parameters
+        ----------
+        symbol : str
+        exch_name : str
+
+        Returns
+        -------
+        Path
+            path to .ftr
+        """
+        return self.p_ftr / f'{exch_name.lower()}_{symbol.lower()}.ftr'
+
+    def _check_refresh_ftr(self, symbol: str, exch_name: str) -> bool:
+        """Check if local ftr needs to be refreshed
+
+        Parameters
+        ----------
+        symbol : str
+        exch_name : str
+
+        Returns
+        -------
+        bool
+            if ftr needs refresh
+        """
+        p = self._get_path(symbol, exch_name)
+        return not p.exists() or dt.fromtimestamp(p.stat().st_mtime) < dt.now() + delta(days=-1)
+
+    def save_df(self, df: pd.DataFrame, symbol: str, exch_name: str) -> Path:
+        """Save df to feather file with dropped symbol index
+
+        Parameters
+        ----------
+        df : pd.DataFrame
+        symbol : str
+        exch_name : str
+
+        Returns
+        -------
+        Path
+            path of saved file
+        """
+        p = self._get_path(symbol, exch_name)
+
+        # remove symbol from index for saving to file
+        if 'symbol' in df.index.names:
+            df = df.droplevel('symbol')  # type: pd.DataFrame
+
+        df.reset_index(drop=False).to_feather(p)
+        return p
+
+    def load_from_db(self, symbols: ExchSymbols, interval: int = 15) -> pd.DataFrame:
+
+        log.info(f'Loading {dict(symbols)} from db')
+        dfs = []  # type: List[pd.DataFrame]
+
+        for exch_name, _symbols in symbols.items():
+            df = Tickers().get_df(
+                symbols=_symbols,
+                startdate=cf.D_LOWER,
+                interval=interval,
+                funding=True,
+                exch_name=exch_name,
+                # funding_exch=em.default('bitmex', refresh=False)
+            ) \
+                .pipe(pu.append_list, dfs)
+
+            # save individual dfs to ftr
+            for symbol, _df in df.groupby('symbol'):
+                self.save_df(_df, symbol, exch_name)
+
+        df_out = pd.concat(dfs)
+
+        return df_out
+
+    def load_from_local(self, symbols: ExchSymbols) -> pd.DataFrame:
+        """Load df from local ftr file
+
+        Parameters
+        ----------
+        symbols : ExchSymbols
+
+        Returns
+        -------
+        pd.DataFrame
+        """
+        log.info(f'Loading {dict(symbols)} from .ftr')
+        dfs = []  # type: List[pd.DataFrame]
+
+        for exch_name, _symbols in symbols.items():
+            for symbol in jf.as_list(_symbols):
+                p = self._get_path(symbol, exch_name)
+
+                df = pd.read_feather(p) \
+                    .assign(symbol=symbol) \
+                    .set_index(['symbol', 'timestamp']) \
+                    .pipe(pu.append_list, dfs)
+
+        return pd.concat(dfs)
+
+    def get_df(
+            self,
+            symbols: ExchSymbols,
+            local_only: bool = False,
+            **kw) -> pd.DataFrame:
+
+        m_reload = dd(list)  # load from db
+        m_local = dd(list)  # load local ftr
+        dfs = []  # type: List[pd.DataFrame]
+
+        # pass symbols or symbol/exchane??
+        for exch_name, _symbols in symbols.items():
+            for symbol in jf.as_list(_symbols):
+
+                # check if local data needs refresh
+                if self._check_refresh_ftr(symbol, exch_name):
+                    m_reload[exch_name].append(symbol)
+                else:
+                    # load from ftr
+                    m_local[exch_name].append(symbol)
+
+        if m_reload:
+            df_db = self.load_from_db(symbols=m_reload, **kw) \
+                .pipe(pu.append_list, dfs)
+
+        if m_local:
+            df_local = self.load_from_local(symbols=m_local) \
+                .pipe(pu.append_list, dfs)
+
+        return pd.concat(dfs)
 
 
 def default_df(symbol: str = SYMBOL, exch_name: str = 'bitmex') -> pd.DataFrame:
     """Get simple default df for testing"""
     log.info(f'Loading df {symbol}, {exch_name} from file')
     p = cf.p_data / f'feather/df_{exch_name.lower()}_{symbol.lower()}.ftr'
+
+    # TODO set index symbol/timestamp
     return pd.read_feather(p) \
         .set_index('timestamp')
