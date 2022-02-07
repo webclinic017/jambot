@@ -10,14 +10,12 @@ from typing import *
 
 import pandas as pd
 
-from jambot import SYMBOL
+from jambot import SYMBOL, ExchSymbols
 from jambot import config as cf
 from jambot import getlog
 from jambot.tables import Tickers
 from jgutils import functions as jf
 from jgutils import pandas_utils as pu
-
-ExchSymbols = Dict[str, Union[str, List[str]]]  # {exch_name: ['BNBUSDT', 'SOLUSDT']}
 
 log = getlog(__name__)
 
@@ -91,11 +89,10 @@ class DataManager(object):
 
         for exch_name, _symbols in symbols.items():
             df = Tickers().get_df(
-                symbols=_symbols,
+                symbols={exch_name: _symbols},
                 startdate=cf.D_LOWER,
                 interval=interval,
                 funding=True,
-                exch_name=exch_name,
                 # funding_exch=em.default('bitmex', refresh=False)
             ) \
                 .pipe(pu.append_list, dfs)
@@ -137,6 +134,7 @@ class DataManager(object):
             self,
             symbols: ExchSymbols,
             local_only: bool = False,
+            db_only: bool = False,
             **kw) -> pd.DataFrame:
 
         m_reload = dd(list)  # load from db
@@ -148,11 +146,11 @@ class DataManager(object):
             for symbol in jf.as_list(_symbols):
 
                 # check if local data needs refresh
-                if self._check_refresh_ftr(symbol, exch_name):
-                    m_reload[exch_name].append(symbol)
+                if db_only or (self._check_refresh_ftr(symbol, exch_name) and not local_only):
+                    m_reload[exch_name].append(str(symbol))
                 else:
                     # load from ftr
-                    m_local[exch_name].append(symbol)
+                    m_local[exch_name].append(str(symbol))
 
         if m_reload:
             df_db = self.load_from_db(symbols=m_reload, **kw) \
@@ -162,7 +160,20 @@ class DataManager(object):
             df_local = self.load_from_local(symbols=m_local) \
                 .pipe(pu.append_list, dfs)
 
-        return pd.concat(dfs)
+        dfs_out = pd.concat(dfs)
+
+        # log msg for symbols + min/max timestamps loaded
+        m = dfs_out \
+            .reset_index(drop=False) \
+            .groupby('symbol', as_index=False) \
+            .agg(dict(timestamp=['min', 'max'])) \
+            .astype(str) \
+            .to_records()
+
+        s = '\n\t' + '\n\t'.join([f'{r[1]}: {r[2]} - {r[3]}' for r in m])
+        log.info(f'Loaded df: [{dfs_out.shape[0]:,.0f}] {s}')
+
+        return dfs_out
 
 
 def default_df(symbol: str = SYMBOL, exch_name: str = 'bitmex') -> pd.DataFrame:

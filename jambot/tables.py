@@ -11,7 +11,7 @@ from pypika import MSSQLQuery as Query
 from pypika import functions as fn
 from pypika.terms import Criterion
 
-from jambot import SYMBOL
+from jambot import SYMBOL, ExchSymbols
 from jambot import comm as cm
 from jambot import functions as f
 from jambot import getlog
@@ -232,18 +232,17 @@ class Tickers(Table):
 
     def get_query(
             self,
-            exch_name: str = 'bitmex',
-            symbols: Union[str, List[str]] = SYMBOL,
+            symbols: ExchSymbols,
+            # exch_name: str = 'bitmex',
+            # symbols: Union[str, List[str]] = SYMBOL,
             period: int = 300,
             startdate: dt = None,
             enddate: dt = None,
             interval: int = 15,
             # funding: bool = False,
-            **kw) -> pd.DataFrame:
+            **kw) -> 'QueryBuilder':
         """Get df of OHLCV + funding_rate
         - funding_exch passed to process_df to fill last funding row
-        - TODO add SYMBOL to index and fix everything everywhere
-            - eg allow symbols = dict(bitmex=['XBTUSD'])
 
         Parameters
         ----------
@@ -262,13 +261,13 @@ class Tickers(Table):
 
         Returns
         -------
-        pd.DataFrame
+        QueryBuilder
         """
         # this could actually just be a "build conds"
 
         # FIXME temp solution use binance for other symbols
-        if not symbols == 'XBTUSD' and exch_name == 'bitmex':
-            exch_name = 'binance'
+        # if not symbols == 'XBTUSD' and exch_name == 'bitmex':
+        #     exch_name = 'binance'
 
         if startdate is None:
             startdate = f.inter_now(interval=interval) + delta(hours=abs(period) * -1)
@@ -291,16 +290,23 @@ class Tickers(Table):
 
         conds = [
             a.interval == interval,
-            a.timestamp >= startdate,
-            a.exchange == self.exch_keys[exch_name]
-        ]
-
-        if not symbols is None:
-            conds.append(a.symbol.isin(jf.as_list(symbols)))
-            # conds.append(a.symbol == symbols)
+            a.timestamp >= startdate]
 
         if not enddate is None:
             conds.append(a.timestamp <= enddate)
+
+        # filter to exch_name='bitmex' and symbols in [sym1, sym2] OR exch_name...
+        sym_conds = []
+        for exch_name, _symbols in symbols.items():
+            sym_conds.append(
+                (a.symbol.isin(jf.as_list(_symbols))) &
+                (a.exchange == self.exch_keys[exch_name]))
+
+        if len(sym_conds) > 1:
+            sym_conds = pk.Criterion.any(sym_conds)
+            conds.append(sym_conds)
+        else:
+            conds.extend(sym_conds)
 
         return super().get_query(q=q, conds=conds, cols=cols)
 
@@ -317,17 +323,23 @@ class Tickers(Table):
         -------
         pd.DataFrame
         """
-        return df.assign(funding_rate=0)
 
-        # backfill funding rate
-        if 'funding_rate' in df.columns:
+        def _add_funding(df: pd.DataFrame, funding_exch: SwaggerExchange = None):
+            """backfill funding rate"""
+            symbol = df.name
             df = df.assign(funding_rate=lambda x: x.funding_rate.backfill().astype(np.float32))
 
             if funding_exch:
-                # FIXME XBTUSD will have to change
-                # TODO grouby symbol before adding latest funding
+                ex = funding_exch  # readability
                 df = df.assign(
-                    funding_rate=lambda x: x.funding_rate.fillna(funding_exch.next_funding(SYMBOL)))
+                    funding_rate=lambda x: x.funding_rate.fillna(ex.next_funding(symbol)))
+
+            return df
+
+        if 'funding_rate' in df.columns:
+            df = df.groupby('symbol', group_keys=False) \
+                .apply(_add_funding, funding_exch=funding_exch) \
+                .fillna(dict(funding_rate=0))
 
         return df
 
