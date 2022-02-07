@@ -1,6 +1,9 @@
+from typing import *
+
 import pandas as pd
 
 from jambot import config as cf
+from jgutils import functions as jf
 from jgutils.logger import getlog  # jambot.__init__ imports from symbols
 
 log = getlog(__name__)
@@ -110,3 +113,22 @@ class Symbols(object):
             self._syms[key] = _symbol  # save to symbols cache
 
         return _symbol
+
+    def symbols(
+            self,
+            symbols: Union[str, List[str]],
+            exch_name: str = 'bitmex') -> List[Symbol]:
+        """Init multi symbols
+
+        Parameters
+        ----------
+        symbols : Union[str, List[str]]
+            single or list of symbols
+        exch_name : str, optional
+            default 'bitmex'
+
+        Returns
+        -------
+        List[Symbol]
+        """
+        return [self.symbol(symbol, exch_name) for symbol in jf.as_list(symbols)]
