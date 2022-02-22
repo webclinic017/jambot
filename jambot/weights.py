@@ -21,7 +21,7 @@ class WeightsManager(DictRepr, MlflowLoggable, DynConfig):
         # weight history linearly if live training
         self.linear = (lambda x: np.linspace(0.5, 1, len(x))) if weight_linear else lambda x: 1.0
 
-        cols = ['high', 'low', 'close']
+        cols = ['close']
         self.df = df[cols]
         self.n_periods = n_periods
         self.weight_linear = weight_linear
@@ -59,7 +59,8 @@ class WeightsManager(DictRepr, MlflowLoggable, DynConfig):
         signals = {k: v['func'] for k, v in signals.items()} \
             | dict(
                 weight=lambda x: minmax_scale(
-                    X=x[target_cols].abs().max(axis=1).clip(upper=0.2) * self.linear(x),
+                    X=x[target_cols].abs().max(axis=1)
+                    .clip(upper=0.2) * self.linear(x),
                     feature_range=(0, 1)))
 
         return self.df \
@@ -105,40 +106,59 @@ class WeightsManager(DictRepr, MlflowLoggable, DynConfig):
 
     def filter_quantile(
             self,
-            datas: Union[pd.DataFrame, pd.Series, list],
-            quantile: float = 0.5,
+            datas: Union[pd.DataFrame, pd.Series, List[Union[pd.DataFrame, pd.Series]]],
+            quantile: float,
+            weights_in_frame: bool = False,
             _log: bool = True) -> Union[pd.DataFrame, pd.Series, list]:
         """Filter df or series to highest qualtile based on index of weights
         - IMPORTANT: higher number = more rows filtered out, less remain
+        - only filters based on quantile of weights matching given index
 
         Parameters
         ----------
-        datas : Union[pd.DataFrame, pd.Series, list]
+        datas : Union[pd.DataFrame, pd.Series, List[Union[pd.DataFrame, pd.Series]]]
             single or list of df/series
-        quantile : float, optional
-            filter above this quantile, default 0.5
+        quantile : float
+            filter above this quantile
 
         Returns
         -------
-        Union[pd.DataFrame, pd.Series]
+        Union[pd.DataFrame, pd.Series, List[Union[pd.DataFrame, pd.Series]]]
             df or series filtered by weight quantile, or list of both
         """
-
         out = []
         datas = jf.as_list(datas)
         for df in datas:
-            # filter weights to only df.index before getting quantile
-            weights = self.weights.loc[df.index]
+            # filter weights UP TO MAX DATE of df.index before getting quantile
+            if not weights_in_frame:
 
-            # if not quantile is None:
-            _quantile = weights.quantile(quantile)
+                # get max date in df timestamp index (works single or multiindex)
+                d_max = df.index.get_level_values('timestamp').max()
 
-            idx = weights[weights >= _quantile].index
-            out.append(df.loc[idx])
+                if 'symbol' in df.index.names:
+                    idx_slice = pd.IndexSlice[:, :d_max]  # multiindex (symbol, timestamp)
+                else:
+                    idx_slice = pd.IndexSlice[:d_max]  # timestamp only
+
+                weights_all = self.weights.loc[idx_slice]
+                weights_current = self.weights.loc[df.index]
+            else:
+                # using dask df, need to do things the hard way (not used)
+                weights_all = df['weights'].compute()
+                weights_current = weights_all
+
+            # get value of weights equal to quantile eg q=0.6 > qv=0.0564
+            quantile_val = weights_all.quantile(quantile)
+
+            if not weights_in_frame:
+                idx = weights_current[weights_current >= quantile_val].index
+                out.append(df.loc[idx])
+            else:
+                out.append(df[df.weights >= quantile_val])
 
         if _log:
             nrows = datas[0].shape[0]
-            msg = f'Filtered weights quantile [{quantile * 100:.0f}% = {_quantile:.3f}]' \
+            msg = f'Filtered weights quantile [{quantile * 100:.0f}%, qv={quantile_val:.3f}]' \
                 + f', [{nrows:,.0f} -> {idx.shape[0]:,.0f}] rows.'
             log.info(msg)
 
