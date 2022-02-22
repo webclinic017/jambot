@@ -41,3 +41,4 @@ data/feather
 mlruns
 jgutils
 mlruns.db
+dask-worker-space
