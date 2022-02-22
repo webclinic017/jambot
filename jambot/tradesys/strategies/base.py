@@ -1,7 +1,9 @@
+from abc import abstractproperty
 from typing import *
 
 import pandas as pd
 
+from jambot import config as cf
 from jambot import display, getlog
 from jambot.tradesys.base import Observer
 from jambot.tradesys.broker import Broker
@@ -13,6 +15,8 @@ log = getlog(__name__)
 
 
 class StrategyBase(Observer, MlflowLoggable):
+    log_keys = abstractproperty()
+
     def __init__(
             self,
             symbol: Symbol,
@@ -35,6 +39,16 @@ class StrategyBase(Observer, MlflowLoggable):
         self.live = live
         self.exch_name = exch_name
         self._trades = []
+
+    @classmethod
+    def from_config(cls, symbol: Symbol, config_symbol: str = None, **kw):
+        """Instantiate from dynamic config file"""
+
+        if config_symbol is None:
+            config_symbol = str(symbol)
+
+        kw = cf.dynamic_cfg(config_symbol, keys=cls.log_keys) | kw | dict(symbol=symbol)
+        return cls(**kw)
 
     def on_attach(self):
         """Market close last trade at end of session (if not live trading)"""
