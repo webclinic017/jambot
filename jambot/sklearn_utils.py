@@ -2,6 +2,7 @@ import copy
 import re
 import time
 from datetime import datetime as dt
+from datetime import timedelta as delta
 from typing import *
 
 import numpy as np
@@ -1091,14 +1092,14 @@ def convert_proba_signal(
 
 def weighted_score(
         y_true: pd.Series,
-        y_pred: np.ndarray,
+        y_pred: pd.Series,
         weights: pd.Series) -> float:
     """Match weights with y_true series to get a weighted accuracy
 
     Parameters
     ----------
     y_true : pd.Series
-    y_pred : np.ndarray
+    y_pred : pd.Series
     weights : pd.Series
         from sg.WeightedScorer
 
@@ -1372,51 +1373,58 @@ def add_predict_iter(
         df with predictions added
     """
     df_orig = df.copy()  # to keep all original cols when returned
+    delta_mins = {1: 60, 15: 15}[interval]
 
-    nrows = df.shape[0]
-    index = df.index  # type: pd.DatetimeIndex
-    min_size = df[index < split_date].shape[0]  # type: int
-    num_batches = ((nrows - min_size) // batch_size) + 1
+    # nrows = df.shape[0]
+    # nrows = df.groupby('symbol').size().max()  # TODO not quite, need diff of higest - lowest date
+    # index = df.index  # type: pd.MultiIndex #(str, pd.DatetimeIndex)
+    dt_index = df.index.get_level_values('timestamp')  # type: pd.DatetimeIndex
+    d_start = dt_index.min().to_pydatetime()
+    n_periods = (dt_index.max() - split_date).to_pytimedelta().total_seconds() / 60 / delta_mins
+
+    # min_size = df[index < split_date].shape[0]  # type: int
+    # num_batches = ((nrows - min_size) // batch_size) + 1
+    num_batches = int((n_periods // batch_size) + 1)
 
     # if model is None:
     #     model = self.pipes[name].named_steps[name]
 
-    # convert months to periods
-    if not max_train_size is None:
-        max_train_size = max_train_size * 30 * 24 * {1: 1, 15: 4}[interval]
+    # convert months to periods  NOTE not implemented for date indexing yet
+    # if not max_train_size is None:
+    #     max_train_size = max_train_size * 30 * 24 * {1: 1, 15: 4}[interval]
 
     df = df.pipe(pu.safe_drop, cf.DROP_COLS)
 
     def _fit(i: int) -> Union[pd.DataFrame, None]:
-        i_lower = min_size + i * batch_size  # "test" lower
-        i_upper = min(i_lower + batch_size, nrows + 1)
-        idx_test = df.index[i_lower: i_upper]
+
+        # i_lower = min_size + i * batch_size  # "test" lower
+        d_lower = split_date + delta(minutes=i * batch_size * delta_mins)
+        d_upper = d_lower + delta(minutes=batch_size * delta_mins)
+        # i_upper = min(i_lower + batch_size, nrows + 1)
+        # idx_test = df.index[i_lower: i_upper]
+        idx_test_slice = pd.IndexSlice[:, d_lower: d_upper + delta(minutes=-delta_mins)]
 
         # train model from 0 up to current position
         # NOTE max_train_size eg 2 yrs seems to be much worse
-        i_train_lower = 0 if not max_train_size else max(0, i_lower - max_train_size)
+        # i_train_lower = 0 if not max_train_size else max(0, i_lower - max_train_size)
 
-        df_train = df.iloc[i_train_lower: i_lower]  # type: pd.DataFrame
+        # df_train = df.iloc[i_train_lower: i_lower]  # type: pd.DataFrame
+        df_train = df.loc[pd.IndexSlice[:, d_start: d_lower + delta(minutes=-delta_mins)], :]
 
         if filter_fit_quantile:
+            # TODO possibly filter highest PER SYMBOL, not all combined
+            # NOTE this is cheating, wm has knowledge of future values
             df_train = wm.filter_quantile(df_train, quantile=filter_fit_quantile, _log=False)
 
         x_train, y_train = split(df_train)
-
-        x_test, _ = split(df.loc[idx_test])
-
-        # use shap to get important cols at each iter
-        # if retrain_feats:
-        #     imp_cols = _get_imp_feats(x_train, y_train, df)
-        #     x_train = x_train[imp_cols]
-        #     x_test = x_test[imp_cols]
+        x_test, _ = split(df.loc[idx_test_slice, :])
 
         model.fit(
             x_train,
             y_train,
             **wm.fit_params(x_train))
 
-        if len(idx_test) == 0:
+        if len(idx_test_slice) == 0:
             return None
         else:
             if not regression:
@@ -1425,12 +1433,14 @@ def add_predict_iter(
                 proba_long = df_y_pred(x=x_test, model=model)['y_pred']
 
             return pd.DataFrame(
-                index=idx_test,
+                # index=x_test.loc[idx_test_slice, :].index,  # don't need explicit index, uses index from df_proba
                 data=dict(
                     y_pred=model.predict(x_test),
                     proba_long=proba_long))
 
     par = ProgressParallel(batch_size=2, n_jobs=n_jobs, total=num_batches)
     result = par(delayed(_fit)(i=i) for i in range(num_batches))
+
+    # result = [_fit(i) for i in range(num_batches)]
 
     return df_orig.pipe(pu.left_merge, pd.concat([df for df in result if not df is None]))
