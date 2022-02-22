@@ -65,7 +65,7 @@ class BacktestManager(Clock, MlflowLoggable):
         df = df.pipe(pu.clean_cols, cols)
 
         # drop symbol from index ('symbol', 'timestamp') if exists
-        if 'symbol' in df.index.names():
+        if 'symbol' in df.index.names:
             df = df.droplevel('symbol')  # type: pd.DataFrame
 
         self.end_session = SignalEvent()
@@ -118,13 +118,17 @@ class BacktestManager(Clock, MlflowLoggable):
 
         return self
 
-    def print_final(self):
+    def print_final(self, df: pd.DataFrame = None):
         """Style backtest summary df"""
-        style = self.df_result \
+
+        # allow passing in combined df
+        if df is None:
+            df = self.df_result
+
+        style = df \
             .rename(columns=self.m_conv) \
             .style \
-            .format(self.summary_format) \
-            .hide_index()
+            .format(self.summary_format)
 
         if 'IPYKERNEL_CELL_NAME' in os.environ.keys():
             # show in jupyter
@@ -176,7 +180,8 @@ class BacktestManager(Clock, MlflowLoggable):
 
         # only count "good" as pct of filled trades, ignore unfilled
         return pd.DataFrame. \
-            from_dict(data, orient='index').T \
+            from_dict(data, columns=[str(self.strat.symbol)], orient='index').T \
+            .rename_axis('symbol') \
             .assign(
                 pct_good_filled=lambda x: x.good / x.filled,
                 pct_good_total=lambda x: x.good / x.total,
