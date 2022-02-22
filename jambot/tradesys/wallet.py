@@ -503,6 +503,8 @@ class Wallet(Observer):
             sharex=True,
             gridspec_kw=dict(height_ratios=(3, 1)))
 
+        fig.suptitle(str(self.symbol))
+
         # monthly pct change
         s = self.s_pnl_monthly(df=df)
 

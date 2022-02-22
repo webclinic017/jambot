@@ -48,7 +48,7 @@ class InvalidTradeOperationError(BaseError):
     Raised when trade attempted to be closed while contracts still open
     """
 
-    def __init__(self, qty_open: int, trade_num: int, orders: 'List[Order]', *args) -> None:
+    def __init__(self, qty_open: int, trade_num: int, orders: List['Order'], *args) -> None:
         _orders = '\n'.join([str(o) for o in orders])
         msg = f'Cant close trade [{trade_num}] with [{qty_open}] contracts open!\n\n{_orders}'
         super().__init__(msg, *args)

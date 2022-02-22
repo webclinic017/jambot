@@ -288,7 +288,7 @@ def get_df_raw(
 
     return Tickers().get_df(
         exch_name=exch_name,
-        symbol=symbol,
+        symbols=symbol,
         startdate=startdate,
         interval=interval,
         # funding=True if exch_name == 'bitmex' else False,
