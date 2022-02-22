@@ -38,6 +38,7 @@ from jgutils.azureblob import BlobStorage
 log = getlog(__name__)
 
 warnings.filterwarnings('ignore', message='invalid value encountered in double_scalars')
+warnings.filterwarnings('ignore', message='DataFrame is highly fragmented')
 
 # TODO distance to bolinger bands!
 
@@ -171,6 +172,7 @@ class SignalManager(MlflowLoggable, DictRepr):
             use_important_dynamic: bool = False,
             drop_ohlc: bool = False,
             symbol: str = SYMBOL,
+            drop_target_periods: int = None,
             **kw) -> pd.DataFrame:
         """Add multiple initialized signals to dataframe"""
         signal_params = signal_params or {}
@@ -197,7 +199,7 @@ class SignalManager(MlflowLoggable, DictRepr):
             require_cols |= signal_group.require_cols
 
         if use_important_dynamic:
-            n_most_imp = cf.dynamic_cfg(symbol=symbol)['num_feats']
+            n_most_imp = cf.dynamic_cfg(symbol=symbol, keys='num_feats')
 
         # filter only most imporant cols before adding all
         if use_important or n_most_imp:
@@ -259,6 +261,10 @@ class SignalManager(MlflowLoggable, DictRepr):
             .pipe(pu.safe_drop, cols=cf.DROP_COLS, do=drop_ohlc)
 
         self.save_cache_cols(df, _signal_groups)
+
+        # drop last target_n_periods (after cols cached)
+        if not drop_target_periods is None:
+            df = df.iloc[:-drop_target_periods]
 
         return df
 
