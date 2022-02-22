@@ -82,7 +82,20 @@ class DataManager(object):
         df.reset_index(drop=False).to_feather(p)
         return p
 
-    def load_from_db(self, symbols: ExchSymbols, interval: int = 15) -> pd.DataFrame:
+    @staticmethod
+    def load_misc_alts() -> List[str]:
+        """Get list of active misc alts from config
+        - NOTE might need to make this a bit more dynamic
+            - eg option to load from google?
+        """
+        return cf.MULTI_ALTS_LIST
+
+    def load_from_db(
+            self,
+            symbols: ExchSymbols,
+            interval: int = 15,
+            startdate: dt = cf.D_LOWER,
+            **kw) -> pd.DataFrame:
 
         log.info(f'Loading {dict(symbols)} from db')
         dfs = []  # type: List[pd.DataFrame]
@@ -90,16 +103,22 @@ class DataManager(object):
         for exch_name, _symbols in symbols.items():
             df = Tickers().get_df(
                 symbols={exch_name: _symbols},
-                startdate=cf.D_LOWER,
+                startdate=startdate,
                 interval=interval,
                 funding=True,
                 # funding_exch=em.default('bitmex', refresh=False)
+                **kw
             ) \
                 .pipe(pu.append_list, dfs)
 
             # save individual dfs to ftr
             for symbol, _df in df.groupby('symbol'):
-                self.save_df(_df, symbol, exch_name)
+                # bit arbitrary, but just avoid saving small dfs, or df with close col only
+                if _df.shape[1] > 4:
+                    if _df.shape[0] > 1000:
+                        self.save_df(_df, symbol, exch_name)
+                    else:
+                        log.warning(f'No rows to save for {symbol}, {exch_name}')
 
         df_out = pd.concat(dfs)
 
@@ -125,6 +144,7 @@ class DataManager(object):
 
                 df = pd.read_feather(p) \
                     .assign(symbol=symbol) \
+                    .assign(symbol=lambda x: x.symbol.astype('category')) \
                     .set_index(['symbol', 'timestamp']) \
                     .pipe(pu.append_list, dfs)
 
@@ -143,6 +163,9 @@ class DataManager(object):
 
         # pass symbols or symbol/exchane??
         for exch_name, _symbols in symbols.items():
+            if _symbols == cf.MULTI_ALTS:
+                _symbols = self.load_misc_alts()
+
             for symbol in jf.as_list(_symbols):
 
                 # check if local data needs refresh
@@ -170,7 +193,7 @@ class DataManager(object):
             .astype(str) \
             .to_records()
 
-        s = '\n\t' + '\n\t'.join([f'{r[1]}: {r[2]} - {r[3]}' for r in m])
+        s = '\n\t' + '\n\t'.join([f'{r[1] + ":":<12}{r[2]} - {r[3]}' for r in m])
         log.info(f'Loaded df: [{dfs_out.shape[0]:,.0f}] {s}')
 
         return dfs_out

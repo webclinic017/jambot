@@ -47,10 +47,32 @@ COLORS = dict(
     darkgrey='#a0a0a0',
     lightyellow='#FFFFCC')
 
+# just for str name
+MULTI_ALTS = 'MULTI_ALTS'
+
+MULTI_ALTS_LIST = [
+    'ETHUSDT',
+    'BNBUSDT',
+    'SOLUSDT',
+    'DOGEUSDT',
+    'AVAXUSDT',
+    'LUNAUSDT',
+    'DOTUSDT',
+    'ADAUSDT',
+    'XRPUSDT',
+    'MATICUSDT',
+    'SANDUSDT',
+    'BITUSDT',
+    'LINKUSDT',
+    'ATOMUSDT',
+    'CROUSDT',
+    # 'SHIBUSDT'
+]
+
 
 def dynamic_cfg(
         symbol: str = 'XBTUSD',
-        keys: Union[List[str], Dict[str, str]] = None) -> Union[Dict[str, Any], Any]:
+        keys: Union[List[str], Dict[str, str], str] = None) -> Union[Dict[str, Any], int, float]:
     """Get dynamic config values per symbol
     - TODO find a clean way to manage static/dynamic keys
 
