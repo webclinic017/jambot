@@ -5,12 +5,11 @@ from datetime import timezone as tz
 from typing import *
 
 import pandas as pd
-from bybit import bybit
-from BybitAuthenticator import APIKeyAuthenticator
 
 from jambot import comm as cm
 from jambot import functions as f
 from jambot import getlog
+from jambot.exchanges.bybit_compat import APIKeyAuthenticator, bybit
 from jambot.exchanges.exchange import SwaggerAPIException, SwaggerExchange
 from jambot.tradesys.orders import ExchOrder
 from jgutils import functions as jf
