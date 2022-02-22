@@ -99,7 +99,8 @@ class Table(object, metaclass=ABCMeta):
         df = db.read_sql(sql=q)
 
         if not self.dtypes is None:
-            df = df.astype(self.dtypes)
+            dtypes = {k: v for k, v in self.dtypes.items() if k in df.columns}
+            df = df.astype(dtypes)
 
         df = df.pipe(self.process_df, **kw)
 
@@ -191,6 +192,7 @@ class Table(object, metaclass=ABCMeta):
 
         if dfs:
             df = pd.concat(dfs)  # type: pd.DataFrame
+            self.df = df
             nrows = df.shape[0]
             nsymbols = df.symbol.nunique()
 
@@ -239,6 +241,7 @@ class Tickers(Table):
             startdate: dt = None,
             enddate: dt = None,
             interval: int = 15,
+            close_only: bool = False,
             # funding: bool = False,
             **kw) -> 'QueryBuilder':
         """Get df of OHLCV + funding_rate
@@ -258,6 +261,8 @@ class Tickers(Table):
             default None
         interval : int, optional
             default 15
+        close_only : bool, optional
+            only return close column (for WeightsManager)
 
         Returns
         -------
@@ -278,15 +283,19 @@ class Tickers(Table):
 
         a = self.a
         q = Query.from_(a)
-        cols = copy.copy(self.cols)
 
-        # add funding column, will be NaN if not present
-        b = pk.Table('funding')
-        q = q \
-            .left_join(b) \
-            .on_field('exchange', 'symbol', 'timestamp')
+        if not close_only:
+            cols = copy.copy(self.cols)
 
-        cols.append(b.funding_rate)
+            # add funding column, will be NaN if not present
+            b = pk.Table('funding')
+            q = q \
+                .left_join(b) \
+                .on_field('exchange', 'symbol', 'timestamp')
+
+            cols.append(b.funding_rate)
+        else:
+            cols = self.idx_cols + ['close']
 
         conds = [
             a.interval == interval,
@@ -323,18 +332,16 @@ class Tickers(Table):
         -------
         pd.DataFrame
         """
-
         def _add_funding(df: pd.DataFrame, funding_exch: SwaggerExchange = None):
-            """backfill funding rate"""
+            """backfill funding rate, forward fill most recent funding data from exch (or use mean)"""
             symbol = df.name
-            df = df.assign(funding_rate=lambda x: x.funding_rate.backfill().astype(np.float32))
+            fill_val = df.funding_rate.mean() if funding_exch is None else funding_exch.next_funding(symbol)
 
-            if funding_exch:
-                ex = funding_exch  # readability
-                df = df.assign(
-                    funding_rate=lambda x: x.funding_rate.fillna(ex.next_funding(symbol)))
+            if pd.isna(fill_val):
+                fill_val = 0
 
-            return df
+            return df.assign(
+                funding_rate=lambda x: x.funding_rate.backfill().fillna(fill_val).astype(np.float32))
 
         if 'funding_rate' in df.columns:
             df = df.groupby('symbol', group_keys=False) \
