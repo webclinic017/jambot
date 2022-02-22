@@ -19,6 +19,16 @@ global db
 
 log = getlog(__name__)
 
+"""
+- pyodbc issue (msodbcsql17 needs openssl 1.1.1 not 3.0):
+- https://github.com/microsoft/homebrew-mssql-release/issues/59
+- ln -s /usr/local/Cellar/openssl@1.1/1.1.1l /usr/local/opt/openssl (from link)
+
+- NOTE need to delete old symlink first - rm /opt/homebrew/opt/openssl
+- ln -s /opt/homebrew/Cellar/openssl@1.1/1.1.1m /opt/homebrew/opt/openssl
+
+"""
+
 
 def str_conn():
     m = SecretsManager('db.yaml').load
