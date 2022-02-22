@@ -2,7 +2,6 @@ import warnings
 from typing import *
 
 import pandas as pd
-from sklearn.base import BaseEstimator
 
 from jambot import SYMBOL
 from jambot import config as cf
@@ -17,6 +16,9 @@ from jambot.tradesys.strategies.base import StrategyBase
 from jambot.tradesys.trade import Trade
 from jgutils import fileops as jfl
 from jgutils import pandas_utils as pu
+
+if TYPE_CHECKING:
+    from sklearn.base import BaseEstimator
 
 log = getlog(__name__)
 warnings.filterwarnings(action='ignore', category=FutureWarning)
@@ -261,7 +263,7 @@ class StratScorer():
 
     def score(
             self,
-            estimator: BaseEstimator,
+            estimator: 'BaseEstimator',
             x: pd.DataFrame,
             y_true: pd.Series,
             _type: str = 'final',
