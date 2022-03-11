@@ -24,6 +24,7 @@ from jgutils import functions as jf
 from jgutils import pandas_utils as pu
 
 if TYPE_CHECKING:
+    from jambot import ExchSymbols
     from jambot.tradesys.strategies.base import StrategyBase
 
 log = getlog(__name__)
@@ -218,7 +219,7 @@ def write_balance_google(
     batcher.run_batch()
 
 
-def show_current_status(exch_name: str, symbol: str, n: int = 30, **kw) -> None:
+def show_current_status(symbols: 'ExchSymbols', n: int = 30, **kw) -> None:
     """Show current live strategy signals
 
     # NOTE this is kinda extra, should probs just show strat's recent trades
@@ -238,7 +239,7 @@ def show_current_status(exch_name: str, symbol: str, n: int = 30, **kw) -> None:
         -1: (cf.COLORS['lightred'], 'white')}
 
     # show last n rows of current active strategy df_pred
-    return get_df_pred(exch_name=exch_name, symbol=symbol, **kw)[list(m_fmt.keys())] \
+    return get_df_pred(symbols=symbols, **kw)[list(m_fmt.keys())] \
         .tail(n) \
         .style.format(m_fmt) \
         .apply(highlight_val, subset=['signal'], m=m_color)
@@ -263,8 +264,7 @@ def replace_ohlc(df: pd.DataFrame, df_new: pd.DataFrame) -> pd.DataFrame:
 
 
 def get_df_raw(
-        exch_name: str,
-        symbol: str,
+        symbols: 'ExchSymbols',
         interval: int = 15,
         funding_exch: SwaggerExchange = None) -> pd.DataFrame:
     """get OHLCV df for running strat live
@@ -287,8 +287,7 @@ def get_df_raw(
     startdate = f.inter_now(interval) + delta(days=-offset)
 
     return Tickers().get_df(
-        exch_name=exch_name,
-        symbols=symbol,
+        symbols=symbols,
         startdate=startdate,
         interval=interval,
         # funding=True if exch_name == 'bitmex' else False,
@@ -296,8 +295,9 @@ def get_df_raw(
 
 
 def get_df_pred(
-        exch_name: str,
-        symbol: str,
+        symbols: 'ExchSymbols',
+        # exch_name: str,
+        symbol: str = 'XBTUSD',
         name: str = 'lgbm',
         test: bool = False,
         **kw) -> pd.DataFrame:
@@ -319,7 +319,8 @@ def get_df_pred(
     """
 
     # add signals
-    df = get_df_raw(exch_name=exch_name, symbol=symbol, **kw) \
+    # FIXME
+    df = get_df_raw(symbols=symbols, **kw) \
         .pipe(md.add_signals, name=name, symbol=symbol, use_important_dynamic=True)
 
     # load saved/trained models from blob storage and add pred signals
