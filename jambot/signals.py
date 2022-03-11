@@ -10,7 +10,7 @@ from typing import *
 
 import numpy as np
 import pandas as pd
-from sklearn.preprocessing import MinMaxScaler
+import pandas_ta as pta
 from ta.momentum import (AwesomeOscillatorIndicator, KAMAIndicator,  # noqa
                          PercentageVolumeOscillator, ROCIndicator,
                          RSIIndicator, StochasticOscillator, StochRSIIndicator,
@@ -26,7 +26,7 @@ from ta.volume import ChaikinMoneyFlowIndicator
 from jambot import SYMBOL
 from jambot import config as cf
 from jambot import getlog
-from jambot import sklearn_utils as sk
+from jambot import ta as jta
 from jambot.common import DictRepr, DynConfig
 from jambot.config import AZURE_WEB
 from jambot.utils.mlflow import MlflowLoggable
@@ -293,7 +293,7 @@ class SignalManager(MlflowLoggable, DictRepr):
                 else:
                     m[name].update({sig_name: ''})
 
-        sk.pretty_dict(m)
+        jf.pretty_dict(m)
 
     def replace_single_feature_old(
             self,
@@ -676,6 +676,8 @@ class FeatureInteraction(SignalGroup):
 
     def add_all_signals(self, df, **kw):
         cols = self.cols
+
+        from sklearn.preprocessing import MinMaxScaler
         scaler = MinMaxScaler()
         cols_scaled = scaler.fit_transform(df[cols])
         cols_int = self.op(cols_scaled.T[0], cols_scaled.T[1])
@@ -687,15 +689,15 @@ class FeatureInteraction(SignalGroup):
 class Momentum(SignalGroup):
     def __init__(self, window=2, **kw):
         kw['signals'] = dict(
-            pvo=dict(cls=PercentageVolumeOscillator, ta_func='pvo', window_slow=26, window_fast=12, window_sign=9),
-            roc=dict(cls=ROCIndicator, ta_func='roc', window=12),  # Rate of Change (similar to pct_change?)
-            stoch=dict(cls=StochasticOscillator, ta_func='stoch', window=12, smooth_window=12),
-            tsi=dict(cls=TSIIndicator, ta_func='tsi', window_slow=25, window_fast=13),
-            ultimate=dict(
-                cls=UltimateOscillator,
-                ta_func='ultimate_oscillator',
-                window1=7, window2=14, window3=28,
-                weight1=4.0, weight2=2.0, weight3=1.0),
+            pvo=dict(cls=PercentageVolumeOscillator, ta_func='pvo', window_slow=26,
+                     window_fast=12, window_sign=9),  # ta 3x faster,
+            # Rate of Change (similar to pct_change?) (ta 1.5x faster)
+            roc=dict(cls=ROCIndicator, ta_func='roc', window=12),
+            stoch=dict(cls=StochasticOscillator, ta_func='stoch', window=12, smooth_window=12),  # ta 50x faster
+            tsi=dict(cls=TSIIndicator, ta_func='tsi', window_slow=25, window_fast=13),  # ta faster
+            ultimate=lambda x: x.ta.uo(
+                fast=7, medium=14, slow=28,
+                fast_w=4.0, medium_w=2.0, slow_w=1.0),  # pta w talib 10x faster
             # awesome=dict(
             #     cls=AwesomeOscillatorIndicator,
             #     ta_func='awesome_oscillator',
@@ -708,7 +710,7 @@ class Momentum(SignalGroup):
             # kama=dict(cls=KAMAIndicator, ta_func='kama', window=12, pow1=2, pow2=30, row=1)
         )
         ns = (2, 6, 12, 24)
-        m_rsi = {f'rsi{n:02}': dict(cls=RSIIndicator, ta_func='rsi', window=n) for n in ns}
+        m_rsi = {f'rsi{n:02}': lambda x: pta.rsi(x.close, length=n) for n in ns}  # pta (talib) 3x faster
         kw['signals'] |= m_rsi
 
         super().__init__(prefix='mnt', **kw)
@@ -723,8 +725,8 @@ class Volume(SignalGroup):
             # relative=lambda x: x.volume / x.volume.shift(6).rolling(24).mean(),
             rel=lambda x: relative_self(x.volume, n=24 * 7),
             # mom=lambda x: x.vol_relative * x.pct,
-            chaik=dict(cls=ChaikinMoneyFlowIndicator, ta_func='chaikin_money_flow', window=24),
-            mfi=dict(cls=MFIIndicator, ta_func='money_flow_index', window=48),
+            chaik=dict(cls=ChaikinMoneyFlowIndicator, ta_func='chaikin_money_flow', window=24),  # same speed
+            mfi=lambda x: pta.mfi(x.high, x.low, x.close, x.volume, length=48),  # pta 5x faster
             # adi=dict(cls=AccDistIndexIndicator, ta_func='acc_dist_index'),
             # eom=dict(cls=EaseOfMovementIndicator, ta_func='ease_of_movement', window=14),
             # force=dict(cls=ForceIndexIndicator, ta_func='force_index', window=14),
@@ -738,7 +740,7 @@ class Volatility(SignalGroup):
     def __init__(self, norm=(0.004, 0.024), **kw):
         prefix = 'vty'
         kw['signals'] = dict(
-            ulcer=dict(cls=UlcerIndex, ta_func='ulcer_index', window=2),
+            ulcer=lambda x: x.ta.ui(length=2),  # pta 60x faster (native)
             maxhigh=lambda x: x.high.rolling(48).max(),
             minlow=lambda x: x.low.rolling(48).min(),
             spread=lambda x: (abs(x.vty_maxhigh - x.vty_minlow) /
@@ -775,11 +777,12 @@ class Volatility(SignalGroup):
 class Trend(SignalGroup):
     def __init__(self, **kw):
         kw['signals'] = dict(
-            adx=dict(cls=ADXIndicator, ta_func='adx', window=36),
-            aroon=dict(cls=AroonIndicator, ta_func='aroon_indicator', window=25),
-            cci=dict(cls=CCIIndicator, ta_func='cci', window=20, constant=0.015),
+            adx=lambda x: jta.adx(x, length=36),  # pta 10x faster
+            aroon=lambda x: x.ta.aroon(length=25).iloc[:, -1],  # pta (talib) 100x faster
+            cci=lambda x: x.ta.cci(length=20, c=0.015),  # pta (talib) 1000x faster
             # mass=dict(cls=MassIndex, ta_func='mass_index', window_fast=9, window_slow=25),
-            stc=dict(cls=STCIndicator, ta_func='stc', window_slow=50, window_fast=23, cycle=10, smooth1=3, smooth2=3),
+            stc=dict(cls=STCIndicator, ta_func='stc', window_slow=50, window_fast=23,
+                     cycle=10, smooth1=3, smooth2=3),  # ta 500x faster
             # dpo=dict(cls=DPOIndicator, ta_func='dpo'),
             # kst=dict(cls=KSTIndicator, ta_func='kst'),
             # trix=dict(cls=TRIXIndicator, ta_func='trix', window=48),
@@ -806,7 +809,7 @@ class EMA(SignalGroup):
         c = self.get_c(maxspread=0.1)
 
         emas = [10, 50, 200]
-        m_emas = {f'ema{n}': dict(cls=EMAIndicator, ta_func='ema_indicator', window=n) for n in emas}
+        m_emas = {f'ema{n}': lambda x: x.ta.ema(length=n) for n in emas}
         kw['signals'] = copy.copy(m_emas)
 
         kw['signals'] |= dict(
