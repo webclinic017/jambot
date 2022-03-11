@@ -22,6 +22,9 @@ include .vscode/.env
 
 # az functionapp config appsettings set --name jambot-app --resource-group jambot-app --settings AzureWebJobs.OneHour.Disabled=true
 
+# deploy to test
+# func azure functionapp publish jambot-app --python --build-native-deps --slot test
+
 .PHONY : format
 format:  ## autopep, isort, flake
 	@poetry run autopep8 --recursive --in-place $(code)
