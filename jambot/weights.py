@@ -2,12 +2,12 @@ from typing import *
 
 import numpy as np
 import pandas as pd
-from sklearn.preprocessing import minmax_scale
 
 from jambot import getlog
 from jambot.common import DictRepr, DynConfig
 from jambot.utils.mlflow import MlflowLoggable
 from jgutils import functions as jf
+from jgutils import pandas_utils as pu
 
 log = getlog(__name__)
 
@@ -58,8 +58,8 @@ class WeightsManager(DictRepr, MlflowLoggable, DynConfig):
 
         signals = {k: v['func'] for k, v in signals.items()} \
             | dict(
-                weight=lambda x: minmax_scale(
-                    X=x[target_cols].abs().max(axis=1)
+                weight=lambda x: pu.minmax_scale(
+                    s=x[target_cols].abs().max(axis=1)
                     .clip(upper=0.2) * self.linear(x),
                     feature_range=(0, 1)))
 
