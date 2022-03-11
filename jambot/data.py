@@ -2,6 +2,7 @@
 Loading dataframe
 """
 
+import os
 from collections import defaultdict as dd
 from datetime import datetime as dt
 from datetime import timedelta as delta
@@ -73,6 +74,9 @@ class DataManager(object):
         Path
             path of saved file
         """
+        if cf.AZURE_WEB:
+            return
+
         p = self._get_path(symbol, exch_name)
 
         # remove symbol from index for saving to file
@@ -112,13 +116,14 @@ class DataManager(object):
                 .pipe(pu.append_list, dfs)
 
             # save individual dfs to ftr
-            for symbol, _df in df.groupby('symbol'):
-                # bit arbitrary, but just avoid saving small dfs, or df with close col only
-                if _df.shape[1] > 4:
-                    if _df.shape[0] > 1000:
-                        self.save_df(_df, symbol, exch_name)
-                    else:
-                        log.warning(f'No rows to save for {symbol}, {exch_name}')
+            if not cf.AZURE_WEB and not os.getenv('TEST'):
+                for symbol, _df in df.groupby('symbol'):
+                    # bit arbitrary, but just avoid saving small dfs, or df with close col only
+                    if _df.shape[1] > 4:
+                        if _df.shape[0] > 1000:
+                            self.save_df(_df, symbol, exch_name)
+                        else:
+                            log.warning(f'No rows to save for {symbol}, {exch_name}')
 
         df_out = pd.concat(dfs)
 
@@ -142,7 +147,7 @@ class DataManager(object):
             for symbol in jf.as_list(_symbols):
                 p = self._get_path(symbol, exch_name)
 
-                df = pd.read_feather(p) \
+                df = pd.read_feather(p, use_threads=False) \
                     .assign(symbol=symbol) \
                     .assign(symbol=lambda x: x.symbol.astype('category')) \
                     .set_index(['symbol', 'timestamp']) \
