@@ -26,6 +26,7 @@ from jambot import config as cf
 from jambot import display, getlog
 from jambot import signals as sg
 from jambot.common import ProgressParallel
+from jambot.ml import models as md
 from jambot.weights import WeightsManager
 from jgutils import fileops as jfl
 from jgutils import functions as jf
@@ -36,6 +37,8 @@ from jgutils.azureblob import BlobStorage
 try:
     import shap
     from icecream import ic
+
+    # from tqdm import tqdm
     ic.configureOutput(prefix='')
 
     import matplotlib.pyplot as plt
@@ -427,8 +430,8 @@ class ModelManager(object):
             x_test = self.x_test
 
         df = df \
-            .pipe(add_y_pred, model=model, x=x_test) \
-            .pipe(add_probas, model=model, x=x_test, do=proba)
+            .pipe(md.add_y_pred, model=model, x=x_test) \
+            .pipe(md.add_probas, model=model, x=x_test, do=proba)
 
         # save predicted values for each model
         self.df_preds[name] = df
@@ -541,8 +544,8 @@ class ModelManager(object):
             df_train = df[df.index < split_date]
             df_test = df[df.index >= split_date]
 
-        x_train, y_train = split(df_train, target=target)
-        x_test, y_test = split(df_test, target=target)
+        x_train, y_train = pu.split(df_train, target=target)
+        x_test, y_test = pu.split(df_test, target=target)
 
         jf.set_self(exclude=('target',))
 
@@ -751,14 +754,6 @@ def show_prop(df, target_col='target'):
             prop='{:.2%}'))
 
 
-def split(df: pd.DataFrame, target: Union[List[str], str] = 'target') -> Tuple[pd.DataFrame, pd.Series]:
-    """Split off target col to make X and y"""
-    if isinstance(target, list) and len(target) == 1:
-        target = target[0]
-
-    return df.pipe(pu.safe_drop, cols=target), df[target]
-
-
 def show_scores(df: pd.DataFrame, higher_better: bool = False) -> None:
     from jambot.utils.styles import bg, get_style
     subset = [col for col in df.columns if any(
@@ -954,140 +949,6 @@ def get_ct_feature_names(ct):
 def mpl_dict(params):
     """"Convert _ to . for easier mpl rcparams grid definition"""
     return {k.replace('_', '.'): v for k, v in params.items()}
-
-
-def all_except(df, exclude: list):
-    """Return all cols in df except exclude
-
-    Parameters
-    ----------
-    df : pd.DataFrame
-    exclude : list | iterable
-        column names to exclude
-
-    Returns
-    -------
-    list
-        list of all cols in df except exclude
-    """
-    return [col for col in df.columns if not any(col in lst for lst in exclude)]
-
-
-def df_proba(x: pd.DataFrame, model: 'BaseEstimator', **kw) -> pd.DataFrame:
-    """Return df of predict_proba, with timestamp index
-
-    Parameters
-    ----------
-    df : pd.DataFrame
-        df with signals
-    model : 'BaseEstimator'
-        fitted model/pipeline
-
-    Returns
-    -------
-    pd.DataFrame
-        df with proba_ added
-    """
-    arr = model.predict_proba(x)
-    m = {-1: 'short', 0: 'neutral', 1: 'long'}
-    cols = [f'proba_{m.get(c)}' for c in model.classes_]
-    return pd.DataFrame(data=arr, columns=cols, index=x.index)
-
-
-def df_y_pred(x: pd.DataFrame, model: 'BaseEstimator') -> pd.DataFrame:
-    """Return df with y_pred added
-
-    Parameters
-    ----------
-    df : pd.DataFrame
-        df with signals
-    model : 'BaseEstimator'
-        model/pipe
-
-    Returns
-    -------
-    pd.DataFrame
-        df with y_pred added
-    """
-    return pd.DataFrame(
-        data=model.predict(x),
-        columns=['y_pred'],
-        index=x.index)
-
-
-def add_probas(df: pd.DataFrame, model: 'BaseEstimator', x: pd.DataFrame, do: bool = True, **kw) -> pd.DataFrame:
-    """Convenience func to add probas if don't exist
-
-    Parameters
-    ----------
-    df : pd.DataFrame
-        df with signals
-    model : 'BaseEstimator'
-        model/pipe
-    x : pd.DataFrame
-        section of df to predict on
-    do : bool, optional
-        pass False to skip (for regression)
-
-    Returns
-    -------
-    pd.DataFrame
-        df with proba_ added
-    """
-
-    # already added probas
-    if not do or 'proba_long' in df.columns:
-        return df
-
-    return df.pipe(pu.left_merge, df_right=df_proba(x=x, model=model))
-
-
-def add_y_pred(df: pd.DataFrame, model: 'BaseEstimator', x: pd.DataFrame) -> pd.DataFrame:
-    """Add y_pred col to df with model.predict
-
-    Parameters
-    ----------
-    df : pd.DataFrame
-        df with signals
-    model : 'BaseEstimator'
-        model/pipe
-    x : pd.DataFrame
-        section of df to predict on
-
-    Returns
-    -------
-    pd.DataFrame
-        df with y_pred added
-    """
-    return df.pipe(pu.left_merge, df_right=df_y_pred(x=x, model=model))
-
-
-def convert_proba_signal(
-        df: pd.DataFrame,
-        col: str = 'rolling_proba',
-        regression: bool = False) -> pd.DataFrame:
-    """Convert probas btwn 0-1 to a signal of 0, 1 or -1 with threshold 0.5
-
-    Parameters
-    ----------
-    df : pd.DataFrame
-        df with rolling proba col
-    col : str
-        col to conver to signal, default 'rolling_proba'
-
-    Returns
-    -------
-    pd.DataFrame
-        df with signal added
-    """
-    s = df[col]
-
-    # for regression, just using y_pred which is already pos/neg, not proba btwn 0-1
-    offset = 0.5 if not regression else 0
-
-    return df \
-        .assign(
-            signal=np.sign(np.diff(np.sign(s - offset), prepend=np.array([0]))))
 
 
 def weighted_score(
@@ -1416,8 +1277,8 @@ def add_predict_iter(
             # NOTE this is cheating, wm has knowledge of future values
             df_train = wm.filter_quantile(df_train, quantile=filter_fit_quantile, _log=False)
 
-        x_train, y_train = split(df_train)
-        x_test, _ = split(df.loc[idx_test_slice, :])
+        x_train, y_train = pu.split(df_train)
+        x_test, _ = pu.split(df.loc[idx_test_slice, :])
 
         model.fit(
             x_train,
@@ -1428,9 +1289,9 @@ def add_predict_iter(
             return None
         else:
             if not regression:
-                proba_long = df_proba(x=x_test, model=model)['proba_long']
+                proba_long = md.df_proba(x=x_test, model=model)['proba_long']
             else:
-                proba_long = df_y_pred(x=x_test, model=model)['y_pred']
+                proba_long = md.df_y_pred(x=x_test, model=model)['y_pred']
 
             return pd.DataFrame(
                 # index=x_test.loc[idx_test_slice, :].index,  # don't need explicit index, uses index from df_proba

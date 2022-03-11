@@ -1,25 +1,23 @@
 import copy
 from typing import *
 
+import numpy as np
 import pandas as pd
 
 from jambot import SYMBOL
 from jambot import config as cf
 from jambot import getlog
 from jambot import signals as sg
-from jambot import sklearn_utils as sk
-from jambot.ml.classifiers import LGBMClsLog
 from jambot.signals import SignalManager
 from jgutils import fileops as jfl
 from jgutils import pandas_utils as pu
 
-# from sklearn.linear_model import Ridge
-# from sklearn.multioutput import MultiOutputRegressor
-
-
 if TYPE_CHECKING:
     from sklearn.base import BaseEstimator
     from sklearn.pipeline import Pipeline
+
+    from jambot.ml.classifiers import LGBMClsLog
+    from jambot.sklearn_utils import ModelManager
 
 log = getlog(__name__)
 
@@ -45,6 +43,7 @@ def model_cfg(name: str) -> Dict[str, Any]:
     dict
         specified model config options
     """
+    from jambot.ml.classifiers import LGBMClsLog
 
     return dict(
         lgbm=dict(
@@ -102,8 +101,7 @@ def add_signals(
     pd.DataFrame
         df with features added
     """
-    cfg = model_cfg(name)
-    target_signal = cfg['target_cls'].from_config(symbol=symbol)
+    target_signal = sg.TargetUpsideDownside.from_config(symbol=symbol)
 
     signals = DEFAULT_SIGNALS + [target_signal]
 
@@ -116,23 +114,14 @@ def add_signals(
             symbol=symbol,
             **kw))
 
-    # return SignalManager.default() \
-    #     .add_signals(
-    #         df=df,
-    #         signals=signals,
-    #         # use_important=use_important,
-    #         use_important_dynamic=use_important_dynamic,
-    #         symbol=symbol,
-    #         drop_ohlc=drop_ohlc,
-    #         **kw)
-
 
 def make_model_manager(
         name: str,
         df: pd.DataFrame,
         use_important: bool = False,
-        **kw) -> 'sk.ModelManager':
+        **kw) -> 'ModelManager':
     """Instantiate ModelManager
+    - NOTE not used
 
     Parameters
     ----------
@@ -145,7 +134,7 @@ def make_model_manager(
 
     Returns
     -------
-    sk.ModelManager
+    ModelManager
     """
     cfg = model_cfg(name)
     target = cfg.get('target')
@@ -163,7 +152,7 @@ def make_model_manager(
         target=target,
         drop=drop_cols)
 
-    features['numeric'] = sk.all_except(df, features.values())
+    features['numeric'] = pu.all_except(df, features.values())
 
     encoders = dict(
         drop='drop',
@@ -171,12 +160,14 @@ def make_model_manager(
         numeric='passthrough'
     )
 
-    return sk.ModelManager(
+    from jambot.sklearn_utils import ModelManager
+
+    return ModelManager(
         features=features,
         encoders=encoders, **kw)
 
 
-def make_model(name: str, symbol: str = SYMBOL) -> LGBMClsLog:
+def make_model(name: str, symbol: str = SYMBOL) -> 'LGBMClsLog':
     """Create instance of LGBMClassifier
 
     Parameters
@@ -216,31 +207,121 @@ def make_pipeline(name: str, df: pd.DataFrame) -> 'Pipeline':
     return mm.make_pipe(name=name, model=model, steps=None)
 
 
-def add_preds_probas(df: pd.DataFrame, pipe: 'BaseEstimator', **kw) -> pd.DataFrame:
-    """Convenience func to add y_pred, predict_probas, and trade signal cols to df
-    - specific to LGBM model with smoothed rolling probas
+def df_proba(x: pd.DataFrame, model: 'LGBMClsLog', **kw) -> pd.DataFrame:
+    """Return df of predict_proba, with timestamp index
 
     Parameters
     ----------
     df : pd.DataFrame
-        df with features, will drop target if exists
-    pipe : BaseEstimator
-        estimator with predict and predict_proba
-    regression : bool
-        defines which col to smooth
+        df with signals
+    model : 'BaseEstimator'
+        fitted model/pipeline
 
     Returns
     -------
     pd.DataFrame
-        "df_pred" with y_pred and proba_ for each predicted class
+        df with proba_ added
     """
-    x = pu.safe_drop(df, 'target')
+    arr = model.predict_proba(x)
+    m = {-1: 'short', 0: 'neutral', 1: 'long'}
+    cols = [f'proba_{m.get(c)}' for c in model.classes_]
+    return pd.DataFrame(data=arr, columns=cols, index=x.index)
 
-    # NOTE y_pred only needed for scoring to get accuracy, not for strategy
+
+def df_y_pred(x: pd.DataFrame, model: 'BaseEstimator') -> pd.DataFrame:
+    """Return df with y_pred added
+
+    Parameters
+    ----------
+    df : pd.DataFrame
+        df with signals
+    model : 'BaseEstimator'
+        model/pipe
+
+    Returns
+    -------
+    pd.DataFrame
+        df with y_pred added
+    """
+    return pd.DataFrame(
+        data=model.predict(x),
+        columns=['y_pred'],
+        index=x.index)
+
+
+def add_probas(df: pd.DataFrame, model: 'BaseEstimator', x: pd.DataFrame, do: bool = True, **kw) -> pd.DataFrame:
+    """Convenience func to add probas if don't exist
+
+    Parameters
+    ----------
+    df : pd.DataFrame
+        df with signals
+    model : 'BaseEstimator'
+        model/pipe
+    x : pd.DataFrame
+        section of df to predict on
+    do : bool, optional
+        pass False to skip (for regression)
+
+    Returns
+    -------
+    pd.DataFrame
+        df with proba_ added
+    """
+
+    # already added probas
+    if not do or 'proba_long' in df.columns:
+        return df
+
+    return df.pipe(pu.left_merge, df_right=df_proba(x=x, model=model))
+
+
+def add_y_pred(df: pd.DataFrame, model: 'BaseEstimator', x: pd.DataFrame) -> pd.DataFrame:
+    """Add y_pred col to df with model.predict
+
+    Parameters
+    ----------
+    df : pd.DataFrame
+        df with signals
+    model : 'BaseEstimator'
+        model/pipe
+    x : pd.DataFrame
+        section of df to predict on
+
+    Returns
+    -------
+    pd.DataFrame
+        df with y_pred added
+    """
+    return df.pipe(pu.left_merge, df_right=df_y_pred(x=x, model=model))
+
+
+def convert_proba_signal(
+        df: pd.DataFrame,
+        col: str = 'rolling_proba',
+        regression: bool = False) -> pd.DataFrame:
+    """Convert probas btwn 0-1 to a signal of 0, 1 or -1 with threshold 0.5
+
+    Parameters
+    ----------
+    df : pd.DataFrame
+        df with rolling proba col
+    col : str
+        col to conver to signal, default 'rolling_proba'
+
+    Returns
+    -------
+    pd.DataFrame
+        df with signal added
+    """
+    s = df[col]
+
+    # for regression, just using y_pred which is already pos/neg, not proba btwn 0-1
+    offset = 0.5 if not regression else 0
+
     return df \
-        .pipe(sk.add_y_pred, model=pipe, x=x) \
-        .pipe(sk.add_probas, model=pipe, x=x) \
-        .pipe(add_proba_trade_signal, **kw)
+        .assign(
+            signal=np.sign(np.diff(np.sign(s - offset), prepend=np.array([0]))))
 
 
 def add_proba_trade_signal(
@@ -266,4 +347,31 @@ def add_proba_trade_signal(
 
     return df \
         .pipe(sg.add_ema, p=n_smooth, c=rolling_col, col='rolling_proba') \
-        .pipe(sk.convert_proba_signal, regression=regression)
+        .pipe(convert_proba_signal, regression=regression)
+
+
+def add_preds_probas(df: pd.DataFrame, pipe: 'BaseEstimator', **kw) -> pd.DataFrame:
+    """Convenience func to add y_pred, predict_probas, and trade signal cols to df
+    - specific to LGBM model with smoothed rolling probas
+
+    Parameters
+    ----------
+    df : pd.DataFrame
+        df with features, will drop target if exists
+    pipe : BaseEstimator
+        estimator with predict and predict_proba
+    regression : bool
+        defines which col to smooth
+
+    Returns
+    -------
+    pd.DataFrame
+        "df_pred" with y_pred and proba_ for each predicted class
+    """
+    x = pu.safe_drop(df, 'target')
+
+    # NOTE y_pred only needed for scoring to get accuracy, not for strategy
+    return df \
+        .pipe(add_y_pred, model=pipe, x=x) \
+        .pipe(add_probas, model=pipe, x=x) \
+        .pipe(add_proba_trade_signal, **kw)
