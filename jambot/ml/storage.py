@@ -1,3 +1,4 @@
+import gc
 import math
 from datetime import datetime as dt
 from datetime import timedelta as delta
@@ -9,10 +10,10 @@ from jambot import SYMBOL
 from jambot import config as cf
 from jambot import functions as f
 from jambot import getlog
-from jambot import sklearn_utils as sk
 from jambot.common import DictRepr
 from jambot.data import DataManager
 from jambot.ml import models as md
+from jambot.ml.dataloading import DiskDataFrame
 from jambot.tradesys.symbols import Symbol
 from jambot.weights import WeightsManager
 from jgutils import fileops as jfl
@@ -223,6 +224,7 @@ class ModelStorageManager(DictRepr):
         """Retrain single new, or overwrite all models
         - run live every n hours (24)
         - models trained AT 18:00, but only UP TO eg 10:00
+        - all models start fit from same d_lower
 
         Parameters
         ----------
@@ -242,18 +244,11 @@ class ModelStorageManager(DictRepr):
             default 15
         """
         self.bs.download_dir(p=self.p_model, mirror=True, match=symbol)
+        startdate = self.d_lower
 
         # check to make sure all models downloaded
-        if self.n_models_local(symbol) < self.n_models or overwrite_all:
+        if self.n_models_local(symbol) < self.n_models:
             overwrite_all = True
-            startdate = self.d_lower  # download full OHLC history
-        else:
-            offset = {1: 16, 15: 6}[interval]  # get days offset
-            startdate = f.inter_now(interval) + delta(days=-offset)  # only download last 6 days
-
-        # azure limited to 1.5gb memory
-        if cf.AZURE_WEB and overwrite_all:
-            raise RuntimeError('Cannot overwrite_all on azure.')
 
         log.info(f'fit_save_models: symbol={symbol}, overwrite={overwrite_all}, startdate={startdate}')
 
@@ -263,7 +258,6 @@ class ModelStorageManager(DictRepr):
         exch_name = symbol.exch_name if not symbol == cf.MULTI_ALTS else 'bybit'
 
         # FIXME funding_exch
-        # won't need to download all data necessarily
         df = self.dm.get_df(
             symbols={exch_name: symbol},
             startdate=startdate,
@@ -271,18 +265,10 @@ class ModelStorageManager(DictRepr):
             # funding_exch=em.default('bitmex'),
             db_only=True,
             # local_only=not cf.AZURE_WEB
-        )
+        ).sort_index()
 
-        # laod df_close full history (~12s, 16mb, >1.25M rows)
-        # TODO figure out how to cache the quantile, or compute from db?
-        df_close = self.dm.get_df(
-            symbols={exch_name: symbol},
-            startdate=self.d_lower,
-            interval=interval,
-            db_only=True,
-            close_only=True)
-
-        wm = WeightsManager.from_config(df=df_close, symbol=symbol)
+        wm = WeightsManager.from_config(df=df, symbol=symbol)
+        df['weights'] = wm.weights
 
         # set back @cut_hrs due to losing @n_periods for training preds
         cut_hrs = math.ceil(n_periods / {1: 1, 15: 4}[self.interval])
@@ -292,6 +278,7 @@ class ModelStorageManager(DictRepr):
 
         # max date where hour is greater or equal to 18:00
         d_upper = f.date_to_dt(
+            # df[df.index.get_level_values('timestamp').hour >= reset_hour_offset]
             df.query('timestamp.dt.hour >= @reset_hour_offset')
             .index.get_level_values('timestamp').max().date()) \
             + delta(hours=reset_hour_offset)  # get date only eg '2022-01-01' then add delta hoursg
@@ -301,70 +288,89 @@ class ModelStorageManager(DictRepr):
 
         # add signals per symbol group, drop last targets
         # TODO add funding_exch: funding_exch=em.default('bitmex')
-        df = df \
-            .pipe(
-                md.add_signals,
-                name=name,
-                symbol=symbol,
-                use_important_dynamic=True,
-                drop_ohlc=True,
-                drop_target_periods=n_periods) \
-            .pipe(
-                wm.filter_quantile,
-                quantile=filter_quantile,
-                _log=False)
 
-        # delete oldest model or all models
+        batch_size = 50000
+
+        ddf = DiskDataFrame(batch_size=batch_size)
+        df_wt = pd.DataFrame()  # weights/target
+        wt_cols = ['weights', 'target']
+
+        # add signals to grouped individual symbols
+        for _symbol, _df in df.groupby('symbol'):
+            print(_symbol, _df.shape)
+
+            # keep weights with df for sample_weights
+            # AND filter by highest quantile
+            _df = _df \
+                .pipe(
+                    md.add_signals,
+                    name=name,
+                    drop_ohlc=False,
+                    use_important_dynamic=True,
+                    symbol=symbol,
+                    drop_target_periods=n_periods) \
+                .pipe(
+                    wm.filter_quantile,
+                    quantile=filter_quantile,
+                    _log=False) \
+                .pipe(pu.safe_drop, cols=cf.DROP_COLS)
+
+            # keep weights/target in memory
+            df_wt = pu.concat(df_wt, _df[wt_cols])
+
+            ddf.add_chunk(df=_df.drop(columns=wt_cols))
+
+        # remove last _df from memory before train
+        ddf.dump_final()
+        wm, _df, df = None, None, None
+        del wm, _df, df
+        gc.collect()
+
         if self.d_latest_model(symbol=symbol) < d_upper or overwrite_all:
             self.clean(symbol=symbol, last_only=not overwrite_all)
 
         cut_mins = {1: 60, 15: 15}[self.interval]  # to offset .loc[:d] for each prev model/day
         model = md.make_model(name, symbol=symbol)
+        # n_models = 1 if not overwrite_all else self.n_models
         n_models = self.n_models
 
-        # loop models from oldest > newest
+        # treat d_upper (max in df) as current date
+        keep_models = []  # type: List[Path]
+        model = md.make_model(name=name, symbol=symbol)
+
+        # loop models from oldest > newest (2, 1, 0)
         for i in range(n_models - 1, -1, -1):
-            # log.warning(i)
+
             delta_mins = -i * cut_mins * self.batch_size_cdls
             d = d_upper + delta(minutes=delta_mins)  # cut 0, 24, 48 hrs
             d_cur_model = d + delta(hours=cut_hrs)
-            d_prev = d + delta(hours=-self.batch_size)  # prev model date
-            d_prev_model = d_prev + delta(hours=cut_hrs)
-            # print('d:', d, 'd_prev:', d_prev, 'd_prev_model', d_prev_model)
 
             # do we have a previous model
-            p_prev = self.get_model_path(symbol, d_prev_model)
             p_cur = self.get_model_path(symbol, d_cur_model)
-            print('p_prev:', p_prev.name)
+            keep_models.append(p_cur)
             print('p_cur:', p_cur.name)
 
-            is_first = i == n_models - 1
-            if not p_cur.exists() or (is_first and overwrite_all):
+            ddf.set_upper_limit(d=d)
 
-                # use df filtered to dates greater than last trained model
-                if is_first:
-                    init_model = None
-                    d_lower = df.index.get_level_values('timestamp').min()
-                else:
-                    init_model = self.load_model(p=p_prev)
-                    d_lower = d_prev + f.inter_offset(interval)
-                print(f'rng: {d_lower} - {d}')
+            if not p_cur.exists() or overwrite_all:
 
-                idx_slice = pd.IndexSlice[:, d_lower: d]
-                x_train, y_train = sk.split(df.loc[idx_slice, :])
-                log.info(
-                    f'fitting model: x_train.shape={x_train.shape}, is_first={is_first}, init_model={init_model}')
+                log.info(f'fitting model d: {d}')
 
-                init_model = model.fit(
-                    X=x_train,
-                    y=y_train,
-                    sample_weight=wm.weights.loc[x_train.index],
-                    init_model=init_model)
+                idx_slice = pd.IndexSlice[:, :d]
+                model.fit_iter(
+                    ddf_x_train=ddf,
+                    y_train=df_wt.target.loc[idx_slice],
+                    sample_weight=df_wt.weights.loc[idx_slice])
 
                 # save - add back cut hrs so always consistent
                 self.save_model(model=model, symbol=symbol, d=d_cur_model)
             else:
                 log.info('model exists, not overwriting.')
+
+        # delete oldest model
+        for p in self.local_models(symbol=symbol):
+            if not p in keep_models:
+                p.unlink()
 
         # mirror saved models to azure blob
         self.bs.upload_dir(p=self.p_model, mirror=True, match=symbol)
@@ -411,13 +417,13 @@ class ModelStorageManager(DictRepr):
                 max_date = df.index[-1]
 
             # split into 24 hr slices
-            x, _ = sk.split(df.loc[d: max_date], target=target)
+            x, _ = pu.split(df.loc[d: max_date], target=target)
 
             # btwn 18:00 to 18:15 last df won't have any rows
             # eg new model has been trained, but next candle not imported yet
             if len(x) > 0:
                 # add y_pred and proba_ for slice of df
-                df_pred = sk.df_proba(
+                df_pred = md.df_proba(
                     x=x.pipe(pu.safe_drop, cols=cf.DROP_COLS),
                     model=model)
 
@@ -436,10 +442,11 @@ class ModelStorageManager(DictRepr):
 
 if __name__ == '__main__':
     # %load_ext memory_profiler
-    # BLACKFIRE_CLIENT_ID = "3dfdee9e-5944-425c-b182-d5f6e1c99994"
-    # BLACKFIRE_CLIENT_TOKEN = "14583fb0dd4b2d0160d21f3bf45d963986c4483ae91e69afc04899452663e67d"
     # BLACKFIRE_SERVER_ID = "3e730235-6bbc-4c94-bdb8-ad0abdc108f5"
     # BLACKFIRE_SERVER_TOKEN = "146bd58683d7b58d4d00baba06ecd7c711adc8fa350f8269e3cc9d5bb96d7a8b"
+
+    # BLACKFIRE_CLIENT_ID = "3dfdee9e-5944-425c-b182-d5f6e1c99994"
+    # BLACKFIRE_CLIENT_TOKEN = "14583fb0dd4b2d0160d21f3bf45d963986c4483ae91e69afc04899452663e67d"
 
     # from blackfire import probe
     # probe.initialize(
@@ -447,16 +454,19 @@ if __name__ == '__main__':
     #     client_token=BLACKFIRE_CLIENT_TOKEN
     # )
     # probe.enable()
+    import os
+    os.environ['TEST'] = '1'  # prevent writing feather
 
-    from jambot import livetrading as live
+    # from jambot import livetrading as live
     from jambot.tradesys.symbols import Symbols
 
     # from jambot.ml.storage import ModelStorageManager
-    em = live.ExchangeManager()
+    # em = live.ExchangeManager()
+    em = None
     msm = ModelStorageManager(test=True)
     syms = Symbols()
     symbol = cf.MULTI_ALTS
     # symbol = syms.symbol('XBTUSD')
-    msm.fit_save_models(em=em, symbol=symbol)  # %memit
+    msm.fit_save_models(em=em, symbol=symbol, overwrite_all=True)  # %memit
 
     # probe.end()
