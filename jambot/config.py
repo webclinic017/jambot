@@ -51,7 +51,7 @@ COLORS = dict(
 MULTI_ALTS = 'MULTI_ALTS'
 
 MULTI_ALTS_LIST = [
-    'ETHUSDT',
+    # 'ETHUSDT',
     'BNBUSDT',
     'SOLUSDT',
     'DOGEUSDT',
