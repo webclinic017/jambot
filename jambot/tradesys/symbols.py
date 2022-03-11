@@ -61,7 +61,7 @@ class Symbols(object):
         """Reset cache"""
         self._syms = {}
 
-    def load_data(self) -> pd.DataFrame:
+    def load_data(self) -> None:
         """Load df_syms from database
 
         Returns
@@ -70,13 +70,13 @@ class Symbols(object):
         """
         log.info('Loading symbol data from database')
         from jambot.tables import Symbols as _Symbols
-        return _Symbols().get_df()
+        self._df_syms = _Symbols().get_df()
 
     @property
     def df_syms(self) -> pd.DataFrame:
         """df of all symbols per exchange"""
         if self._df_syms is None:
-            self._df_syms = self.load_data()
+            self.load_data()
 
         return self._df_syms
 
